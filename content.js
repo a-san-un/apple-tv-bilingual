@@ -1,5 +1,5 @@
 // =============================================================
-// Apple TV+ Bilingual Subtitles - content.js v2.4
+// Apple TV+ Bilingual Subtitles - content.js v2.5
 // =============================================================
 //
 // Architecture notes:
@@ -11,9 +11,10 @@
 //    Solution: inject all UI elements directly into the <dialog>.
 //
 // 2. CORS PROBLEM
-//    fetch() calls from tv.apple.com to jisho.org are blocked by CORS.
-//    Solution: route all external API calls through background.js,
-//    which runs as a service worker and is not subject to CORS.
+//    fetch() calls from tv.apple.com to jisho.org / tatoeba.org are
+//    blocked by CORS. Solution: route all external API calls through
+//    background.js, which runs as a service worker and is not subject
+//    to CORS.
 //
 // 3. SW KEEPALIVE PROBLEM
 //    Manifest V3 service workers auto-stop after ~30s of inactivity.
@@ -25,6 +26,13 @@
 //    - Right panel (30% width) shows subtitle history + future lines.
 //    - Overlay shows the current bilingual subtitle at the bottom-left.
 //    - Toggle button (top-right at 60px, only when panel is hidden) reopens panel.
+//
+// 5. DICTIONARY POPUP (v2.5)
+//    3-section layout: header (word + badges + reading),
+//    meanings section, example sentences section (Tatoeba, max 5).
+//    Hovering an example sentence shows the Japanese translation as a
+//    CSS tooltip (data-ja attribute). Clicking any word inside an
+//    example sentence re-searches that word (no back button).
 //
 // =============================================================
 
@@ -38,11 +46,11 @@
   let primaryTrack    = null;
   let secondaryTrack  = null;
   let settings        = { primaryLang: 'en', secondaryLang: 'ja' };
-  let subtitleHistory = [];   // past subtitle entries
+  let subtitleHistory = [];
   let panelVisible    = true;
-  let shadowRoot      = null; // shadow root for the right panel
-  let popupShadowRoot = null; // shadow root for the word popup
-  let dialogEl        = null; // reference to <dialog class="playback-view">
+  let shadowRoot      = null;
+  let popupShadowRoot = null;
+  let dialogEl        = null;
 
   // -------------------------------------------------------
   // Utilities
@@ -57,7 +65,6 @@
       : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
   }
 
-  // Strip HTML tags from a VTTCue and return plain text
   function cleanCueText(cue) {
     if (!cue) return '';
     if (cue.getCueAsHTML) return cue.getCueAsHTML().textContent || '';
@@ -68,7 +75,6 @@
       .replace(/&gt;/g,  '>');
   }
 
-  // Find the cue active at a given time in a TextTrack
   function findCueAt(track, time) {
     if (!track || !track.cues) return null;
     for (let i = 0; i < track.cues.length; i++) {
@@ -79,13 +85,11 @@
   }
 
   // -------------------------------------------------------
-  // sendToBackground: route messages through background.js
-  // Retries once if the Service Worker was asleep (lastError).
+  // sendToBackground — retries once if the SW was asleep
   // -------------------------------------------------------
   function sendToBackground(msg, callback) {
     chrome.runtime.sendMessage(msg, (res) => {
       if (chrome.runtime.lastError) {
-        // SW was stopped — wait 300ms for it to wake, then retry
         setTimeout(() => {
           chrome.runtime.sendMessage(msg, (res2) => {
             if (chrome.runtime.lastError) {
@@ -101,11 +105,6 @@
     });
   }
 
-  // -------------------------------------------------------
-  // Injection target
-  // Inject into <dialog> to appear in the browser's top layer.
-  // Falls back to document.body if the dialog is not yet present.
-  // -------------------------------------------------------
   function getTarget() {
     return dialogEl || document.body;
   }
@@ -131,7 +130,6 @@
   // Track helpers
   // -------------------------------------------------------
 
-  // Return deduplicated list of subtitle/caption tracks
   function getUniqueTracks(textTracks) {
     const seen   = new Set();
     const result = [];
@@ -147,7 +145,6 @@
     return result;
   }
 
-  // Find the best track for a language (prefer one with cues already loaded)
   function findBestTrack(textTracks, lang) {
     const candidates = [];
     for (let i = 0; i < textTracks.length; i++) {
@@ -161,7 +158,7 @@
   }
 
   // -------------------------------------------------------
-  // Layout: shrink the video container to make room for the panel
+  // Layout
   // -------------------------------------------------------
   function applyLayout(show) {
     const vc = document.querySelector('.video-player__video-container');
@@ -261,8 +258,6 @@
 
   // -------------------------------------------------------
   // Toggle button
-  // Shown only when panel is hidden. Positioned top-right at 60px
-  // to avoid overlap with the Apple TV+ player controls bar.
   // -------------------------------------------------------
   function createToggleButton() {
     if (getTarget().querySelector('#atv-toggle-btn')) return;
@@ -282,7 +277,7 @@
   }
 
   // -------------------------------------------------------
-  // Word popup (Shadow DOM)
+  // Word popup (Shadow DOM) — v2.5: 3-section dictionary layout
   // -------------------------------------------------------
   function createPopupHost() {
     if (getTarget().querySelector('#atv-popup-host')) return;
@@ -295,24 +290,37 @@
     popupShadowRoot.innerHTML = `
       <style>
         #popup {
-          display: none; position: fixed; width: 320px;
+          display: none; position: fixed; width: 340px;
           background: #1c1c1e; border: 1px solid rgba(255,255,255,0.15);
           border-radius: 12px; overflow: hidden;
           box-shadow: 0 8px 32px rgba(0,0,0,0.8);
           font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
           font-size: 13px; color: #f0f0f0; pointer-events: auto; z-index: 999999;
         }
+
+        /* ---- Header ---- */
         #popup-header {
-          display: flex; justify-content: space-between; align-items: center;
-          padding: 10px 14px; background: rgba(255,255,255,0.06);
+          display: flex; justify-content: space-between; align-items: flex-start;
+          padding: 12px 14px 10px; background: rgba(255,255,255,0.06);
           border-bottom: 1px solid rgba(255,255,255,0.08);
         }
-        #popup-word { font-size: 1.1rem; font-weight: 700; color: #ffe566; }
+        #popup-header-left { display: flex; flex-direction: column; gap: 4px; }
+        #popup-word-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        #popup-word { font-size: 1.2rem; font-weight: 700; color: #ffe566; }
+        .badge {
+          display: inline-block; font-size: 10px; font-weight: 600;
+          padding: 2px 7px; border-radius: 10px; letter-spacing: 0.03em;
+        }
+        .badge-common { background: rgba(80,200,120,0.2); color: #50c878; border: 1px solid rgba(80,200,120,0.3); }
+        .badge-jlpt   { background: rgba(255,229,102,0.15); color: #ffe566; border: 1px solid rgba(255,229,102,0.3); }
+        #popup-reading { color: #aaa; font-size: 12px; }
         #popup-close {
           background: none; border: none; color: rgba(255,255,255,0.5);
-          cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px;
+          cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px; flex-shrink: 0;
         }
         #popup-close:hover { color: #fff; }
+
+        /* ---- Tabs ---- */
         #popup-tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,0.08); }
         .popup-tab {
           flex: 1; padding: 8px; background: none; border: none;
@@ -320,47 +328,108 @@
         }
         .popup-tab.active { background: rgba(255,255,255,0.08); color: #fff; }
         .popup-tab:hover  { background: rgba(255,255,255,0.05); }
+
+        /* ---- Panes ---- */
         .popup-pane {
-          padding: 12px 14px; min-height: 60px; max-height: 240px;
+          padding: 12px 14px; min-height: 60px; max-height: 260px;
           overflow-y: auto; display: none;
         }
         .popup-pane.active { display: block; }
-        /* Dict styles */
-        .dict-meta {
-          display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px;
+        .popup-pane::-webkit-scrollbar { width: 4px; }
+        .popup-pane::-webkit-scrollbar-track { background: #222; }
+        .popup-pane::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
+
+        /* ---- Meanings section ---- */
+        .section-label {
+          font-size: 11px; font-weight: 600; color: #888;
+          text-transform: uppercase; letter-spacing: 0.06em;
+          margin-bottom: 8px; display: flex; align-items: center; gap: 4px;
         }
-        .badge {
-          display: inline-block; font-size: 10px; font-weight: 600;
-          padding: 2px 7px; border-radius: 10px; letter-spacing: 0.03em;
-        }
-        .badge-common { background: rgba(80,200,120,0.2); color: #50c878; border: 1px solid rgba(80,200,120,0.3); }
-        .badge-jlpt   { background: rgba(255,229,102,0.15); color: #ffe566; border: 1px solid rgba(255,229,102,0.3); }
-        .dict-reading { color: #aaa; font-size: 12px; margin-bottom: 6px; }
         .dict-sense { margin-bottom: 10px; }
-        .dict-pos {
-          font-size: 10px; color: #888; font-style: italic; margin-bottom: 3px;
-        }
-        .dict-def {
-          color: #fff; font-size: 13px; line-height: 1.5;
-        }
+        .dict-pos   { font-size: 10px; color: #888; font-style: italic; margin-bottom: 3px; }
+        .dict-def   { color: #fff; font-size: 13px; line-height: 1.5; }
         .dict-def-num { color: #ffe566; font-size: 11px; margin-right: 4px; }
-        /* AI translation styles */
+
+        /* ---- Examples section ---- */
+        .examples-header {
+          display: flex; justify-content: space-between; align-items: center;
+          margin-bottom: 8px;
+        }
+        .tatoeba-link {
+          font-size: 10px; color: #4a9eff;
+          text-decoration: none;
+        }
+        .tatoeba-link:hover { text-decoration: underline; }
+        .example-item {
+          position: relative; margin-bottom: 8px; padding: 6px 8px;
+          background: rgba(255,255,255,0.04); border-radius: 6px;
+          cursor: default;
+        }
+        .example-item:last-child { margin-bottom: 0; }
+        .example-en {
+          color: #e0e0e0; font-size: 13px; line-height: 1.5;
+        }
+        .example-en .atv-ex-word {
+          cursor: pointer; border-radius: 2px; padding: 0 1px;
+        }
+        .example-en .atv-ex-word:hover { background: rgba(255,220,80,0.3); }
+
+        /* Japanese translation tooltip (CSS only) */
+        .example-item[data-ja]:hover::after {
+          content: attr(data-ja);
+          position: absolute;
+          bottom: calc(100% + 5px);
+          left: 0;
+          background: rgba(0,0,0,0.92);
+          color: #fff;
+          padding: 5px 9px;
+          border-radius: 6px;
+          font-size: 12px;
+          line-height: 1.4;
+          white-space: pre-wrap;
+          max-width: 300px;
+          pointer-events: none;
+          z-index: 9999;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+        }
+
+        /* ---- AI translation pane ---- */
         .ai-label  { color: #aaa; font-size: 11px; margin-bottom: 6px; }
         .ai-result { color: #fff; font-size: 13px; line-height: 1.5; }
-        .loading   { color: #666; font-size: 12px; }
-        .error     { color: #ff6b6b; font-size: 12px; }
+
+        /* ---- Shared states ---- */
+        .loading { color: #666; font-size: 12px; }
+        .error   { color: #ff6b6b; font-size: 12px; }
       </style>
+
       <div id="popup">
+        <!-- Header: word + badges + reading -->
         <div id="popup-header">
-          <span id="popup-word"></span>
+          <div id="popup-header-left">
+            <div id="popup-word-row">
+              <span id="popup-word"></span>
+              <span id="popup-badges"></span>
+            </div>
+            <div id="popup-reading"></div>
+          </div>
           <button id="popup-close">✕</button>
         </div>
+
+        <!-- Tabs -->
         <div id="popup-tabs">
           <button class="popup-tab active" data-tab="dict">📖 辞書</button>
           <button class="popup-tab"         data-tab="ai"  >🤖 AI翻訳</button>
         </div>
-        <div class="popup-pane active" id="pane-dict"><span class="loading">検索中...</span></div>
-        <div class="popup-pane"        id="pane-ai"  ><span class="loading">翻訳中...</span></div>
+
+        <!-- Dict pane: meanings + examples -->
+        <div class="popup-pane active" id="pane-dict">
+          <span class="loading">検索中...</span>
+        </div>
+
+        <!-- AI translation pane -->
+        <div class="popup-pane" id="pane-ai">
+          <span class="loading">翻訳中...</span>
+        </div>
       </div>
     `;
 
@@ -369,8 +438,11 @@
     popupShadowRoot.getElementById('popup-close')
       .addEventListener('click', () => { popup.style.display = 'none'; });
 
+    // Tab switching — stopPropagation prevents the document click handler
+    // from closing the popup when a tab is clicked (tab bug fix)
     popupShadowRoot.querySelectorAll('.popup-tab').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation(); // ← fix: prevent bubbling to document close handler
         popupShadowRoot.querySelectorAll('.popup-tab').forEach(b => b.classList.remove('active'));
         popupShadowRoot.querySelectorAll('.popup-pane').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
@@ -387,12 +459,17 @@
   function showPopup(word, sentence, anchorRect) {
     if (!popupShadowRoot) return;
 
-    // Strip punctuation; keep Latin, Hiragana, Katakana, CJK
     const clean = word.replace(/[^a-zA-Z\u3040-\u9FFF\uFF00-\uFFEF\u4E00-\u9FFF]/g, '');
     if (!clean) return;
 
     const popup = popupShadowRoot.getElementById('popup');
-    popupShadowRoot.getElementById('popup-word').textContent = clean;
+
+    // Reset header
+    popupShadowRoot.getElementById('popup-word').textContent    = clean;
+    popupShadowRoot.getElementById('popup-badges').innerHTML    = '';
+    popupShadowRoot.getElementById('popup-reading').textContent = '';
+
+    // Reset pane content
     popupShadowRoot.getElementById('pane-dict').innerHTML = '<span class="loading">検索中...</span>';
     popupShadowRoot.getElementById('pane-ai').innerHTML   = '<span class="loading">翻訳中...</span>';
 
@@ -402,11 +479,11 @@
     popupShadowRoot.querySelector('[data-tab="dict"]').classList.add('active');
     popupShadowRoot.getElementById('pane-dict').classList.add('active');
 
-    // Position above the word (flip down if too close to top)
+    // Position
     popup.style.display = 'block';
-    const pw = 320;
+    const pw = 340;
     let left = anchorRect.left;
-    let top  = anchorRect.top - 160;
+    let top  = anchorRect.top - 180;
     if (left + pw > window.innerWidth) left = window.innerWidth - pw - 8;
     if (top < 8) top = anchorRect.bottom + 8;
     popup.style.left = left + 'px';
@@ -417,25 +494,35 @@
   }
 
   // -------------------------------------------------------
-  // Dictionary fetch — via background.js (CORS-free) with retry
+  // Dictionary fetch — builds 3-section layout in pane-dict
   // -------------------------------------------------------
   function fetchDictionary(word) {
-    const el = popupShadowRoot.getElementById('pane-dict');
     sendToBackground({ type: 'FETCH_DICT', word }, (res) => {
+      // Update header badges and reading
+      const badgesEl  = popupShadowRoot.getElementById('popup-badges');
+      const readingEl = popupShadowRoot.getElementById('popup-reading');
+      const paneDict  = popupShadowRoot.getElementById('pane-dict');
+
       if (!res?.ok) {
-        el.innerHTML = res?.error === 'not_found'
+        badgesEl.innerHTML  = '';
+        readingEl.textContent = '';
+        paneDict.innerHTML = res?.error === 'not_found'
           ? '<span class="loading">見つかりませんでした</span>'
           : `<span class="error">エラー: ${res?.error ?? 'unknown'}</span>`;
+        fetchTatoeba(word, paneDict);
         return;
       }
 
-      // Badges
-      const badges = [
+      // Header badges
+      badgesEl.innerHTML = [
         res.isCommon ? '<span class="badge badge-common">よく使われる語</span>' : '',
         res.jlpt     ? `<span class="badge badge-jlpt">${res.jlpt}</span>`       : ''
       ].filter(Boolean).join('');
 
-      // Senses (each sense has parts_of_speech + definitions)
+      // Header reading
+      readingEl.textContent = res.reading ? `/${res.reading}/` : '';
+
+      // Meanings section
       const sensesHtml = (res.meanings ?? []).map((sense, i) => {
         const pos  = sense.partsOfSpeech?.join(', ') ?? '';
         const defs = sense.definitions ?? [];
@@ -450,16 +537,78 @@
         `;
       }).join('');
 
-      el.innerHTML = `
-        ${badges ? `<div class="dict-meta">${badges}</div>` : ''}
-        ${res.reading ? `<div class="dict-reading">${res.reading}</div>` : ''}
+      paneDict.innerHTML = `
+        <div class="section-label">📖 意味</div>
         ${sensesHtml || '<span class="loading">定義なし</span>'}
+        <div id="examples-section"></div>
       `;
+
+      // Fetch and inject examples
+      fetchTatoeba(word, paneDict);
     });
   }
 
   // -------------------------------------------------------
-  // Translation fetch — via background.js with retry
+  // Tatoeba example sentences fetch
+  // -------------------------------------------------------
+  function fetchTatoeba(word, paneDict) {
+    const exSection = paneDict.querySelector('#examples-section');
+    if (!exSection) return;
+
+    exSection.innerHTML = `
+      <div style="border-top:1px solid rgba(255,255,255,0.08);margin:10px 0;"></div>
+      <div class="section-label" style="margin-top:8px;">💬 例文 <span class="loading" style="font-weight:400;text-transform:none;letter-spacing:0;">(取得中...)</span></div>
+    `;
+
+    sendToBackground({ type: 'FETCH_TATOEBA', word }, (res) => {
+      const tatoebaUrl = `https://tatoeba.org/en/sentences/search?from=eng&to=jpn&query=${encodeURIComponent(word)}`;
+      const headerHtml = `
+        <div style="border-top:1px solid rgba(255,255,255,0.08);margin:10px 0;"></div>
+        <div class="examples-header">
+          <div class="section-label" style="margin-bottom:0;">💬 例文</div>
+          <a href="${tatoebaUrl}" target="_blank" rel="noopener noreferrer" class="tatoeba-link">Tatoeba ↗</a>
+        </div>
+      `;
+
+      if (!res?.ok || !res.results?.length) {
+        exSection.innerHTML = headerHtml + '<span class="loading" style="font-size:11px;">例文なし</span>';
+        return;
+      }
+
+      const itemsHtml = res.results.map(ex => {
+        const jaEscaped = (ex.translation || '')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        const enWords = ex.text.split(/\b/).map(tok => {
+          if (!/\w/.test(tok)) return tok;
+          const esc = tok.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+          return `<span class="atv-ex-word" data-word="${esc}">${esc}</span>`;
+        }).join('');
+        return `
+          <div class="example-item" data-ja="${jaEscaped}">
+            <div class="example-en">${enWords}</div>
+          </div>
+        `;
+      }).join('');
+
+      exSection.innerHTML = headerHtml + itemsHtml;
+
+      // Clicking a word in an example sentence re-searches that word
+      exSection.querySelectorAll('.atv-ex-word').forEach(span => {
+        span.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const w = span.dataset.word;
+          if (w) {
+            const popup  = popupShadowRoot.getElementById('popup');
+            const rect   = span.getBoundingClientRect();
+            showPopup(w, w, rect);
+          }
+        });
+      });
+    });
+  }
+
+  // -------------------------------------------------------
+  // Translation fetch
   // -------------------------------------------------------
   function fetchTranslation(text) {
     const el = popupShadowRoot.getElementById('pane-ai');
@@ -473,7 +622,7 @@
   }
 
   // -------------------------------------------------------
-  // Render clickable word spans (used for ALL subtitle blocks)
+  // Clickable word spans
   // -------------------------------------------------------
   function makeClickableSpans(text, sentence) {
     if (!text) return '';
@@ -499,12 +648,10 @@
     const currentTime = video ? video.currentTime : 0;
     const allBlocks   = [];
 
-    // Past entries
     subtitleHistory.forEach(h => {
       if (h.endTime <= currentTime) allBlocks.push({ ...h, state: 'past' });
     });
 
-    // Current cue
     const curPrimaryCue   = findCueAt(primaryTrack,   currentTime);
     const curSecondaryCue = findCueAt(secondaryTrack, currentTime);
     if (curPrimaryCue) {
@@ -517,7 +664,6 @@
       });
     }
 
-    // Future cues
     if (primaryTrack && primaryTrack.cues) {
       for (let i = 0; i < primaryTrack.cues.length; i++) {
         const c = primaryTrack.cues[i];
@@ -552,7 +698,6 @@
       `;
     }).join('');
 
-    // Attach word click + block seek handlers to ALL blocks
     list.querySelectorAll('.subtitle-block').forEach(blockEl => {
       blockEl.querySelectorAll('.atv-word').forEach(span => {
         span.addEventListener('mouseenter', () => span.style.background = 'rgba(255,220,80,0.3)');
@@ -648,7 +793,7 @@
   }
 
   // -------------------------------------------------------
-  // Toggle panel open/close
+  // Toggle panel
   // -------------------------------------------------------
   function togglePanel() {
     panelVisible = !panelVisible;
@@ -660,7 +805,6 @@
 
     if (panelHost)   panelHost.style.display  = panelVisible ? '' : 'none';
     if (overlayHost) overlayHost.style.width  = panelVisible ? '70%' : '100%';
-    // Toggle button visible only when panel is hidden
     if (toggleBtn)   toggleBtn.style.display  = panelVisible ? 'none' : 'block';
   }
 
@@ -729,7 +873,7 @@
     createToggleButton();
 
     console.log(
-      '[ATV-Bilingual] v2.4 ready | injected into:',
+      '[ATV-Bilingual] v2.5 ready | injected into:',
       dialogEl ? 'dialog.playback-view ✅' : 'document.body (fallback)',
       '| tracks:', settings.primaryLang, '+', settings.secondaryLang
     );

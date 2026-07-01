@@ -1,9 +1,10 @@
 // =============================================================
-// background.js - Service Worker (v2.4)
+// background.js - Service Worker (v2.5)
 // =============================================================
 // Content scripts run in the page context and are subject to
 // the page's CORS policy. Fetches from tv.apple.com to external
-// APIs (jisho.org, translate.googleapis.com) are blocked.
+// APIs (jisho.org, translate.googleapis.com, api.tatoeba.org)
+// are blocked.
 //
 // Solution: route all external API calls through this service
 // worker, which is NOT subject to CORS restrictions.
@@ -29,27 +30,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const entry = data.data?.[0];
         if (!entry) { sendResponse({ ok: false, error: 'not_found' }); return; }
 
-        // Reading
         const reading = entry.japanese?.[0]?.reading ?? '';
 
-        // All meanings (up to 5 senses, each with definitions + parts of speech)
         const senses = (entry.senses ?? []).slice(0, 5);
         const meanings = senses.map(s => ({
-          definitions: s.english_definitions ?? [],
-          partsOfSpeech: s.parts_of_speech ?? []
+          definitions:   s.english_definitions ?? [],
+          partsOfSpeech: s.parts_of_speech     ?? []
         }));
 
-        // JLPT level (e.g. "jlpt-n3" → "N3")
         const jlptRaw = entry.jlpt?.[0] ?? '';
-        const jlpt = jlptRaw ? jlptRaw.replace('jlpt-', '').toUpperCase() : '';
-
-        // Common word flag
+        const jlpt    = jlptRaw ? jlptRaw.replace('jlpt-', '').toUpperCase() : '';
         const isCommon = entry.is_common ?? false;
 
         sendResponse({ ok: true, reading, meanings, jlpt, isCommon });
       })
       .catch(e => sendResponse({ ok: false, error: e.message }));
-    return true; // keep message channel open for async response
+    return true;
   }
 
   // ---------- Translation (Google Translate) ----------
@@ -60,6 +56,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .then(data => {
         const translated = data[0].map(x => x[0]).join('');
         sendResponse({ ok: true, translated });
+      })
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
+  // ---------- Example sentences (Tatoeba) ----------
+  if (msg.type === 'FETCH_TATOEBA') {
+    const url = `https://api.tatoeba.org/unstable/sentences?q=${encodeURIComponent(msg.word)}&lang=eng&trans:lang=jpn&limit=5`;
+    fetch(url)
+      .then(r => r.json())
+      .then(data => {
+        const results = (data.data ?? []).slice(0, 5).map(s => ({
+          text:        s.text ?? '',
+          translation: s.translations?.[0]?.[0]?.text ?? ''
+        }));
+        sendResponse({ ok: true, results });
       })
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
