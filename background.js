@@ -1,54 +1,215 @@
 // =============================================================
 // background.js - Service Worker (v2.5)
 // =============================================================
-// Content scripts run in the page context and are subject to
-// the page's CORS policy. Fetches from tv.apple.com to external
-// APIs (jisho.org, translate.googleapis.com, api.tatoeba.org)
-// are blocked.
-//
-// Solution: route all external API calls through this service
-// worker, which is NOT subject to CORS restrictions.
-//
-// SW Keepalive: Manifest V3 service workers auto-stop after
-// ~30 seconds of inactivity. The activate handler + onInstalled
-// listener help keep the SW registered and responsive.
+// Routes all external API calls (CORS-blocked from tv.apple.com):
+//   FETCH_DICT    — Free Dictionary API + Jisho + EJDict (parallel)
+//   FETCH_TATOEBA — Tatoeba API (English sentences + Japanese translations)
+//   FETCH_TRANSLATE — Google Translate
 // =============================================================
 
-// Keep the service worker alive and claim clients immediately on activation
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('[ATV-Bilingual] background.js installed/updated');
+  console.log('[ATV-Bilingual] background.js v2.5 installed/updated');
 });
 
+// -------------------------------------------------------
+// EJDict — local bundled dictionary (loaded once)
+// -------------------------------------------------------
+let _ejdict = null;
+
+async function loadEJDict() {
+  if (_ejdict) return _ejdict;
+  const url  = self.registration.scope + 'dict/ejdict.txt';
+  const text = await fetch(url).then(r => r.text());
+  _ejdict = new Map();
+  for (const line of text.split('\n')) {
+    const tab = line.indexOf('\t');
+    if (tab === -1) continue;
+    const word = line.slice(0, tab).trim().toLowerCase();
+    const def  = line.slice(tab + 1).trim();
+    if (word && def) _ejdict.set(word, def);
+  }
+  return _ejdict;
+}
+
+async function ejdictLookup(word) {
+  const dict = await loadEJDict();
+  return dict.get(word.toLowerCase().trim()) ?? null;
+}
+
+// -------------------------------------------------------
+// Part-of-speech label (English → Japanese)
+// -------------------------------------------------------
+const POS_JA = {
+  'noun':         '名詞',
+  'verb':         '動詞',
+  'adjective':    '形容詞',
+  'adverb':       '副詞',
+  'preposition':  '前置詞',
+  'conjunction':  '接続詞',
+  'pronoun':      '代名詞',
+  'interjection': '間投詞',
+  'exclamation':  '感嘆詞',
+  'article':      '冠詞',
+  'abbreviation': '略語',
+  'numeral':      '数詞',
+  'suffix':       '接尾辞',
+  'prefix':       '接頭辞',
+};
+
+function posJa(pos) {
+  return POS_JA[pos.toLowerCase()] ?? pos;
+}
+
+// -------------------------------------------------------
+// Jisho — reading, JLPT, isCommon
+// -------------------------------------------------------
+async function fetchJisho(word) {
+  const r = await fetch(`https://jisho.org/api/v1/search/words?keyword=${encodeURIComponent(word)}`);
+  const data = await r.json();
+  const entry = data.data?.[0];
+  if (!entry) return {};
+  const jlptRaw = entry.jlpt?.[0] ?? '';
+  return {
+    reading:  entry.japanese?.[0]?.reading ?? '',
+    jlpt:     jlptRaw ? jlptRaw.replace('jlpt-', '').toUpperCase() : '',
+    isCommon: entry.is_common ?? false,
+  };
+}
+
+// -------------------------------------------------------
+// Free Dictionary API — POS, definitions, examples per POS
+// -------------------------------------------------------
+async function fetchFreeDictionary(word) {
+  const r = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`);
+  if (!r.ok) return null;
+  const data = await r.json();
+  const entry = data[0];
+  if (!entry) return null;
+
+  // phonetic (prefer entry with audio)
+  const phonetics = entry.phonetics ?? [];
+  const phonetic  = (phonetics.find(p => p.text && p.audio) ?? phonetics.find(p => p.text))?.text
+                 ?? entry.phonetic ?? '';
+
+  // meanings: [{pos, posJa, examples:[{text}]}]
+  const meanings = (entry.meanings ?? []).map(m => {
+    const examples = [];
+    for (const def of m.definitions ?? []) {
+      if (def.example) {
+        const ex = def.example.trim();
+        if (ex) examples.push({ text: ex.charAt(0).toUpperCase() + ex.slice(1) });
+      }
+      if (examples.length >= 5) break;
+    }
+    return {
+      pos:    m.partOfSpeech,
+      posJa:  posJa(m.partOfSpeech),
+      examples,
+    };
+  }).filter(m => m.examples.length > 0);
+
+  return { phonetic, meanings };
+}
+
+// -------------------------------------------------------
+// Google Translate — batch translate array of strings
+// -------------------------------------------------------
+async function batchTranslate(texts) {
+  if (!texts.length) return [];
+  const joined  = texts.join('\n');
+  const url     = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ja&dt=t&q=${encodeURIComponent(joined)}`;
+  const r       = await fetch(url);
+  const data    = await r.json();
+  const full    = data[0].map(x => x[0]).join('');
+  const parts   = full.split('\n');
+  while (parts.length < texts.length) parts.push('');
+  return parts.slice(0, texts.length);
+}
+
+// -------------------------------------------------------
+// Message handler
+// -------------------------------------------------------
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
-  // ---------- Dictionary lookup (Jisho) ----------
+  // ---------- FETCH_DICT ----------
   if (msg.type === 'FETCH_DICT') {
-    fetch(`https://jisho.org/api/v1/search/words?keyword=${encodeURIComponent(msg.word)}`)
-      .then(r => r.json())
-      .then(data => {
-        const entry = data.data?.[0];
-        if (!entry) { sendResponse({ ok: false, error: 'not_found' }); return; }
+    (async () => {
+      try {
+        const word = msg.word;
 
-        const reading = entry.japanese?.[0]?.reading ?? '';
+        // Parallel: Free Dictionary + Jisho + EJDict
+        const [freeDictResult, jishoResult, ejdictRaw] = await Promise.all([
+          fetchFreeDictionary(word).catch(() => null),
+          fetchJisho(word).catch(() => ({})),
+          ejdictLookup(word).catch(() => null),
+        ]);
 
-        const senses = (entry.senses ?? []).slice(0, 5);
-        const meanings = senses.map(s => ({
-          definitions:   s.english_definitions ?? [],
-          partsOfSpeech: s.parts_of_speech     ?? []
-        }));
+        if (!freeDictResult && !ejdictRaw) {
+          sendResponse({ ok: false, error: 'not_found' });
+          return;
+        }
 
-        const jlptRaw = entry.jlpt?.[0] ?? '';
-        const jlpt    = jlptRaw ? jlptRaw.replace('jlpt-', '').toUpperCase() : '';
-        const isCommon = entry.is_common ?? false;
+        // Collect all example texts for batch translation
+        const allExamples = [];
+        if (freeDictResult) {
+          for (const m of freeDictResult.meanings) {
+            for (const ex of m.examples) allExamples.push(ex.text);
+          }
+        }
 
-        sendResponse({ ok: true, reading, meanings, jlpt, isCommon });
-      })
-      .catch(e => sendResponse({ ok: false, error: e.message }));
+        // Batch translate examples
+        const translations = allExamples.length
+          ? await batchTranslate(allExamples).catch(() => allExamples.map(() => ''))
+          : [];
+
+        // Attach translations back to examples
+        let idx = 0;
+        if (freeDictResult) {
+          for (const m of freeDictResult.meanings) {
+            for (const ex of m.examples) {
+              ex.ja = translations[idx++] ?? '';
+            }
+          }
+        }
+
+        sendResponse({
+          ok:       true,
+          word,
+          phonetic: freeDictResult?.phonetic ?? '',
+          meanings: freeDictResult?.meanings ?? [],
+          ejdict:   ejdictRaw ?? '',
+          reading:  jishoResult.reading  ?? '',
+          jlpt:     jishoResult.jlpt     ?? '',
+          isCommon: jishoResult.isCommon ?? false,
+        });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
     return true;
   }
 
-  // ---------- Translation (Google Translate) ----------
+  // ---------- FETCH_TATOEBA ----------
+  if (msg.type === 'FETCH_TATOEBA') {
+    (async () => {
+      try {
+        const url  = `https://api.tatoeba.org/unstable/sentences?q=${encodeURIComponent(msg.word)}&lang=eng&trans:lang=jpn`;
+        const r    = await fetch(url);
+        const data = await r.json();
+        const results = (data.data ?? []).slice(0, 5).map(s => ({
+          text:        s.text ?? '',
+          translation: s.translations?.[0]?.[0]?.text ?? '',
+        })).filter(x => x.text);
+        sendResponse({ ok: true, results });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
+  // ---------- FETCH_TRANSLATE ----------
   if (msg.type === 'FETCH_TRANSLATE') {
     const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ja&dt=t&q=${encodeURIComponent(msg.text)}`;
     fetch(url)
@@ -56,45 +217,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .then(data => {
         const translated = data[0].map(x => x[0]).join('');
         sendResponse({ ok: true, translated });
-      })
-      .catch(e => sendResponse({ ok: false, error: e.message }));
-    return true;
-  }
-
-  // ---------- Example sentences (Tatoeba) ----------
-  // API notes:
-  //   - "sort" is a REQUIRED parameter (400 error without it)
-  //   - "trans:lang=jpn" filters to only sentences that have a Japanese translation
-  //   - Response: data[].translations is a FLAT array of translation objects
-  //     [{id, text, lang, ...}] — NOT double-nested.
-  if (msg.type === 'FETCH_TATOEBA') {
-    const url = [
-      'https://api.tatoeba.org/unstable/sentences',
-      `?q=${encodeURIComponent(msg.word)}`,
-      '&lang=eng',
-      '&sort=relevance',   // REQUIRED — API returns 400 without this
-      '&trans:lang=jpn',   // only return sentences that have a jpn translation
-      '&limit=10',         // fetch extra so we can filter to 5 with translations
-    ].join('');
-
-    fetch(url)
-      .then(r => r.json())
-      .then(data => {
-        const rows = data.data ?? [];
-
-        // translations is a flat array: [{id, text, lang, ...}, ...]
-        const results = [];
-        for (const s of rows) {
-          if (!s.text) continue;
-          const trans = Array.isArray(s.translations) ? s.translations : [];
-          const jpn = trans.find(t => t && t.lang === 'jpn');
-          if (jpn) {
-            results.push({ text: s.text, translation: jpn.text ?? '' });
-          }
-          if (results.length >= 5) break;
-        }
-
-        sendResponse({ ok: true, results });
       })
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
