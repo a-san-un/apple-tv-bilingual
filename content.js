@@ -1,5 +1,11 @@
 // =====================================================
-// Apple TV+ Bilingual Subtitles - content.js v2.1
+// Apple TV+ Bilingual Subtitles - content.js v2.2
+// =====================================================
+// Fix: Apple TV+ uses <dialog class="playback-view"> which is promoted
+// to the browser's Top Layer. Any element injected into document.body
+// is painted BELOW the dialog regardless of z-index.
+// Solution: inject all UI elements directly inside the <dialog>.
+// Confirmed: position:fixed inside dialog → top:0 right:0 ✅
 // =====================================================
 
 (function () {
@@ -14,6 +20,7 @@
   let panelVisible = true;
   let shadowRoot = null;
   let popupShadowRoot = null;
+  let dialogEl = null;
 
   // ---------- Helpers ----------
   function formatTime(sec) {
@@ -25,14 +32,9 @@
       : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
   }
 
-  // HTMLタグを除去してプレーンテキストを返す
   function cleanCueText(cue) {
     if (!cue) return '';
-    // VTTCue の getCueAsHTML() を使うのが最も確実
-    if (cue.getCueAsHTML) {
-      return cue.getCueAsHTML().textContent || '';
-    }
-    // フォールバック: 正規表現でタグ除去
+    if (cue.getCueAsHTML) return cue.getCueAsHTML().textContent || '';
     return (cue.text || '').replace(/<[^>]*>/g, '').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>');
   }
 
@@ -45,11 +47,20 @@
     return null;
   }
 
-  // ---------- Wait for video ----------
+  // ---------- Injection target ----------
+  // Inject into <dialog> so elements appear in the Top Layer.
+  // Fallback to document.body if dialog not yet present.
+  function getTarget() {
+    return dialogEl || document.body;
+  }
+
+  // ---------- Wait for video + dialog ----------
   function waitForVideo(cb) {
     const check = () => {
       const v = document.querySelector('video');
-      if (v && v.textTracks && v.textTracks.length > 1) {
+      const d = document.querySelector('dialog.playback-view');
+      if (v && v.textTracks && v.textTracks.length > 1 && d) {
+        dialogEl = d;
         cb(v);
       } else {
         setTimeout(check, 500);
@@ -86,140 +97,70 @@
     return candidates.find(t => t.cues && t.cues.length > 0) || candidates[0];
   }
 
-  // ---------- Layout: ビデオを左70%に縮める ----------
+  // ---------- Layout: shrink video container to 70% ----------
   function applyLayout(show) {
     const videoContainer = document.querySelector('.video-player__video-container');
     if (!videoContainer) return;
     if (show) {
       videoContainer.style.width = '70%';
       videoContainer.style.maxWidth = '70%';
+      videoContainer.style.flexShrink = '0';
     } else {
       videoContainer.style.width = '';
       videoContainer.style.maxWidth = '';
+      videoContainer.style.flexShrink = '';
     }
   }
 
-  // ---------- Shadow DOM for right panel (position:fixed) ----------
+  // ---------- Right panel ----------
   function createRightPanel() {
-    if (document.getElementById('atv-panel-host')) return;
+    if (getTarget().querySelector('#atv-panel-host')) return;
 
     const host = document.createElement('div');
     host.id = 'atv-panel-host';
-    // position:fixed で親レイアウトに依存しない
     host.style.cssText = [
-      'position:fixed',
-      'top:0',
-      'right:0',
-      'width:30%',
-      'height:100vh',
-      'z-index:2147483640',
-      'pointer-events:auto',
-      'box-sizing:border-box',
+      'position:fixed', 'top:0', 'right:0',
+      'width:30%', 'height:100vh',
+      'z-index:99999', 'pointer-events:auto', 'box-sizing:border-box',
     ].join(';');
-
-    document.body.appendChild(host);
+    getTarget().appendChild(host);
 
     shadowRoot = host.attachShadow({ mode: 'open' });
     shadowRoot.innerHTML = `
       <style>
         :host { display: block; height: 100%; }
         #panel {
-          width: 100%;
-          height: 100%;
-          background: #1a1a1a;
-          color: #fff;
+          width: 100%; height: 100%;
+          background: #1a1a1a; color: #fff;
           font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
-          font-size: 13px;
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-          box-sizing: border-box;
+          font-size: 13px; display: flex; flex-direction: column;
+          overflow: hidden; box-sizing: border-box;
         }
         #panel-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 10px 14px;
-          background: #111;
-          border-bottom: 1px solid #333;
-          flex-shrink: 0;
+          display: flex; justify-content: space-between; align-items: center;
+          padding: 10px 14px; background: #111;
+          border-bottom: 1px solid #333; flex-shrink: 0;
         }
-        #panel-header span {
-          font-size: 12px;
-          color: #888;
-          font-weight: 600;
-          letter-spacing: 0.05em;
-          text-transform: uppercase;
-        }
-        #toggle-btn {
-          background: none;
-          border: 1px solid #444;
-          color: #aaa;
-          cursor: pointer;
-          border-radius: 4px;
-          padding: 2px 8px;
-          font-size: 11px;
-        }
+        #panel-header span { font-size: 12px; color: #888; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+        #toggle-btn { background: none; border: 1px solid #444; color: #aaa; cursor: pointer; border-radius: 4px; padding: 2px 8px; font-size: 11px; }
         #toggle-btn:hover { background: #333; color: #fff; }
-        #panel-scroll {
-          flex: 1;
-          overflow-y: auto;
-          padding: 12px 14px;
-          scroll-behavior: smooth;
-        }
+        #panel-scroll { flex: 1; overflow-y: auto; padding: 12px 14px; scroll-behavior: smooth; }
         #panel-scroll::-webkit-scrollbar { width: 4px; }
         #panel-scroll::-webkit-scrollbar-track { background: #222; }
         #panel-scroll::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
-        .subtitle-block {
-          margin-bottom: 12px;
-          padding-bottom: 12px;
-          border-bottom: 1px solid #2a2a2a;
-          cursor: pointer;
-        }
+        .subtitle-block { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #2a2a2a; cursor: pointer; }
         .subtitle-block:hover { background: rgba(255,255,255,0.03); border-radius: 6px; }
-        .subtitle-block.current {
-          background: #2a2a2a;
-          border-radius: 6px;
-          padding: 8px;
-          border-left: 2px solid #ffe566;
-          border-bottom: none;
-          margin-bottom: 12px;
-        }
-        .subtitle-time {
-          font-size: 10px;
-          color: #555;
-          margin-bottom: 4px;
-          font-variant-numeric: tabular-nums;
-        }
+        .subtitle-block.current { background: #2a2a2a; border-radius: 6px; padding: 8px; border-left: 2px solid #ffe566; border-bottom: none; margin-bottom: 12px; }
+        .subtitle-time { font-size: 10px; color: #555; margin-bottom: 4px; font-variant-numeric: tabular-nums; }
         .subtitle-block.current .subtitle-time { color: #ffe566; }
-        .subtitle-primary {
-          color: #aaa;
-          font-size: 12px;
-          line-height: 1.5;
-          margin-bottom: 2px;
-        }
-        .subtitle-block.current .subtitle-primary {
-          color: #fff;
-          font-size: 14px;
-          font-weight: 500;
-        }
-        .subtitle-secondary {
-          color: #666;
-          font-size: 11px;
-          line-height: 1.5;
-        }
-        .subtitle-block.current .subtitle-secondary {
-          color: #ccc;
-          font-size: 13px;
-        }
+        .subtitle-primary { color: #aaa; font-size: 12px; line-height: 1.5; margin-bottom: 2px; }
+        .subtitle-block.current .subtitle-primary { color: #fff; font-size: 14px; font-weight: 500; }
+        .subtitle-secondary { color: #666; font-size: 11px; line-height: 1.5; }
+        .subtitle-block.current .subtitle-secondary { color: #ccc; font-size: 13px; }
         .subtitle-future .subtitle-primary { color: #555; }
         .subtitle-future .subtitle-secondary { color: #444; }
         .subtitle-future .subtitle-time { color: #3a3a3a; }
-        .atv-word {
-          cursor: pointer;
-          border-radius: 2px;
-          padding: 0 1px;
-        }
+        .atv-word { cursor: pointer; border-radius: 2px; padding: 0 1px; }
         .atv-word:hover { background: rgba(255,220,80,0.3); }
       </style>
       <div id="panel">
@@ -227,67 +168,40 @@
           <span>📋 字幕履歴</span>
           <button id="toggle-btn">✕ 閉じる</button>
         </div>
-        <div id="panel-scroll">
-          <div id="subtitle-list"></div>
-        </div>
+        <div id="panel-scroll"><div id="subtitle-list"></div></div>
       </div>
     `;
-
-    shadowRoot.getElementById('toggle-btn').addEventListener('click', () => {
-      togglePanel();
-    });
+    shadowRoot.getElementById('toggle-btn').addEventListener('click', () => togglePanel());
   }
 
-  // ---------- Shadow DOM for popup ----------
+  // ---------- Popup ----------
   function createPopupHost() {
-    if (document.getElementById('atv-popup-host')) return;
+    if (getTarget().querySelector('#atv-popup-host')) return;
     const host = document.createElement('div');
     host.id = 'atv-popup-host';
-    host.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;z-index:2147483647;pointer-events:none;';
-    document.body.appendChild(host);
+    host.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;z-index:999999;pointer-events:none;';
+    getTarget().appendChild(host);
+
     popupShadowRoot = host.attachShadow({ mode: 'open' });
     popupShadowRoot.innerHTML = `
       <style>
         #popup {
-          display: none;
-          position: fixed;
-          width: 300px;
-          background: #1c1c1e;
-          border: 1px solid rgba(255,255,255,0.15);
-          border-radius: 12px;
-          overflow: hidden;
+          display: none; position: fixed; width: 300px;
+          background: #1c1c1e; border: 1px solid rgba(255,255,255,0.15);
+          border-radius: 12px; overflow: hidden;
           box-shadow: 0 8px 32px rgba(0,0,0,0.8);
           font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
-          font-size: 13px;
-          color: #f0f0f0;
-          pointer-events: auto;
-          z-index: 2147483647;
+          font-size: 13px; color: #f0f0f0; pointer-events: auto; z-index: 999999;
         }
-        #popup-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 10px 14px;
-          background: rgba(255,255,255,0.06);
-          border-bottom: 1px solid rgba(255,255,255,0.08);
-        }
+        #popup-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: rgba(255,255,255,0.06); border-bottom: 1px solid rgba(255,255,255,0.08); }
         #popup-word { font-size: 1.1rem; font-weight: 700; color: #ffe566; }
-        #popup-close {
-          background: none; border: none; color: rgba(255,255,255,0.5);
-          cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px;
-        }
+        #popup-close { background: none; border: none; color: rgba(255,255,255,0.5); cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px; }
         #popup-close:hover { color: #fff; }
         #popup-tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,0.08); }
-        .popup-tab {
-          flex: 1; padding: 8px; background: none; border: none;
-          color: #aaa; cursor: pointer; font-size: 12px; transition: background 0.15s;
-        }
+        .popup-tab { flex: 1; padding: 8px; background: none; border: none; color: #aaa; cursor: pointer; font-size: 12px; }
         .popup-tab.active { background: rgba(255,255,255,0.08); color: #fff; }
         .popup-tab:hover { background: rgba(255,255,255,0.05); }
-        .popup-pane {
-          padding: 12px 14px; min-height: 60px; max-height: 200px;
-          overflow-y: auto; display: none;
-        }
+        .popup-pane { padding: 12px 14px; min-height: 60px; max-height: 200px; overflow-y: auto; display: none; }
         .popup-pane.active { display: block; }
         .dict-reading { color: #aaa; font-size: 11px; margin-bottom: 4px; }
         .dict-meaning { color: #fff; font-size: 13px; }
@@ -297,10 +211,7 @@
         .error { color: #ff6b6b; font-size: 12px; }
       </style>
       <div id="popup">
-        <div id="popup-header">
-          <span id="popup-word"></span>
-          <button id="popup-close">✕</button>
-        </div>
+        <div id="popup-header"><span id="popup-word"></span><button id="popup-close">✕</button></div>
         <div id="popup-tabs">
           <button class="popup-tab active" data-tab="dict">📖 辞書</button>
           <button class="popup-tab" data-tab="ai">🤖 AI翻訳</button>
@@ -311,9 +222,7 @@
     `;
 
     const p = popupShadowRoot.getElementById('popup');
-    popupShadowRoot.getElementById('popup-close').addEventListener('click', () => {
-      p.style.display = 'none';
-    });
+    popupShadowRoot.getElementById('popup-close').addEventListener('click', () => { p.style.display = 'none'; });
     popupShadowRoot.querySelectorAll('.popup-tab').forEach(btn => {
       btn.addEventListener('click', () => {
         popupShadowRoot.querySelectorAll('.popup-tab').forEach(b => b.classList.remove('active'));
@@ -343,10 +252,9 @@
     popup.style.display = 'block';
     const pw = 300;
     let left = anchorRect.left;
-    let top = anchorRect.top - 8;
+    let top = anchorRect.top - 120;
     if (left + pw > window.innerWidth) left = window.innerWidth - pw - 8;
-    if (top - 120 < 0) top = anchorRect.bottom + 8;
-    else top = anchorRect.top - 120;
+    if (top < 8) top = anchorRect.bottom + 8;
     popup.style.left = left + 'px';
     popup.style.top = top + 'px';
 
@@ -407,19 +315,15 @@
     const allBlocks = [];
 
     subtitleHistory.forEach(h => {
-      if (h.endTime <= currentTime) {
-        allBlocks.push({ ...h, state: 'past' });
-      }
+      if (h.endTime <= currentTime) allBlocks.push({ ...h, state: 'past' });
     });
 
     const curPrimaryCue = findCueAt(primaryTrack, currentTime);
     const curSecondaryCue = findCueAt(secondaryTrack, currentTime);
     if (curPrimaryCue) {
       allBlocks.push({
-        startTime: curPrimaryCue.startTime,
-        endTime: curPrimaryCue.endTime,
-        primary: cleanCueText(curPrimaryCue),
-        secondary: cleanCueText(curSecondaryCue),
+        startTime: curPrimaryCue.startTime, endTime: curPrimaryCue.endTime,
+        primary: cleanCueText(curPrimaryCue), secondary: cleanCueText(curSecondaryCue),
         state: 'current'
       });
     }
@@ -430,10 +334,8 @@
         if (c.startTime > currentTime + 0.1) {
           const sc = findCueAt(secondaryTrack, c.startTime + 0.05);
           allBlocks.push({
-            startTime: c.startTime,
-            endTime: c.endTime,
-            primary: cleanCueText(c),
-            secondary: cleanCueText(sc),
+            startTime: c.startTime, endTime: c.endTime,
+            primary: cleanCueText(c), secondary: cleanCueText(sc),
             state: 'future'
           });
         }
@@ -444,15 +346,13 @@
       const isCurrent = block.state === 'current';
       const isFuture = block.state === 'future';
       const cls = isCurrent ? 'subtitle-block current' : isFuture ? 'subtitle-block subtitle-future' : 'subtitle-block';
-      const marker_id = isCurrent ? 'id="current-block"' : '';
-      const pText = isCurrent
-        ? makeClickableSpans(block.primary, block.primary)
+      const mid = isCurrent ? 'id="current-block"' : '';
+      const pText = isCurrent ? makeClickableSpans(block.primary, block.primary)
         : (block.primary || '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
-      const sText = isCurrent
-        ? makeClickableSpans(block.secondary, block.primary)
+      const sText = isCurrent ? makeClickableSpans(block.secondary, block.primary)
         : (block.secondary || '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
       return `
-        <div class="${cls}" ${marker_id} data-time="${block.startTime}">
+        <div class="${cls}" ${mid} data-time="${block.startTime}">
           <div class="subtitle-time">${isCurrent ? '▶ ' : ''}${formatTime(block.startTime)}</div>
           <div class="subtitle-primary">${pText}</div>
           ${sText ? `<div class="subtitle-secondary">${sText}</div>` : ''}
@@ -460,74 +360,45 @@
       `;
     }).join('');
 
-    // Word click handlers
     const currentBlock = shadowRoot.getElementById('current-block');
     if (currentBlock) {
       currentBlock.querySelectorAll('.atv-word').forEach(span => {
         span.addEventListener('mouseenter', () => span.style.background = 'rgba(255,220,80,0.3)');
         span.addEventListener('mouseleave', () => span.style.background = '');
         span.addEventListener('click', (e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          const rect = span.getBoundingClientRect();
-          showPopup(span.dataset.word, decodeURIComponent(span.dataset.sentence), rect);
+          e.stopPropagation(); e.preventDefault();
+          showPopup(span.dataset.word, decodeURIComponent(span.dataset.sentence), span.getBoundingClientRect());
         });
       });
       currentBlock.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
-    // Seek on block click
     list.querySelectorAll('.subtitle-block[data-time]').forEach(block => {
       block.addEventListener('click', (e) => {
         if (e.target.classList.contains('atv-word')) return;
-        e.stopPropagation();
-        e.preventDefault();
+        e.stopPropagation(); e.preventDefault();
         const t = parseFloat(block.dataset.time);
-        if (video && !isNaN(t)) {
-          video.currentTime = t;
-          setTimeout(() => renderPanel(), 100);
-        }
+        if (video && !isNaN(t)) { video.currentTime = t; setTimeout(() => renderPanel(), 100); }
       });
     });
   }
 
-  // ---------- Overlay (動画左70%エリアの下部) ----------
+  // ---------- Overlay ----------
   function createOverlay() {
-    if (document.getElementById('atv-overlay-host')) return;
+    if (getTarget().querySelector('#atv-overlay-host')) return;
     const host = document.createElement('div');
     host.id = 'atv-overlay-host';
     host.style.cssText = [
-      'position:fixed',
-      'bottom:80px',
-      'left:0',
-      'width:70%',
-      'z-index:2147483639',
-      'pointer-events:none',
-      'text-align:center',
+      'position:fixed', 'bottom:80px', 'left:0',
+      'width:70%', 'z-index:99998', 'pointer-events:none', 'text-align:center',
     ].join(';');
-    document.body.appendChild(host);
+    getTarget().appendChild(host);
 
     const overlayRoot = host.attachShadow({ mode: 'open' });
     overlayRoot.innerHTML = `
       <style>
-        #overlay {
-          display: inline-block;
-          background: rgba(0,0,0,0.7);
-          border-radius: 6px;
-          padding: 6px 16px;
-          max-width: 80%;
-          text-align: center;
-          pointer-events: auto;
-        }
-        .sub-line {
-          display: block;
-          font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
-          font-size: 18px;
-          font-weight: 500;
-          color: #fff;
-          text-shadow: 0 1px 3px rgba(0,0,0,0.9);
-          line-height: 1.4;
-        }
+        #overlay { display: inline-block; background: rgba(0,0,0,0.7); border-radius: 6px; padding: 6px 16px; max-width: 80%; text-align: center; pointer-events: auto; }
+        .sub-line { display: block; font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif; font-size: 18px; font-weight: 500; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.9); line-height: 1.4; }
         .atv-word { cursor: pointer; border-radius: 2px; padding: 0 1px; }
         .atv-word:hover { background: rgba(255,220,80,0.4); }
       </style>
@@ -545,23 +416,39 @@
     const p = root.getElementById('ov-primary');
     const s = root.getElementById('ov-secondary');
     if (!p || !s) return;
-
     if (!primaryText) { p.innerHTML = ''; s.innerHTML = ''; return; }
 
-    const sentence = primaryText;
     p.innerHTML = primaryText.split(' ').map(word => {
       const escaped = word.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-      return `<span class="atv-word" data-word="${escaped}" data-sentence="${encodeURIComponent(sentence)}">${escaped}</span>`;
+      return `<span class="atv-word" data-word="${escaped}" data-sentence="${encodeURIComponent(primaryText)}">${escaped}</span>`;
     }).join(' ');
     s.textContent = secondaryText || '';
 
     p.querySelectorAll('.atv-word').forEach(span => {
       span.addEventListener('click', (e) => {
         e.stopPropagation();
-        const rect = span.getBoundingClientRect();
-        showPopup(span.dataset.word, decodeURIComponent(span.dataset.sentence), rect);
+        showPopup(span.dataset.word, decodeURIComponent(span.dataset.sentence), span.getBoundingClientRect());
       });
     });
+  }
+
+  // ---------- Toggle button ----------
+  function createToggleButton() {
+    if (getTarget().querySelector('#atv-toggle-btn')) return;
+    const btn = document.createElement('button');
+    btn.id = 'atv-toggle-btn';
+    btn.textContent = '📋';
+    btn.title = '字幕パネルを切り替え';
+    btn.style.cssText = [
+      'position:fixed', 'bottom:20px', 'right:20px', 'z-index:999999',
+      'background:rgba(0,0,0,0.7)', 'color:white',
+      'border:1px solid rgba(255,255,255,0.2)', 'border-radius:50%',
+      'width:40px', 'height:40px', 'font-size:18px', 'cursor:pointer',
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'backdrop-filter:blur(4px)',
+    ].join(';');
+    btn.addEventListener('click', (e) => { e.stopPropagation(); togglePanel(); });
+    getTarget().appendChild(btn);
   }
 
   // ---------- cuechange ----------
@@ -577,14 +464,11 @@
     if (pText && pText !== lastPrimaryText && pCue) {
       lastPrimaryText = pText;
       subtitleHistory.push({
-        startTime: pCue.startTime,
-        endTime: pCue.endTime,
-        primary: pText,
-        secondary: sText
+        startTime: pCue.startTime, endTime: pCue.endTime,
+        primary: pText, secondary: sText
       });
       if (subtitleHistory.length > 500) subtitleHistory.shift();
     }
-
     renderPanel();
   }
 
@@ -592,42 +476,10 @@
   function togglePanel() {
     panelVisible = !panelVisible;
     applyLayout(panelVisible);
-    const host = document.getElementById('atv-panel-host');
-    const overlayHost = document.getElementById('atv-overlay-host');
+    const host = getTarget().querySelector('#atv-panel-host');
+    const overlayHost = getTarget().querySelector('#atv-overlay-host');
     if (host) host.style.display = panelVisible ? '' : 'none';
     if (overlayHost) overlayHost.style.width = panelVisible ? '70%' : '100%';
-  }
-
-  // ---------- Toggle button ----------
-  function createToggleButton() {
-    if (document.getElementById('atv-toggle-btn')) return;
-    const btn = document.createElement('button');
-    btn.id = 'atv-toggle-btn';
-    btn.textContent = '📋';
-    btn.title = '字幕パネルを切り替え';
-    btn.style.cssText = [
-      'position:fixed',
-      'bottom:20px',
-      'right:20px',
-      'z-index:2147483647',
-      'background:rgba(0,0,0,0.7)',
-      'color:white',
-      'border:1px solid rgba(255,255,255,0.2)',
-      'border-radius:50%',
-      'width:40px',
-      'height:40px',
-      'font-size:18px',
-      'cursor:pointer',
-      'display:flex',
-      'align-items:center',
-      'justify-content:center',
-      'backdrop-filter:blur(4px)',
-    ].join(';');
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      togglePanel();
-    });
-    document.body.appendChild(btn);
   }
 
   // ---------- Attach tracks ----------
@@ -663,7 +515,9 @@
     createPopupHost();
     createToggleButton();
 
-    console.log('[ATV-Bilingual] v2.1 Started:', settings.primaryLang, '+', settings.secondaryLang);
+    console.log('[ATV-Bilingual] v2.2 ready | injected into:',
+      dialogEl ? 'dialog.playback-view ✅' : 'document.body (fallback)',
+      '| tracks:', settings.primaryLang, '+', settings.secondaryLang);
   }
 
   // ---------- Messages from popup ----------
@@ -671,8 +525,7 @@
     if (msg.type === 'SETTINGS_CHANGED') {
       settings.primaryLang   = msg.primaryLang;
       settings.secondaryLang = msg.secondaryLang;
-      subtitleHistory = [];
-      lastPrimaryText = '';
+      subtitleHistory = []; lastPrimaryText = '';
       if (video) startBilingual();
     }
     if (msg.type === 'GET_LANGUAGES') {
