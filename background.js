@@ -63,28 +63,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // ---------- Example sentences (Tatoeba) ----------
   // API notes:
-  //   - Endpoint: https://api.tatoeba.org/unstable/sentences
-  //   - q=<word>&lang=eng  ... search English sentences
-  //   - trans:lang=jpn     ... request Japanese translations to be included
-  //   - Response: data[].text (English), data[].translations (flat array of
-  //     translation objects: [{id, text, lang, ...}])
-  //   - We pick the first item whose lang === 'jpn' as the Japanese translation.
+  //   - "sort" is a REQUIRED parameter (400 error without it)
+  //   - "trans:lang=jpn" filters to only sentences that have a Japanese translation
+  //   - Response: data[].translations is a FLAT array of translation objects
+  //     [{id, text, lang, ...}] — NOT double-nested.
   if (msg.type === 'FETCH_TATOEBA') {
-    const url = `https://api.tatoeba.org/unstable/sentences?q=${encodeURIComponent(msg.word)}&lang=eng&trans:lang=jpn&limit=10`;
+    const url = [
+      'https://api.tatoeba.org/unstable/sentences',
+      `?q=${encodeURIComponent(msg.word)}`,
+      '&lang=eng',
+      '&sort=relevance',   // REQUIRED — API returns 400 without this
+      '&trans:lang=jpn',   // only return sentences that have a jpn translation
+      '&limit=10',         // fetch extra so we can filter to 5 with translations
+    ].join('');
+
     fetch(url)
       .then(r => r.json())
       .then(data => {
         const rows = data.data ?? [];
 
         // translations is a flat array: [{id, text, lang, ...}, ...]
-        // Filter sentences that actually have a Japanese translation.
         const results = [];
         for (const s of rows) {
           if (!s.text) continue;
           const trans = Array.isArray(s.translations) ? s.translations : [];
-          // Each element can itself be an array (grouped) or a plain object
-          const flat = trans.flat ? trans.flat(1) : [].concat(...trans);
-          const jpn = flat.find(t => t && t.lang === 'jpn');
+          const jpn = trans.find(t => t && t.lang === 'jpn');
           if (jpn) {
             results.push({ text: s.text, translation: jpn.text ?? '' });
           }
