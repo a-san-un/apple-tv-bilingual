@@ -8,117 +8,97 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       width: 280px;
-      font-family: -apple-system, 'Helvetica Neue', sans-serif;
-      font-size: 13px;
-      background: #1c1c1e;
+      background: #1a1a1a;
       color: #f0f0f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+      font-size: 13px;
     }
     header {
-      padding: 12px 14px 10px;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
-      background: rgba(255,255,255,0.04);
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid #2a2a2a;
     }
     header h1 {
-      font-size: 14px;
-      font-weight: 700;
+      font-size: 15px;
+      font-weight: 600;
       color: #fff;
-      letter-spacing: -0.01em;
     }
     header p {
       font-size: 11px;
-      color: rgba(255,255,255,0.4);
+      color: #666;
       margin-top: 2px;
     }
-    main { padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
-
-    .field { display: flex; flex-direction: column; gap: 5px; }
-    label {
+    .section {
+      padding: 14px 16px;
+      border-bottom: 1px solid #2a2a2a;
+    }
+    .section label {
+      display: block;
       font-size: 11px;
-      font-weight: 600;
+      color: #888;
       text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: rgba(255,255,255,0.4);
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
     }
     select {
       width: 100%;
-      padding: 7px 10px;
-      background: rgba(255,255,255,0.07);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 7px;
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
       color: #f0f0f0;
+      border-radius: 6px;
+      padding: 7px 10px;
       font-size: 13px;
       appearance: none;
       cursor: pointer;
     }
-    select:focus { outline: none; border-color: rgba(255,220,80,0.5); }
-
-    .divider {
-      height: 1px;
-      background: rgba(255,255,255,0.07);
-    }
-
-    .field-ai { display: flex; flex-direction: column; gap: 5px; }
-    input[type="text"] {
-      width: 100%;
-      padding: 7px 10px;
-      background: rgba(255,255,255,0.07);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 7px;
-      color: #f0f0f0;
-      font-size: 12px;
-    }
-    input[type="text"]::placeholder { color: rgba(255,255,255,0.25); }
-    input[type="text"]:focus { outline: none; border-color: rgba(255,220,80,0.5); }
-
-    button#apply {
-      width: 100%;
-      padding: 9px;
+    select:focus { outline: 1px solid #ffe566; }
+    .btn-apply {
+      display: block;
+      width: calc(100% - 32px);
+      margin: 14px 16px;
+      padding: 10px;
       background: #ffe566;
       color: #1a1a1a;
       border: none;
       border-radius: 8px;
-      font-size: 13px;
-      font-weight: 700;
+      font-size: 14px;
+      font-weight: 600;
       cursor: pointer;
-      transition: background 150ms;
+      transition: background 0.15s;
     }
-    button#apply:hover { background: #ffd700; }
-
+    .btn-apply:hover { background: #ffd633; }
     #status {
-      font-size: 11px;
-      color: rgba(255,255,255,0.4);
       text-align: center;
-      min-height: 16px;
+      font-size: 11px;
+      color: #888;
+      padding: 0 16px 14px;
+      min-height: 18px;
     }
-    #status.ok { color: #6daa45; }
-    #status.err { color: #dd6974; }
+    .loading { color: #555; font-size: 12px; padding: 8px 0; }
   </style>
 </head>
 <body>
   <header>
-    <h1>🎬 ATV Bilingual Subtitles</h1>
-    <p>Apple TV+ 2言語字幕</p>
+    <h1>🎬 ATV Bilingual</h1>
+    <p>Apple TV+ バイリンガル字幕</p>
   </header>
-  <main>
-    <div class="field">
-      <label>メイン字幕（上段）</label>
-      <select id="primaryLang"></select>
-    </div>
-    <div class="field">
-      <label>サブ字幕（下段）</label>
-      <select id="secondaryLang"></select>
-    </div>
 
-    <div class="divider"></div>
+  <div class="section">
+    <label>メイン字幕（上段）</label>
+    <select id="primary-lang">
+      <option value="">読み込み中...</option>
+    </select>
+  </div>
 
-    <div class="field-ai">
-      <label>🤖 AI翻訳 APIキー（任意）</label>
-      <input type="text" id="apiKey" placeholder="OpenAI / Gemini API Key" autocomplete="off">
-    </div>
+  <div class="section">
+    <label>サブ字幕（下段）</label>
+    <select id="secondary-lang">
+      <option value="">読み込み中...</option>
+    </select>
+  </div>
 
-    <button id="apply">適用する</button>
-    <div id="status"></div>
-  </main>
+  <button class="btn-apply" id="apply-btn">適用</button>
+  <div id="status"></div>
+
   <script src="popup.js"></script>
 </body>
 </html>

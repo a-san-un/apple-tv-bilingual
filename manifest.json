@@ -1,16 +1,22 @@
 {
   "manifest_version": 3,
   "name": "Apple TV+ Bilingual Subtitles",
-  "version": "0.1.0",
-  "description": "Display dual subtitles on Apple TV+ with dictionary popup and AI translation",
+  "version": "2.0.0",
+  "description": "Displays bilingual subtitles with right panel and dictionary popup on Apple TV+",
   "permissions": ["storage"],
-  "host_permissions": ["https://tv.apple.com/*"],
-  "content_scripts": [{
-    "matches": ["https://tv.apple.com/*"],
-    "js": ["content.js"],
-    "css": ["overlay.css"],
-    "run_at": "document_idle"
-  }],
+  "host_permissions": [
+    "https://tv.apple.com/*",
+    "https://jisho.org/*",
+    "https://translate.googleapis.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://tv.apple.com/*"],
+      "js": ["content.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle"
+    }
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "ATV Bilingual"
