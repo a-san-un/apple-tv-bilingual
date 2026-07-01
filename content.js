@@ -1,5 +1,5 @@
 // =====================================================
-// Apple TV+ Bilingual Subtitles - content.js v2.0
+// Apple TV+ Bilingual Subtitles - content.js v2.1
 // =====================================================
 
 (function () {
@@ -10,7 +10,7 @@
   let primaryTrack = null;
   let secondaryTrack = null;
   let settings = { primaryLang: 'en', secondaryLang: 'ja' };
-  let subtitleHistory = [];   // { startTime, endTime, primary, secondary }
+  let subtitleHistory = [];
   let panelVisible = true;
   let shadowRoot = null;
   let popupShadowRoot = null;
@@ -23,6 +23,17 @@
     return h > 0
       ? `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
       : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  }
+
+  // HTMLタグを除去してプレーンテキストを返す
+  function cleanCueText(cue) {
+    if (!cue) return '';
+    // VTTCue の getCueAsHTML() を使うのが最も確実
+    if (cue.getCueAsHTML) {
+      return cue.getCueAsHTML().textContent || '';
+    }
+    // フォールバック: 正規表現でタグ除去
+    return (cue.text || '').replace(/<[^>]*>/g, '').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>');
   }
 
   function findCueAt(track, time) {
@@ -75,35 +86,38 @@
     return candidates.find(t => t.cues && t.cues.length > 0) || candidates[0];
   }
 
-  // ---------- Layout: 70/30 split ----------
+  // ---------- Layout: ビデオを左70%に縮める ----------
   function applyLayout(show) {
-    const content = document.querySelector('.video-player__content');
     const videoContainer = document.querySelector('.video-player__video-container');
-    if (!content || !videoContainer) return;
-
+    if (!videoContainer) return;
     if (show) {
-      content.style.display = 'flex';
-      content.style.alignItems = 'stretch';
       videoContainer.style.width = '70%';
-      videoContainer.style.flexShrink = '0';
+      videoContainer.style.maxWidth = '70%';
     } else {
-      content.style.display = '';
       videoContainer.style.width = '';
-      videoContainer.style.flexShrink = '';
+      videoContainer.style.maxWidth = '';
     }
   }
 
-  // ---------- Shadow DOM for right panel ----------
+  // ---------- Shadow DOM for right panel (position:fixed) ----------
   function createRightPanel() {
     if (document.getElementById('atv-panel-host')) return;
 
     const host = document.createElement('div');
     host.id = 'atv-panel-host';
-    host.style.cssText = 'width:30%;flex-shrink:0;position:relative;';
+    // position:fixed で親レイアウトに依存しない
+    host.style.cssText = [
+      'position:fixed',
+      'top:0',
+      'right:0',
+      'width:30%',
+      'height:100vh',
+      'z-index:2147483640',
+      'pointer-events:auto',
+      'box-sizing:border-box',
+    ].join(';');
 
-    const content = document.querySelector('.video-player__content');
-    if (!content) return;
-    content.appendChild(host);
+    document.body.appendChild(host);
 
     shadowRoot = host.attachShadow({ mode: 'open' });
     shadowRoot.innerHTML = `
@@ -177,9 +191,7 @@
           margin-bottom: 4px;
           font-variant-numeric: tabular-nums;
         }
-        .subtitle-block.current .subtitle-time {
-          color: #ffe566;
-        }
+        .subtitle-block.current .subtitle-time { color: #ffe566; }
         .subtitle-primary {
           color: #aaa;
           font-size: 12px;
@@ -209,9 +221,6 @@
           padding: 0 1px;
         }
         .atv-word:hover { background: rgba(255,220,80,0.3); }
-        #current-marker {
-          height: 0;
-        }
       </style>
       <div id="panel">
         <div id="panel-header">
@@ -220,7 +229,6 @@
         </div>
         <div id="panel-scroll">
           <div id="subtitle-list"></div>
-          <div id="current-marker"></div>
         </div>
       </div>
     `;
@@ -263,46 +271,22 @@
           background: rgba(255,255,255,0.06);
           border-bottom: 1px solid rgba(255,255,255,0.08);
         }
-        #popup-word {
-          font-size: 1.1rem;
-          font-weight: 700;
-          color: #ffe566;
-        }
+        #popup-word { font-size: 1.1rem; font-weight: 700; color: #ffe566; }
         #popup-close {
-          background: none;
-          border: none;
-          color: rgba(255,255,255,0.5);
-          cursor: pointer;
-          font-size: 16px;
-          line-height: 1;
-          padding: 0 4px;
+          background: none; border: none; color: rgba(255,255,255,0.5);
+          cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px;
         }
         #popup-close:hover { color: #fff; }
-        #popup-tabs {
-          display: flex;
-          border-bottom: 1px solid rgba(255,255,255,0.08);
-        }
+        #popup-tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,0.08); }
         .popup-tab {
-          flex: 1;
-          padding: 8px;
-          background: none;
-          border: none;
-          color: #aaa;
-          cursor: pointer;
-          font-size: 12px;
-          transition: background 0.15s;
+          flex: 1; padding: 8px; background: none; border: none;
+          color: #aaa; cursor: pointer; font-size: 12px; transition: background 0.15s;
         }
-        .popup-tab.active {
-          background: rgba(255,255,255,0.08);
-          color: #fff;
-        }
+        .popup-tab.active { background: rgba(255,255,255,0.08); color: #fff; }
         .popup-tab:hover { background: rgba(255,255,255,0.05); }
         .popup-pane {
-          padding: 12px 14px;
-          min-height: 60px;
-          max-height: 200px;
-          overflow-y: auto;
-          display: none;
+          padding: 12px 14px; min-height: 60px; max-height: 200px;
+          overflow-y: auto; display: none;
         }
         .popup-pane.active { display: block; }
         .dict-reading { color: #aaa; font-size: 11px; margin-bottom: 4px; }
@@ -351,19 +335,18 @@
     popupShadowRoot.getElementById('popup-word').textContent = clean;
     popupShadowRoot.getElementById('pane-dict').innerHTML = '<span class="loading">検索中...</span>';
     popupShadowRoot.getElementById('pane-ai').innerHTML = '<span class="loading">翻訳中...</span>';
-    // Reset tabs
     popupShadowRoot.querySelectorAll('.popup-tab').forEach(b => b.classList.remove('active'));
     popupShadowRoot.querySelectorAll('.popup-pane').forEach(b => b.classList.remove('active'));
     popupShadowRoot.querySelector('[data-tab="dict"]').classList.add('active');
     popupShadowRoot.getElementById('pane-dict').classList.add('active');
 
     popup.style.display = 'block';
-    // Position
     const pw = 300;
     let left = anchorRect.left;
-    let top = anchorRect.top - popup.offsetHeight - 8;
+    let top = anchorRect.top - 8;
     if (left + pw > window.innerWidth) left = window.innerWidth - pw - 8;
-    if (top < 0) top = anchorRect.bottom + 8;
+    if (top - 120 < 0) top = anchorRect.bottom + 8;
+    else top = anchorRect.top - 120;
     popup.style.left = left + 'px';
     popup.style.top = top + 'px';
 
@@ -396,7 +379,7 @@
       const res = await fetch(url);
       const data = await res.json();
       const translated = data[0].map(x => x[0]).join('');
-      el.innerHTML = `<div class="ai-label">文全体の翻訳：</div><div class="ai-result">${translated}</div>`;
+      el.innerHTML = `<div class="ai-label">翻訳：</div><div class="ai-result">${translated}</div>`;
     } catch (e) {
       el.innerHTML = `<span class="error">エラー: ${e.message}</span>`;
     }
@@ -418,37 +401,29 @@
   function renderPanel() {
     if (!shadowRoot) return;
     const list = shadowRoot.getElementById('subtitle-list');
-    const marker = shadowRoot.getElementById('current-marker');
     if (!list) return;
 
     const currentTime = video ? video.currentTime : 0;
-
-    // Build list of all cues: history + current + future (from track cues)
-    // History: from subtitleHistory array
-    // Current + future: from primaryTrack.cues
     const allBlocks = [];
 
-    // Past (from history, excluding current)
     subtitleHistory.forEach(h => {
       if (h.endTime <= currentTime) {
         allBlocks.push({ ...h, state: 'past' });
       }
     });
 
-    // Current cue
     const curPrimaryCue = findCueAt(primaryTrack, currentTime);
     const curSecondaryCue = findCueAt(secondaryTrack, currentTime);
     if (curPrimaryCue) {
       allBlocks.push({
         startTime: curPrimaryCue.startTime,
         endTime: curPrimaryCue.endTime,
-        primary: curPrimaryCue.text,
-        secondary: curSecondaryCue?.text ?? '',
+        primary: cleanCueText(curPrimaryCue),
+        secondary: cleanCueText(curSecondaryCue),
         state: 'current'
       });
     }
 
-    // Future cues from primaryTrack
     if (primaryTrack && primaryTrack.cues) {
       for (let i = 0; i < primaryTrack.cues.length; i++) {
         const c = primaryTrack.cues[i];
@@ -457,15 +432,15 @@
           allBlocks.push({
             startTime: c.startTime,
             endTime: c.endTime,
-            primary: c.text,
-            secondary: sc?.text ?? '',
+            primary: cleanCueText(c),
+            secondary: cleanCueText(sc),
             state: 'future'
           });
         }
       }
     }
 
-    list.innerHTML = allBlocks.map((block, idx) => {
+    list.innerHTML = allBlocks.map((block) => {
       const isCurrent = block.state === 'current';
       const isFuture = block.state === 'future';
       const cls = isCurrent ? 'subtitle-block current' : isFuture ? 'subtitle-block subtitle-future' : 'subtitle-block';
@@ -485,7 +460,7 @@
       `;
     }).join('');
 
-    // Word click handlers (current block only)
+    // Word click handlers
     const currentBlock = shadowRoot.getElementById('current-block');
     if (currentBlock) {
       currentBlock.querySelectorAll('.atv-word').forEach(span => {
@@ -493,19 +468,20 @@
         span.addEventListener('mouseleave', () => span.style.background = '');
         span.addEventListener('click', (e) => {
           e.stopPropagation();
+          e.preventDefault();
           const rect = span.getBoundingClientRect();
           showPopup(span.dataset.word, decodeURIComponent(span.dataset.sentence), rect);
         });
       });
-
-      // Auto scroll to current block
       currentBlock.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
-    // Click on any block to seek
+    // Seek on block click
     list.querySelectorAll('.subtitle-block[data-time]').forEach(block => {
       block.addEventListener('click', (e) => {
         if (e.target.classList.contains('atv-word')) return;
+        e.stopPropagation();
+        e.preventDefault();
         const t = parseFloat(block.dataset.time);
         if (video && !isNaN(t)) {
           video.currentTime = t;
@@ -515,12 +491,20 @@
     });
   }
 
-  // ---------- Overlay ----------
+  // ---------- Overlay (動画左70%エリアの下部) ----------
   function createOverlay() {
     if (document.getElementById('atv-overlay-host')) return;
     const host = document.createElement('div');
     host.id = 'atv-overlay-host';
-    host.style.cssText = 'position:fixed;bottom:80px;left:0;width:70%;z-index:9999;pointer-events:none;text-align:center;';
+    host.style.cssText = [
+      'position:fixed',
+      'bottom:80px',
+      'left:0',
+      'width:70%',
+      'z-index:2147483639',
+      'pointer-events:none',
+      'text-align:center',
+    ].join(';');
     document.body.appendChild(host);
 
     const overlayRoot = host.attachShadow({ mode: 'open' });
@@ -544,11 +528,7 @@
           text-shadow: 0 1px 3px rgba(0,0,0,0.9);
           line-height: 1.4;
         }
-        .atv-word {
-          cursor: pointer;
-          border-radius: 2px;
-          padding: 0 1px;
-        }
+        .atv-word { cursor: pointer; border-radius: 2px; padding: 0 1px; }
         .atv-word:hover { background: rgba(255,220,80,0.4); }
       </style>
       <div id="overlay">
@@ -556,8 +536,6 @@
         <span class="sub-line" id="ov-secondary"></span>
       </div>
     `;
-
-    // Store reference
     window.__atvOverlayRoot = overlayRoot;
   }
 
@@ -589,13 +567,13 @@
   // ---------- cuechange ----------
   let lastPrimaryText = '';
   function onCueChange() {
-    const pText = primaryTrack?.activeCues?.[0]?.text ?? '';
-    const pCue  = primaryTrack?.activeCues?.[0];
-    const sText = findCueAt(secondaryTrack, video?.currentTime ?? 0)?.text ?? '';
+    const pCue  = primaryTrack?.activeCues?.[0] ?? null;
+    const pText = cleanCueText(pCue);
+    const sCue  = findCueAt(secondaryTrack, video?.currentTime ?? 0);
+    const sText = cleanCueText(sCue);
 
     updateOverlay(pText, sText);
 
-    // Add to history if new cue
     if (pText && pText !== lastPrimaryText && pCue) {
       lastPrimaryText = pText;
       subtitleHistory.push({
@@ -604,7 +582,6 @@
         primary: pText,
         secondary: sText
       });
-      // Keep history max 500 entries
       if (subtitleHistory.length > 500) subtitleHistory.shift();
     }
 
@@ -618,36 +595,38 @@
     const host = document.getElementById('atv-panel-host');
     const overlayHost = document.getElementById('atv-overlay-host');
     if (host) host.style.display = panelVisible ? '' : 'none';
-    // When panel hidden, overlay uses full width
     if (overlayHost) overlayHost.style.width = panelVisible ? '70%' : '100%';
   }
 
-  // ---------- Toggle button (floating) ----------
+  // ---------- Toggle button ----------
   function createToggleButton() {
     if (document.getElementById('atv-toggle-btn')) return;
     const btn = document.createElement('button');
     btn.id = 'atv-toggle-btn';
     btn.textContent = '📋';
     btn.title = '字幕パネルを切り替え';
-    btn.style.cssText = `
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      z-index: 999999;
-      background: rgba(0,0,0,0.7);
-      color: white;
-      border: 1px solid rgba(255,255,255,0.2);
-      border-radius: 50%;
-      width: 40px;
-      height: 40px;
-      font-size: 18px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      backdrop-filter: blur(4px);
-    `;
-    btn.addEventListener('click', togglePanel);
+    btn.style.cssText = [
+      'position:fixed',
+      'bottom:20px',
+      'right:20px',
+      'z-index:2147483647',
+      'background:rgba(0,0,0,0.7)',
+      'color:white',
+      'border:1px solid rgba(255,255,255,0.2)',
+      'border-radius:50%',
+      'width:40px',
+      'height:40px',
+      'font-size:18px',
+      'cursor:pointer',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'backdrop-filter:blur(4px)',
+    ].join(';');
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePanel();
+    });
     document.body.appendChild(btn);
   }
 
@@ -663,9 +642,7 @@
 
   function startBilingual() {
     const tracks = video.textTracks;
-
     if (primaryTrack) primaryTrack.removeEventListener('cuechange', onCueChange);
-
     for (let i = 0; i < tracks.length; i++) tracks[i].mode = 'hidden';
 
     primaryTrack   = findBestTrack(tracks, settings.primaryLang);
@@ -686,7 +663,7 @@
     createPopupHost();
     createToggleButton();
 
-    console.log('[ATV-Bilingual] Started:', settings.primaryLang, '+', settings.secondaryLang);
+    console.log('[ATV-Bilingual] v2.1 Started:', settings.primaryLang, '+', settings.secondaryLang);
   }
 
   // ---------- Messages from popup ----------
