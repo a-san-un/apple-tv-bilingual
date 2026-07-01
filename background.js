@@ -3,8 +3,7 @@
 // =============================================================
 // Content scripts run in the page context and are subject to
 // the page's CORS policy. Fetches from tv.apple.com to external
-// APIs (jisho.org, translate.googleapis.com, api.tatoeba.org)
-// are blocked.
+// APIs (jisho.org, translate.googleapis.com) are blocked.
 //
 // Solution: route all external API calls through this service
 // worker, which is NOT subject to CORS restrictions.
@@ -40,7 +39,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           partsOfSpeech: s.parts_of_speech ?? []
         }));
 
-        // JLPT level (e.g. "jlpt-n3" -> "N3")
+        // JLPT level (e.g. "jlpt-n3" → "N3")
         const jlptRaw = entry.jlpt?.[0] ?? '';
         const jlpt = jlptRaw ? jlptRaw.replace('jlpt-', '').toUpperCase() : '';
 
@@ -66,7 +65,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // ---------- Tatoeba example sentences ----------
+  // ---------- Tatoeba 例文取得 ----------
   if (msg.type === 'FETCH_TATOEBA') {
     const url = `https://api.tatoeba.org/unstable/sentences?q=${encodeURIComponent(msg.word)}&lang=eng&trans:lang=jpn&limit=5`;
     fetch(url)
