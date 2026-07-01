@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Apple TV+ Bilingual Subtitles",
-  "version": "2.0.0",
+  "version": "2.3.0",
   "description": "Displays bilingual subtitles with right panel and dictionary popup on Apple TV+",
   "permissions": ["storage"],
   "host_permissions": [
@@ -9,6 +9,9 @@
     "https://jisho.org/*",
     "https://translate.googleapis.com/*"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": ["https://tv.apple.com/*"],
