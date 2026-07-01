@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ATV Bilingual</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 280px;
+      font-family: -apple-system, 'Helvetica Neue', sans-serif;
+      font-size: 13px;
+      background: #1c1c1e;
+      color: #f0f0f0;
+    }
+    header {
+      padding: 12px 14px 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.04);
+    }
+    header h1 {
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.01em;
+    }
+    header p {
+      font-size: 11px;
+      color: rgba(255,255,255,0.4);
+      margin-top: 2px;
+    }
+    main { padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
+
+    .field { display: flex; flex-direction: column; gap: 5px; }
+    label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: rgba(255,255,255,0.4);
+    }
+    select {
+      width: 100%;
+      padding: 7px 10px;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 7px;
+      color: #f0f0f0;
+      font-size: 13px;
+      appearance: none;
+      cursor: pointer;
+    }
+    select:focus { outline: none; border-color: rgba(255,220,80,0.5); }
+
+    .divider {
+      height: 1px;
+      background: rgba(255,255,255,0.07);
+    }
+
+    .field-ai { display: flex; flex-direction: column; gap: 5px; }
+    input[type="text"] {
+      width: 100%;
+      padding: 7px 10px;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 7px;
+      color: #f0f0f0;
+      font-size: 12px;
+    }
+    input[type="text"]::placeholder { color: rgba(255,255,255,0.25); }
+    input[type="text"]:focus { outline: none; border-color: rgba(255,220,80,0.5); }
+
+    button#apply {
+      width: 100%;
+      padding: 9px;
+      background: #ffe566;
+      color: #1a1a1a;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 150ms;
+    }
+    button#apply:hover { background: #ffd700; }
+
+    #status {
+      font-size: 11px;
+      color: rgba(255,255,255,0.4);
+      text-align: center;
+      min-height: 16px;
+    }
+    #status.ok { color: #6daa45; }
+    #status.err { color: #dd6974; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🎬 ATV Bilingual Subtitles</h1>
+    <p>Apple TV+ 2言語字幕</p>
+  </header>
+  <main>
+    <div class="field">
+      <label>メイン字幕（上段）</label>
+      <select id="primaryLang"></select>
+    </div>
+    <div class="field">
+      <label>サブ字幕（下段）</label>
+      <select id="secondaryLang"></select>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="field-ai">
+      <label>🤖 AI翻訳 APIキー（任意）</label>
+      <input type="text" id="apiKey" placeholder="OpenAI / Gemini API Key" autocomplete="off">
+    </div>
+
+    <button id="apply">適用する</button>
+    <div id="status"></div>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
