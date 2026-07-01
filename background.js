@@ -1,5 +1,5 @@
 // =============================================================
-// background.js - Service Worker
+// background.js - Service Worker (v2.4)
 // =============================================================
 // Content scripts run in the page context and are subject to
 // the page's CORS policy. Fetches from tv.apple.com to external
@@ -7,7 +7,17 @@
 //
 // Solution: route all external API calls through this service
 // worker, which is NOT subject to CORS restrictions.
+//
+// SW Keepalive: Manifest V3 service workers auto-stop after
+// ~30 seconds of inactivity. The activate handler + onInstalled
+// listener help keep the SW registered and responsive.
 // =============================================================
+
+// Keep the service worker alive and claim clients immediately on activation
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+chrome.runtime.onInstalled.addListener(() => {
+  console.log('[ATV-Bilingual] background.js installed/updated');
+});
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
@@ -17,15 +27,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .then(r => r.json())
       .then(data => {
         const entry = data.data?.[0];
-        if (entry) {
-          sendResponse({
-            ok: true,
-            reading:  entry.japanese?.[0]?.reading ?? '',
-            meanings: entry.senses?.[0]?.english_definitions?.slice(0, 3).join(', ') ?? ''
-          });
-        } else {
-          sendResponse({ ok: false, error: 'not_found' });
-        }
+        if (!entry) { sendResponse({ ok: false, error: 'not_found' }); return; }
+
+        // Reading
+        const reading = entry.japanese?.[0]?.reading ?? '';
+
+        // All meanings (up to 5 senses, each with definitions + parts of speech)
+        const senses = (entry.senses ?? []).slice(0, 5);
+        const meanings = senses.map(s => ({
+          definitions: s.english_definitions ?? [],
+          partsOfSpeech: s.parts_of_speech ?? []
+        }));
+
+        // JLPT level (e.g. "jlpt-n3" → "N3")
+        const jlptRaw = entry.jlpt?.[0] ?? '';
+        const jlpt = jlptRaw ? jlptRaw.replace('jlpt-', '').toUpperCase() : '';
+
+        // Common word flag
+        const isCommon = entry.is_common ?? false;
+
+        sendResponse({ ok: true, reading, meanings, jlpt, isCommon });
       })
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true; // keep message channel open for async response
