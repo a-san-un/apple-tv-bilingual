@@ -1,5 +1,5 @@
 // =============================================================
-// Apple TV+ Bilingual Subtitles - content.js v2.4
+// Apple TV+ Bilingual Subtitles - content.js v2.5
 // =============================================================
 //
 // Architecture notes:
@@ -26,6 +26,11 @@
 //    - Overlay shows the current bilingual subtitle at the bottom-left.
 //    - Toggle button (top-right at 60px, only when panel is hidden) reopens panel.
 //
+// 5. EJDICT (v2.5)
+//    - ejdict.json (47,010 entries, CC0) is bundled at dict/ejdict.json.
+//    - Loaded once at startup via chrome.runtime.getURL, stored in ejdictMap.
+//    - Used as fast local fallback / Japanese gloss in the dict pane.
+//
 // =============================================================
 
 (function () {
@@ -43,6 +48,29 @@
   let shadowRoot      = null; // shadow root for the right panel
   let popupShadowRoot = null; // shadow root for the word popup
   let dialogEl        = null; // reference to <dialog class="playback-view">
+
+  // EJDict: loaded once at startup
+  let ejdictMap = null;
+
+  // -------------------------------------------------------
+  // EJDict: load dict/ejdict.json at startup
+  // -------------------------------------------------------
+  (async function loadEJDict() {
+    try {
+      const url = chrome.runtime.getURL('dict/ejdict.json');
+      const res = await fetch(url);
+      ejdictMap = await res.json();
+      console.log('[ATV-Bilingual] EJDict loaded:', Object.keys(ejdictMap).length, 'entries');
+    } catch (e) {
+      console.warn('[ATV-Bilingual] EJDict load failed:', e.message);
+    }
+  })();
+
+  // Look up a word in EJDict (case-insensitive, tries base form)
+  function ejdictLookup(word) {
+    if (!ejdictMap) return null;
+    return ejdictMap[word] || ejdictMap[word.toLowerCase()] || null;
+  }
 
   // -------------------------------------------------------
   // Utilities
@@ -282,7 +310,7 @@
   }
 
   // -------------------------------------------------------
-  // Word popup (Shadow DOM)
+  // Word popup (Shadow DOM) - v2.5: 3-section dict UI
   // -------------------------------------------------------
   function createPopupHost() {
     if (getTarget().querySelector('#atv-popup-host')) return;
@@ -295,24 +323,37 @@
     popupShadowRoot.innerHTML = `
       <style>
         #popup {
-          display: none; position: fixed; width: 320px;
+          display: none; position: fixed; width: 340px;
           background: #1c1c1e; border: 1px solid rgba(255,255,255,0.15);
           border-radius: 12px; overflow: hidden;
           box-shadow: 0 8px 32px rgba(0,0,0,0.8);
           font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
           font-size: 13px; color: #f0f0f0; pointer-events: auto; z-index: 999999;
         }
+
+        /* ===== Header section ===== */
         #popup-header {
-          display: flex; justify-content: space-between; align-items: center;
-          padding: 10px 14px; background: rgba(255,255,255,0.06);
+          display: flex; justify-content: space-between; align-items: flex-start;
+          padding: 12px 14px 10px; background: rgba(255,255,255,0.06);
           border-bottom: 1px solid rgba(255,255,255,0.08);
         }
-        #popup-word { font-size: 1.1rem; font-weight: 700; color: #ffe566; }
+        #popup-header-left { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+        #popup-word-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        #popup-word { font-size: 1.2rem; font-weight: 700; color: #ffe566; }
+        #popup-reading { font-size: 12px; color: #888; margin-top: 2px; }
+        .badge {
+          display: inline-block; font-size: 10px; font-weight: 600;
+          padding: 2px 7px; border-radius: 10px; letter-spacing: 0.03em;
+        }
+        .badge-common { background: rgba(80,200,120,0.2); color: #50c878; border: 1px solid rgba(80,200,120,0.3); }
+        .badge-jlpt   { background: rgba(255,229,102,0.15); color: #ffe566; border: 1px solid rgba(255,229,102,0.3); }
         #popup-close {
           background: none; border: none; color: rgba(255,255,255,0.5);
-          cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px;
+          cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px; flex-shrink: 0;
         }
         #popup-close:hover { color: #fff; }
+
+        /* ===== Tabs ===== */
         #popup-tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,0.08); }
         .popup-tab {
           flex: 1; padding: 8px; background: none; border: none;
@@ -320,39 +361,88 @@
         }
         .popup-tab.active { background: rgba(255,255,255,0.08); color: #fff; }
         .popup-tab:hover  { background: rgba(255,255,255,0.05); }
+
+        /* ===== Panes ===== */
         .popup-pane {
-          padding: 12px 14px; min-height: 60px; max-height: 240px;
+          min-height: 60px; max-height: 300px;
           overflow-y: auto; display: none;
         }
         .popup-pane.active { display: block; }
-        /* Dict styles */
-        .dict-meta {
-          display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px;
+
+        /* ===== Dict pane - meaning section ===== */
+        .dict-section {
+          padding: 10px 14px;
+          border-bottom: 1px solid rgba(255,255,255,0.06);
         }
-        .badge {
-          display: inline-block; font-size: 10px; font-weight: 600;
-          padding: 2px 7px; border-radius: 10px; letter-spacing: 0.03em;
+        .dict-section:last-child { border-bottom: none; }
+        .dict-section-title {
+          font-size: 11px; color: #666; font-weight: 600;
+          letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 8px;
         }
-        .badge-common { background: rgba(80,200,120,0.2); color: #50c878; border: 1px solid rgba(80,200,120,0.3); }
-        .badge-jlpt   { background: rgba(255,229,102,0.15); color: #ffe566; border: 1px solid rgba(255,229,102,0.3); }
-        .dict-reading { color: #aaa; font-size: 12px; margin-bottom: 6px; }
-        .dict-sense { margin-bottom: 10px; }
+        /* EJDict Japanese gloss */
+        .ejdict-gloss {
+          color: #ddd; font-size: 13px; line-height: 1.7; margin-bottom: 6px;
+        }
+        .ejdict-gloss span { color: #888; margin: 0 4px; }
+        /* Jisho senses */
+        .dict-sense { margin-bottom: 8px; }
         .dict-pos {
           font-size: 10px; color: #888; font-style: italic; margin-bottom: 3px;
         }
         .dict-def {
-          color: #fff; font-size: 13px; line-height: 1.5;
+          color: #bbb; font-size: 12px; line-height: 1.5;
         }
         .dict-def-num { color: #ffe566; font-size: 11px; margin-right: 4px; }
-        /* AI translation styles */
+
+        /* ===== Dict pane - example section ===== */
+        .tatoeba-link {
+          font-size: 10px; color: #666; text-decoration: none; float: right;
+        }
+        .tatoeba-link:hover { color: #aaa; }
+        .example-sentence {
+          position: relative; cursor: default;
+          color: #ccc; font-size: 12px; line-height: 1.8;
+          padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .example-sentence:last-child { border-bottom: none; }
+        .example-sentence:hover { color: #fff; }
+        /* Japanese tooltip on hover */
+        .example-sentence::after {
+          content: attr(data-ja);
+          display: none;
+          position: absolute;
+          bottom: calc(100% + 4px); left: 0;
+          background: rgba(20,20,20,0.97); color: #ffe566;
+          border: 1px solid rgba(255,229,102,0.25);
+          padding: 5px 10px; border-radius: 6px;
+          font-size: 12px; white-space: nowrap;
+          pointer-events: none; z-index: 99999;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+        }
+        .example-sentence:hover::after { display: block; }
+        /* Clickable words inside example sentences */
+        .atv-word-link {
+          cursor: pointer;
+          border-radius: 2px;
+          padding: 0 1px;
+        }
+        .atv-word-link:hover { background: rgba(255,220,80,0.3); color: #fff; }
+
+        /* ===== AI translation pane ===== */
         .ai-label  { color: #aaa; font-size: 11px; margin-bottom: 6px; }
         .ai-result { color: #fff; font-size: 13px; line-height: 1.5; }
-        .loading   { color: #666; font-size: 12px; }
-        .error     { color: #ff6b6b; font-size: 12px; }
+        .loading   { color: #666; font-size: 12px; display: block; padding: 12px 14px; }
+        .error     { color: #ff6b6b; font-size: 12px; display: block; padding: 12px 14px; }
       </style>
       <div id="popup">
         <div id="popup-header">
-          <span id="popup-word"></span>
+          <div id="popup-header-left">
+            <div id="popup-word-row">
+              <span id="popup-word"></span>
+              <span id="popup-badges"></span>
+            </div>
+            <div id="popup-reading"></div>
+          </div>
           <button id="popup-close">✕</button>
         </div>
         <div id="popup-tabs">
@@ -369,8 +459,10 @@
     popupShadowRoot.getElementById('popup-close')
       .addEventListener('click', () => { popup.style.display = 'none'; });
 
+    // Tab switching — v2.5: stopPropagation to prevent popup close on tab click
     popupShadowRoot.querySelectorAll('.popup-tab').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation(); // FIX: prevent bubbling to document click → popup close
         popupShadowRoot.querySelectorAll('.popup-tab').forEach(b => b.classList.remove('active'));
         popupShadowRoot.querySelectorAll('.popup-pane').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
@@ -378,7 +470,20 @@
       });
     });
 
+    // Close popup on outside click
     document.addEventListener('click', () => { popup.style.display = 'none'; });
+
+    // Example sentence word click: re-search without back button
+    popupShadowRoot.addEventListener('click', (e) => {
+      if (e.target.classList.contains('atv-word-link')) {
+        e.stopPropagation();
+        const word = e.target.textContent.trim();
+        if (word) {
+          const rect = e.target.getBoundingClientRect();
+          showPopup(word, word, rect);
+        }
+      }
+    });
   }
 
   // -------------------------------------------------------
@@ -393,6 +498,8 @@
 
     const popup = popupShadowRoot.getElementById('popup');
     popupShadowRoot.getElementById('popup-word').textContent = clean;
+    popupShadowRoot.getElementById('popup-reading').textContent = '';
+    popupShadowRoot.getElementById('popup-badges').innerHTML = '';
     popupShadowRoot.getElementById('pane-dict').innerHTML = '<span class="loading">検索中...</span>';
     popupShadowRoot.getElementById('pane-ai').innerHTML   = '<span class="loading">翻訳中...</span>';
 
@@ -404,9 +511,9 @@
 
     // Position above the word (flip down if too close to top)
     popup.style.display = 'block';
-    const pw = 320;
+    const pw = 340;
     let left = anchorRect.left;
-    let top  = anchorRect.top - 160;
+    let top  = anchorRect.top - 200;
     if (left + pw > window.innerWidth) left = window.innerWidth - pw - 8;
     if (top < 8) top = anchorRect.bottom + 8;
     popup.style.left = left + 'px';
@@ -417,25 +524,55 @@
   }
 
   // -------------------------------------------------------
-  // Dictionary fetch — via background.js (CORS-free) with retry
+  // Dictionary fetch — 3-section layout (v2.5)
+  // Section 1 (header): word + badges + reading  [rendered in showPopup]
+  // Section 2 (meaning): EJDict gloss + Jisho senses
+  // Section 3 (examples): Tatoeba sentences with hover JP tooltip
   // -------------------------------------------------------
   function fetchDictionary(word) {
-    const el = popupShadowRoot.getElementById('pane-dict');
+    const paneDict  = popupShadowRoot.getElementById('pane-dict');
+    const badgesEl  = popupShadowRoot.getElementById('popup-badges');
+    const readingEl = popupShadowRoot.getElementById('popup-reading');
+
+    // --- Meaning section: EJDict (instant, local) ---
+    const ejGloss = ejdictLookup(word);
+    const ejHtml = ejGloss
+      ? `<div class="dict-section">
+           <div class="dict-section-title">📖 意味</div>
+           <div class="ejdict-gloss">${
+             ejGloss.split('/').map(s => s.trim()).filter(Boolean)
+               .map((s, i) => `<span style="color:#ffe566;font-size:11px">${i+1}.</span> ${s}`)
+               .join('<br>')
+           }</div>
+         </div>`
+      : '';
+
+    // Show EJDict immediately while waiting for Jisho + Tatoeba
+    paneDict.innerHTML = ejHtml +
+      `<div class="dict-section" id="jisho-section"><span class="loading">Jisho 検索中...</span></div>` +
+      `<div class="dict-section" id="tatoeba-section"><span class="loading">例文取得中...</span></div>`;
+
+    // --- Meaning section: Jisho (async) ---
     sendToBackground({ type: 'FETCH_DICT', word }, (res) => {
+      const jishoEl = popupShadowRoot.getElementById('jisho-section');
+      if (!jishoEl) return;
+
       if (!res?.ok) {
-        el.innerHTML = res?.error === 'not_found'
-          ? '<span class="loading">見つかりませんでした</span>'
-          : `<span class="error">エラー: ${res?.error ?? 'unknown'}</span>`;
+        jishoEl.innerHTML = res?.error === 'not_found'
+          ? '' // EJDict already showed something
+          : `<span class="error">Jisho エラー: ${res?.error ?? 'unknown'}</span>`;
         return;
       }
 
-      // Badges
+      // Update header: badges + reading
       const badges = [
         res.isCommon ? '<span class="badge badge-common">よく使われる語</span>' : '',
         res.jlpt     ? `<span class="badge badge-jlpt">${res.jlpt}</span>`       : ''
       ].filter(Boolean).join('');
+      if (badgesEl)  badgesEl.innerHTML  = badges;
+      if (readingEl) readingEl.textContent = res.reading ? `/${res.reading}/` : '';
 
-      // Senses (each sense has parts_of_speech + definitions)
+      // Jisho senses
       const sensesHtml = (res.meanings ?? []).map((sense, i) => {
         const pos  = sense.partsOfSpeech?.join(', ') ?? '';
         const defs = sense.definitions ?? [];
@@ -450,10 +587,36 @@
         `;
       }).join('');
 
-      el.innerHTML = `
-        ${badges ? `<div class="dict-meta">${badges}</div>` : ''}
-        ${res.reading ? `<div class="dict-reading">${res.reading}</div>` : ''}
-        ${sensesHtml || '<span class="loading">定義なし</span>'}
+      jishoEl.innerHTML = sensesHtml
+        ? `<div class="dict-section-title" style="margin-bottom:8px">🔤 Jisho</div>${sensesHtml}`
+        : '';
+    });
+
+    // --- Example section: Tatoeba (async) ---
+    sendToBackground({ type: 'FETCH_TATOEBA', word }, (res) => {
+      const tatEl = popupShadowRoot.getElementById('tatoeba-section');
+      if (!tatEl) return;
+
+      if (!res?.ok || !res.results?.length) {
+        tatEl.innerHTML = '';
+        return;
+      }
+
+      const sentencesHtml = res.results.map(r => {
+        const enEsc = r.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const jaEsc = (r.translation || '').replace(/"/g,'&quot;').replace(/&/g,'&amp;');
+        // Tokenize English words as clickable spans for re-search
+        const tokenized = enEsc.replace(/\b([a-zA-Z']+)\b/g,
+          '<span class="atv-word-link">$1</span>');
+        return `<div class="example-sentence" data-ja="${jaEsc}">${tokenized}</div>`;
+      }).join('');
+
+      tatEl.innerHTML = `
+        <div class="dict-section-title">
+          💬 例文
+          <a class="tatoeba-link" href="https://tatoeba.org/ja/sentences/search?query=${encodeURIComponent(word)}" target="_blank" rel="noopener">Tatoeba ↗</a>
+        </div>
+        ${sentencesHtml}
       `;
     });
   }
@@ -465,7 +628,7 @@
     const el = popupShadowRoot.getElementById('pane-ai');
     sendToBackground({ type: 'FETCH_TRANSLATE', text }, (res) => {
       if (res?.ok) {
-        el.innerHTML = `<div class="ai-label">翻訳：</div><div class="ai-result">${res.translated}</div>`;
+        el.innerHTML = `<div class="ai-label" style="padding:12px 14px 0">翻訳：</div><div class="ai-result" style="padding:4px 14px 12px">${res.translated}</div>`;
       } else {
         el.innerHTML = `<span class="error">エラー: ${res?.error ?? 'unknown'}</span>`;
       }
@@ -729,9 +892,10 @@
     createToggleButton();
 
     console.log(
-      '[ATV-Bilingual] v2.4 ready | injected into:',
+      '[ATV-Bilingual] v2.5 ready | injected into:',
       dialogEl ? 'dialog.playback-view ✅' : 'document.body (fallback)',
-      '| tracks:', settings.primaryLang, '+', settings.secondaryLang
+      '| tracks:', settings.primaryLang, '+', settings.secondaryLang,
+      '| EJDict:', ejdictMap ? Object.keys(ejdictMap).length + ' entries' : 'loading...'
     );
   }
 
