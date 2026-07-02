@@ -125,7 +125,8 @@ select:focus,
 .primary-button:focus,
 .secondary-button:focus,
 .radio-option:focus-within,
-.switch input:focus + .slider {
+.switch input:focus + .slider,
+.debug-log-output:focus {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -229,6 +230,55 @@ select:focus,
   border: 1px solid #343d4c;
 }
 
+/* Debug section */
+.debug-section {
+  margin-top: 18px;
+}
+
+.debug-section__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.debug-toggle-button {
+  min-width: 56px;
+  flex-shrink: 0;
+}
+
+.debug-section__body {
+  margin-top: 16px;
+}
+
+.debug-toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.debug-log-output {
+  width: 100%;
+  min-height: 280px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #0f1319;
+  color: #d8dee9;
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    monospace;
+  white-space: pre;
+}
+
+.debug-log-output::placeholder {
+  color: #7d8795;
+}
+
 @media (max-width: 720px) {
   .settings-page {
     width: min(100%, calc(100% - 24px));
@@ -245,6 +295,19 @@ select:focus,
   }
 
   .secret-input-row {
+    flex-direction: column;
+  }
+
+  .debug-section__header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .debug-toggle-button {
+    width: 100%;
+  }
+
+  .debug-toolbar {
     flex-direction: column;
   }
 }

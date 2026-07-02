@@ -23,7 +23,6 @@
       <p id="saveStatus" class="save-status" aria-live="polite"></p>
 
       <form id="optionsForm" class="settings-form">
-        <!-- 基本設定 -->
         <section class="settings-section">
           <h2>基本設定</h2>
           <div class="field-grid">
@@ -57,7 +56,6 @@
           <p class="helper-text">※ 未設定ならブラウザ言語を使用</p>
         </section>
 
-        <!-- 字幕表示 -->
         <section class="settings-section">
           <h2>字幕表示</h2>
           <label class="toggle-row">
@@ -76,7 +74,6 @@
           </label>
         </section>
 
-        <!-- 音声 -->
         <section class="settings-section">
           <h2>音声</h2>
           <label class="toggle-row">
@@ -88,7 +85,6 @@
           </label>
         </section>
 
-        <!-- AIツールチップ -->
         <section class="settings-section">
           <h2>AIツールチップ</h2>
           <label class="toggle-row">
@@ -102,7 +98,6 @@
           <p class="helper-text">字幕本体は置き換えません</p>
         </section>
 
-        <!-- AIアシスタント -->
         <section class="settings-section">
           <h2>AIアシスタント</h2>
           <div
@@ -141,7 +136,6 @@
           </p>
         </section>
 
-        <!-- APIキー設定 -->
         <section class="settings-section">
           <h2>APIキー設定</h2>
           <label class="field">
@@ -181,6 +175,55 @@
           <p class="helper-text">APIキーはこのブラウザ内に保存されます</p>
         </section>
       </form>
+
+      <section class="settings-section debug-section">
+        <div class="debug-section__header">
+          <div>
+            <h2>デバッグログ（開発者向け）</h2>
+            <p class="helper-text">
+              popup / options / background / content
+              から収集したログを表示します
+            </p>
+          </div>
+          <button
+            id="debugSectionToggle"
+            class="secondary-button debug-toggle-button"
+            type="button"
+            aria-expanded="true"
+            aria-controls="debugSectionBody"
+          >
+            ▼
+          </button>
+        </div>
+
+        <div id="debugSectionBody" class="debug-section__body">
+          <div class="debug-toolbar">
+            <button id="debugCopyBtn" class="secondary-button" type="button">
+              Copy
+            </button>
+            <button
+              id="debugDownloadBtn"
+              class="secondary-button"
+              type="button"
+            >
+              Download
+            </button>
+            <button id="debugClearBtn" class="secondary-button" type="button">
+              Clear
+            </button>
+          </div>
+
+          <label class="field">
+            <span class="field-label">ログ出力</span>
+            <textarea
+              id="debugLogOutput"
+              class="debug-log-output"
+              readonly
+              spellcheck="false"
+            ></textarea>
+          </label>
+        </div>
+      </section>
     </main>
 
     <script src="options.js"></script>

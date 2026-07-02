@@ -112,24 +112,25 @@
     </header>
 
     <div class="section">
-      <label>メイン字幕（上段）</label>
+      <label for="primary-lang">メイン字幕（上段）</label>
       <select id="primary-lang">
         <option value="">読み込み中...</option>
       </select>
     </div>
 
     <div class="section">
-      <label>サブ字幕（下段）</label>
+      <label for="secondary-lang">サブ字幕（下段）</label>
       <select id="secondary-lang">
         <option value="">読み込み中...</option>
       </select>
     </div>
 
-    <button class="btn-apply" id="apply-btn">適用</button>
+    <button class="btn-apply" id="apply-btn" type="button">適用</button>
     <button class="btn-settings" id="open-options-btn" type="button">
       設定を開く
     </button>
-    <div id="status"></div>
+    <div id="status" aria-live="polite"></div>
+
     <script src="popup.js"></script>
   </body>
 </html>

@@ -11,14 +11,17 @@ const FALLBACK_LANGS = [
 ];
 
 const GENERAL_KEYS = [
-  'primaryLang',
-  'secondaryLang',
-  'showSidebar',
-  'pinSidebar',
-  'playWordAudio',
-  'enableAiTooltip',
-  'preferredAiProvider',
+  "primaryLang",
+  "secondaryLang",
+  "showSidebar",
+  "pinSidebar",
+  "playWordAudio",
+  "enableAiTooltip",
+  "preferredAiProvider",
 ];
+
+const DEBUG_LOGS_KEY = "debugLogs";
+const DEBUG_LOGS_MAX = 400;
 
 const primarySel = document.getElementById("primary-lang");
 const secondarySel = document.getElementById("secondary-lang");
@@ -26,12 +29,72 @@ const applyBtn = document.getElementById("apply-btn");
 const statusEl = document.getElementById("status");
 const openOptionsBtn = document.getElementById("open-options-btn");
 
+function maskSensitive(value) {
+  if (typeof value !== "string") return value;
+  if (!value) return "";
+  if (value.length <= 8) return "***";
+  return `${value.slice(0, 4)}...${value.slice(-2)}`;
+}
+
+function sanitizeForLog(payload) {
+  if (payload == null) return payload;
+
+  let cloned;
+  try {
+    cloned = JSON.parse(JSON.stringify(payload));
+  } catch (_) {
+    return { note: "unserializable payload" };
+  }
+
+  function walk(obj) {
+    if (!obj || typeof obj !== "object") return obj;
+
+    for (const key of Object.keys(obj)) {
+      const value = obj[key];
+
+      if (key === "googleAiStudioApiKey" || key === "groqApiKey") {
+        obj[key] = value ? maskSensitive(value) : "";
+        continue;
+      }
+
+      if (typeof value === "object" && value !== null) {
+        walk(value);
+      }
+    }
+
+    return obj;
+  }
+
+  return walk(cloned);
+}
+
+function debugLog(scope, message, payload = null) {
+  const time = new Date().toISOString();
+  const safePayload = sanitizeForLog(payload);
+  console.log(`[ATVB][${time}][${scope}] ${message}`, safePayload ?? "");
+  return { time, scope, message, payload: safePayload };
+}
+
+async function appendDebugLog(line) {
+  const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
+    await chrome.storage.local.get(DEBUG_LOGS_KEY);
+
+  debugLogs.push(line);
+
+  if (debugLogs.length > DEBUG_LOGS_MAX) {
+    debugLogs.splice(0, debugLogs.length - DEBUG_LOGS_MAX);
+  }
+
+  await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
+}
+
 function populateSelects(langs) {
   [primarySel, secondarySel].forEach((sel, idx) => {
     const saved =
       idx === 0
         ? localStorage.getItem("primaryLang") || "en"
         : localStorage.getItem("secondaryLang") || "ja";
+
     sel.innerHTML = "";
     langs.forEach((l) => {
       const opt = document.createElement("option");
@@ -43,30 +106,80 @@ function populateSelects(langs) {
   });
 }
 
-// Load saved settings from storage.sync
-chrome.storage.sync.get(GENERAL_KEYS, (result) => {
-  const savedPrimary = result.primaryLang || "en";
-  const savedSecondary = result.secondaryLang || "ja";
+async function initPopup() {
+  const lineInit = debugLog("popup", "popup initialized");
+  await appendDebugLog(lineInit);
 
-  // Try to get language list from content script
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (!tabs[0]) {
-      populateSelects(FALLBACK_LANGS);
-      return;
-    }
+  chrome.storage.sync.get(GENERAL_KEYS, async (result) => {
+    const savedPrimary = result.primaryLang || "en";
+    const savedSecondary = result.secondaryLang || "ja";
 
-    chrome.tabs.sendMessage(tabs[0].id, { type: "GET_LANGUAGES" }, (resp) => {
-      const langs = resp && resp.length > 0 ? resp : FALLBACK_LANGS;
-      populateSelects(langs);
-      // Restore saved values
-      primarySel.value = savedPrimary;
-      secondarySel.value = savedSecondary;
+    const lineLoaded = debugLog("popup", "Loaded general settings", result);
+    await appendDebugLog(lineLoaded);
+
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      const activeTabId = tabs?.[0]?.id ?? null;
+
+      const lineTabs = debugLog("popup", "Queried active tab", {
+        hasActiveTab: !!tabs?.[0],
+        tabId: activeTabId,
+      });
+      await appendDebugLog(lineTabs);
+
+      if (!tabs[0]) {
+        populateSelects(FALLBACK_LANGS);
+
+        const lineFallback = debugLog(
+          "popup",
+          "No active tab found; using fallback languages",
+          { fallbackCount: FALLBACK_LANGS.length },
+        );
+        await appendDebugLog(lineFallback);
+
+        primarySel.value = savedPrimary;
+        secondarySel.value = savedSecondary;
+        return;
+      }
+
+      chrome.tabs.sendMessage(
+        tabs[0].id,
+        { type: "GET_LANGUAGES" },
+        async (resp) => {
+          const hasRuntimeError = !!chrome.runtime.lastError;
+          const langs = resp && resp.length > 0 ? resp : FALLBACK_LANGS;
+
+          const lineLangs = debugLog(
+            "popup",
+            "Requested languages from content",
+            {
+              tabId: tabs[0].id,
+              usedFallback: !(resp && resp.length > 0),
+              responseCount: Array.isArray(resp) ? resp.length : 0,
+              lastError: hasRuntimeError
+                ? chrome.runtime.lastError.message
+                : null,
+            },
+          );
+          await appendDebugLog(lineLangs);
+
+          populateSelects(langs);
+
+          primarySel.value = savedPrimary;
+          secondarySel.value = savedSecondary;
+
+          const lineRestored = debugLog("popup", "Restored popup selections", {
+            primaryLang: savedPrimary,
+            secondaryLang: savedSecondary,
+          });
+          await appendDebugLog(lineRestored);
+        },
+      );
     });
   });
-});
+}
 
 // Apply button
-applyBtn.addEventListener("click", () => {
+applyBtn.addEventListener("click", async () => {
   const primaryLang = primarySel.value;
   const secondaryLang = secondarySel.value;
 
@@ -75,21 +188,72 @@ applyBtn.addEventListener("click", () => {
     secondaryLang,
   };
 
-  chrome.storage.sync.set(settingsToSave, () => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (!tabs[0]) return;
-      chrome.tabs.sendMessage(tabs[0].id, {
+  const lineSave = debugLog("popup", "Saving popup settings", settingsToSave);
+  await appendDebugLog(lineSave);
+
+  chrome.storage.sync.set(settingsToSave, async () => {
+    const lineSaved = debugLog(
+      "popup",
+      "Saved popup settings to sync",
+      settingsToSave,
+    );
+    await appendDebugLog(lineSaved);
+
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      if (!tabs[0]) {
+        const lineNoTab = debugLog(
+          "popup",
+          "SETTINGS_CHANGED skipped: no active tab",
+          settingsToSave,
+        );
+        await appendDebugLog(lineNoTab);
+
+        statusEl.textContent = "✓ 保存しました";
+        setTimeout(() => window.close(), 800);
+        return;
+      }
+
+      const messagePayload = {
         type: "SETTINGS_CHANGED",
         settings: settingsToSave,
+      };
+
+      const lineSend = debugLog(
+        "popup",
+        "Sending SETTINGS_CHANGED to content",
+        {
+          tabId: tabs[0].id,
+          payload: messagePayload,
+        },
+      );
+      await appendDebugLog(lineSend);
+
+      chrome.tabs.sendMessage(tabs[0].id, messagePayload, async (response) => {
+        const lineResponse = debugLog("popup", "SETTINGS_CHANGED response", {
+          tabId: tabs[0].id,
+          hasRuntimeError: !!chrome.runtime.lastError,
+          runtimeError: chrome.runtime.lastError
+            ? chrome.runtime.lastError.message
+            : null,
+          response: response ?? null,
+        });
+        await appendDebugLog(lineResponse);
       });
     });
+
     statusEl.textContent = "✓ 保存しました";
     setTimeout(() => window.close(), 800);
   });
 });
 
 if (openOptionsBtn) {
-  openOptionsBtn.addEventListener("click", () => {
+  openOptionsBtn.addEventListener("click", async () => {
+    const line = debugLog("popup", "Opening options page");
+    await appendDebugLog(line);
     chrome.runtime.openOptionsPage();
   });
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+  initPopup();
+});
