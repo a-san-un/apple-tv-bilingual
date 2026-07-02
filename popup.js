@@ -88,12 +88,9 @@ async function appendDebugLog(line) {
   await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
 }
 
-function populateSelects(langs) {
+function populateSelects(langs, savedPrimary = "en", savedSecondary = "ja") {
   [primarySel, secondarySel].forEach((sel, idx) => {
-    const saved =
-      idx === 0
-        ? localStorage.getItem("primaryLang") || "en"
-        : localStorage.getItem("secondaryLang") || "ja";
+    const saved = idx === 0 ? savedPrimary : savedSecondary;
 
     sel.innerHTML = "";
     langs.forEach((l) => {
@@ -127,7 +124,7 @@ async function initPopup() {
       await appendDebugLog(lineTabs);
 
       if (!tabs[0]) {
-        populateSelects(FALLBACK_LANGS);
+        populateSelects(FALLBACK_LANGS, savedPrimary, savedSecondary);
 
         const lineFallback = debugLog(
           "popup",
@@ -136,8 +133,6 @@ async function initPopup() {
         );
         await appendDebugLog(lineFallback);
 
-        primarySel.value = savedPrimary;
-        secondarySel.value = savedSecondary;
         return;
       }
 
@@ -162,10 +157,7 @@ async function initPopup() {
           );
           await appendDebugLog(lineLangs);
 
-          populateSelects(langs);
-
-          primarySel.value = savedPrimary;
-          secondarySel.value = savedSecondary;
+          populateSelects(langs, savedPrimary, savedSecondary);
 
           const lineRestored = debugLog("popup", "Restored popup selections", {
             primaryLang: savedPrimary,
@@ -178,7 +170,6 @@ async function initPopup() {
   });
 }
 
-// Apply button
 applyBtn.addEventListener("click", async () => {
   const primaryLang = primarySel.value;
   const secondaryLang = secondarySel.value;
