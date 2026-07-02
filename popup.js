@@ -1,4 +1,4 @@
-// popup.js v2.0
+// popup.js v2.5
 
 const FALLBACK_LANGS = [
   { lang: "en", label: "English" },
@@ -8,6 +8,16 @@ const FALLBACK_LANGS = [
   { lang: "fr", label: "Français" },
   { lang: "de", label: "Deutsch" },
   { lang: "es", label: "Español" },
+];
+
+const GENERAL_KEYS = [
+  'primaryLang',
+  'secondaryLang',
+  'showSidebar',
+  'pinSidebar',
+  'playWordAudio',
+  'enableAiTooltip',
+  'preferredAiProvider',
 ];
 
 const primarySel = document.getElementById("primary-lang");
@@ -33,8 +43,8 @@ function populateSelects(langs) {
   });
 }
 
-// Load saved settings
-chrome.storage.local.get(["primaryLang", "secondaryLang"], (result) => {
+// Load saved settings from storage.sync
+chrome.storage.sync.get(GENERAL_KEYS, (result) => {
   const savedPrimary = result.primaryLang || "en";
   const savedSecondary = result.secondaryLang || "ja";
 
@@ -60,13 +70,17 @@ applyBtn.addEventListener("click", () => {
   const primaryLang = primarySel.value;
   const secondaryLang = secondarySel.value;
 
-  chrome.storage.local.set({ primaryLang, secondaryLang }, () => {
+  const settingsToSave = {
+    primaryLang,
+    secondaryLang,
+  };
+
+  chrome.storage.sync.set(settingsToSave, () => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (!tabs[0]) return;
       chrome.tabs.sendMessage(tabs[0].id, {
         type: "SETTINGS_CHANGED",
-        primaryLang,
-        secondaryLang,
+        settings: settingsToSave,
       });
     });
     statusEl.textContent = "✓ 保存しました";

@@ -37,12 +37,39 @@
   'use strict';
 
   // -------------------------------------------------------
+  // Default settings (mirrors options.js)
+  // -------------------------------------------------------
+  const DEFAULT_SETTINGS = {
+    primaryLang: 'en',
+    secondaryLang: '',
+    showSidebar: true,
+    pinSidebar: false,
+    playWordAudio: true,
+    enableAiTooltip: false,
+    preferredAiProvider: 'auto',
+  };
+
+  // -------------------------------------------------------
+  // secondaryLang fallback: use browser language if not set
+  // -------------------------------------------------------
+  function applySecondaryLangFallback(settings) {
+    const result = { ...settings };
+    if (!result.secondaryLang) {
+      const browserLang = (navigator.language || navigator.userLanguage || 'en')
+        .toLowerCase()
+        .split('-')[0];
+      result.secondaryLang = browserLang;
+    }
+    return result;
+  }
+
+  // -------------------------------------------------------
   // State
   // -------------------------------------------------------
   let video           = null;
   let primaryTrack    = null;
   let secondaryTrack  = null;
-  let settings        = { primaryLang: 'en', secondaryLang: 'ja' };
+  let contentSettings = { ...DEFAULT_SETTINGS };
   let subtitleHistory = [];   // past subtitle entries
   let panelVisible    = true;
   let shadowRoot      = null; // shadow root for the right panel
@@ -82,7 +109,7 @@
     const s = Math.floor(sec % 60);
     return h > 0
       ? `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
-      : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+      : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'00')}`;
   }
 
   // Strip HTML tags from a VTTCue and return plain text
@@ -203,6 +230,52 @@
       vc.style.maxWidth   = '';
       vc.style.flexShrink = '';
     }
+  }
+
+  // -------------------------------------------------------
+  // Apply settings to UI
+  // -------------------------------------------------------
+  function applySettingsToUI(settings) {
+    if (settings.showSidebar) {
+      showRightPanel();
+    } else {
+      hideRightPanel();
+    }
+
+    if (settings.pinSidebar) {
+      pinRightPanel();
+    } else {
+      unpinRightPanel();
+    }
+
+    // playWordAudio, enableAiTooltip, preferredAiProvider are reflected
+    // in word popup and AI tab behaviour
+  }
+
+  function showRightPanel() {
+    if (!panelVisible) togglePanel();
+  }
+
+  function hideRightPanel() {
+    if (panelVisible) togglePanel();
+  }
+
+  function pinRightPanel() {
+    // Reserved for future pin/unpin implementation
+  }
+
+  function unpinRightPanel() {
+    // Reserved for future pin/unpin implementation
+  }
+
+  // -------------------------------------------------------
+  // Load settings from storage.sync at startup
+  // -------------------------------------------------------
+  function loadSettingsFromSync() {
+    chrome.storage.sync.get(DEFAULT_SETTINGS, (settings) => {
+      contentSettings = applySecondaryLangFallback(settings);
+      applySettingsToUI(contentSettings);
+    });
   }
 
   // -------------------------------------------------------
@@ -859,11 +932,7 @@
   // -------------------------------------------------------
   function attachTracks(v) {
     video = v;
-    chrome.storage.local.get(['primaryLang', 'secondaryLang'], (result) => {
-      settings.primaryLang   = result.primaryLang   || 'en';
-      settings.secondaryLang = result.secondaryLang || 'ja';
-      startBilingual();
-    });
+    loadSettingsFromSync();
   }
 
   function startBilingual() {
@@ -873,8 +942,8 @@
 
     for (let i = 0; i < tracks.length; i++) tracks[i].mode = 'hidden';
 
-    primaryTrack   = findBestTrack(tracks, settings.primaryLang);
-    secondaryTrack = findBestTrack(tracks, settings.secondaryLang);
+    primaryTrack   = findBestTrack(tracks, contentSettings.primaryLang);
+    secondaryTrack = findBestTrack(tracks, contentSettings.secondaryLang);
 
     if (secondaryTrack) {
       secondaryTrack.mode = 'showing';
@@ -894,23 +963,34 @@
     console.log(
       '[ATV-Bilingual] v2.5 ready | injected into:',
       dialogEl ? 'dialog.playback-view ✅' : 'document.body (fallback)',
-      '| tracks:', settings.primaryLang, '+', settings.secondaryLang,
+      '| tracks:', contentSettings.primaryLang, '+', contentSettings.secondaryLang,
       '| EJDict:', ejdictMap ? Object.keys(ejdictMap).length + ' entries' : 'loading...'
     );
   }
 
+  // Override loadSettingsFromSync to call startBilingual after loading
+  function loadSettingsFromSync() {
+    chrome.storage.sync.get(DEFAULT_SETTINGS, (rawSettings) => {
+      contentSettings = applySecondaryLangFallback(rawSettings);
+      applySettingsToUI(contentSettings);
+      startBilingual();
+    });
+  }
+
   // -------------------------------------------------------
-  // Messages from popup.html
+  // Messages from popup.html / options.js
   // -------------------------------------------------------
-  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (msg.type === 'SETTINGS_CHANGED') {
-      settings.primaryLang   = msg.primaryLang;
-      settings.secondaryLang = msg.secondaryLang;
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === 'SETTINGS_CHANGED') {
+      const updated = applySecondaryLangFallback(message.settings);
+      contentSettings = { ...contentSettings, ...updated };
+      applySettingsToUI(contentSettings);
       subtitleHistory = [];
       lastPrimaryText = '';
       if (video) startBilingual();
+      sendResponse({ ok: true });
     }
-    if (msg.type === 'GET_LANGUAGES') {
+    if (message.type === 'GET_LANGUAGES') {
       const langs = video ? getUniqueTracks(video.textTracks) : [];
       sendResponse(langs.map(l => ({ lang: l.lang, label: l.label })));
       return true;
