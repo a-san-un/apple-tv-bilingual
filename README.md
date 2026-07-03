@@ -15,12 +15,13 @@ Apple TV+ の動画再生画面に、**バイリンガル字幕パネル**と学
 - **単語ポップアップ**
   - 字幕テキストをクリックすると辞書ポップアップを表示
   - Jisho / Tatoeba / dictionaryapi.dev などを使った学習補助を提供
-  - AI 補助表示は将来拡張を含めて段階的に整理中
+  - AI 補助表示は将来拡張を見据えて段階的に整理中
 
 - **言語設定**
-  - 拡張機能 popup から Primary / Secondary 言語を変更可能
+  - 拡張機能 popup から Primary / Secondary 言語を簡易的に変更可能
   - options ページから詳細設定を変更可能
-  - `secondaryLang` を未設定にした場合は、ブラウザ言語を利用する想定
+  - `primaryLang` は必須設定
+  - `secondaryLang` は空値保存を許容し、未設定時はブラウザ言語を補助表示に使う想定
 
 - **設定画面**
   - `options.html` を別タブで開く構成
@@ -38,8 +39,11 @@ Apple TV+ の動画再生画面に、**バイリンガル字幕パネル**と学
 1. [tv.apple.com](https://tv.apple.com) で動画を再生します
 2. 右側の字幕パネルが表示されます
 3. 字幕の単語や行をクリックして、辞書表示やシークを使います
-4. 拡張機能アイコンをクリックすると、簡易的に言語設定を変更できます
-5. 詳細設定は options ページから変更できます
+4. 拡張機能アイコン（popup）から、primary / secondary 言語を変更します
+   - popup で保存した設定は、**現在アクティブな Apple TV+ 再生タブに即座に通知されます**
+5. 詳細設定は options ページから変更します
+
+- options から保存した設定も、**アクティブな Apple TV+ 再生タブへ即時反映**されます
 
 ## ファイル構成
 
@@ -75,10 +79,13 @@ Manifest V3 の Service Worker はアイドル時に自動停止します。
 
 ## 現在の整理方針
 
-- popup / options の字幕言語一覧は、動画の `textTracks` に直接依存しない固定一覧ベースへ整理する
+- popup / options の字幕言語一覧は、動画の `textTracks` に直接依存しない **固定言語一覧** ベースで扱う
 - `secondaryLang` の空値を許容し、未設定時はブラウザ言語 fallback を前提にする
-- forced 字幕は設定 UI の直接候補に出さず、UI は正規化された言語選択肢だけを見せる
-- `textTracks` の厳密な正規化や resolver 導入は後続タスクとして切り分ける
+- Apple TV+ 側の `textTracks` は content.js 側で正規化し、
+  - 設定された `primaryLang` / `secondaryLang` に近いトラックを resolver が選択する
+  - forced 字幕は UI の直接候補には出さず、必要に応じて内部 fallback として扱う
+- WebVTT の字幕テキストに含まれる `<c.styledotitalic>` などのタグ断片は、正規化処理で除去する  
+  （画面表示・実機ログの両方で確認済み）
 
 ## 動作確認環境
 
