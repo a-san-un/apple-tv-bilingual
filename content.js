@@ -1928,25 +1928,27 @@
   const onRuntimeMessage = (message, sender, sendResponse) => {
     if (message.type === "SETTINGS_CHANGED") {
       const updated = { ...message.settings };
+      state.requestedSecondaryLang = updated.secondaryLang ?? "";
+
       const next = applySecondaryLangFallback({
         ...state.contentSettings,
         ...updated,
       });
+      const requestedSecondaryLang = state.requestedSecondaryLang;
+      const resolvedSecondaryLanguage = next.secondaryLang;
 
       logContent("SETTINGS_CHANGED received", {
         settings: {
           ...next,
-          requestedSecondaryLang:
-            updated.secondaryLang ?? state.requestedSecondaryLang,
+          requestedSecondaryLang,
+          resolvedSecondaryLanguage,
         },
       });
 
-      const requestedSecondaryLanguage =
-        updated.secondaryLang ?? next.secondaryLang;
-      if (state.video && requestedSecondaryLanguage) {
+      if (state.video && resolvedSecondaryLanguage) {
         syncSecondarySubtitleTrack(
           state.video,
-          requestedSecondaryLanguage,
+          resolvedSecondaryLanguage,
           renderSecondarySubtitle,
         );
         state.secondaryTrack = secondaryTrackBound;
@@ -1954,12 +1956,15 @@
 
       restartBilingual(updated, "SETTINGS_CHANGED");
 
+      const appliedRequestedSecondaryLang = state.requestedSecondaryLang;
+      const appliedResolvedSecondaryLanguage = resolvedSecondaryLanguage;
+
       logContent("content applied settings to tracks", {
         hasVideo: !!state.video,
         primaryLang: state.contentSettings.primaryLang,
         secondaryLang: state.contentSettings.secondaryLang,
-        requestedSecondaryLanguage:
-          state.requestedSecondaryLang || state.contentSettings.secondaryLang,
+        requestedSecondaryLang: appliedRequestedSecondaryLang,
+        resolvedSecondaryLanguage: appliedResolvedSecondaryLanguage,
         selectedSecondaryTrackLanguage: state.secondaryTrack?.language || "",
         primaryTrackFound: !!state.primaryTrack,
         secondaryTrackFound: !!state.secondaryTrack,
