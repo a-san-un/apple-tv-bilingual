@@ -1,3 +1,18 @@
+// options.js v2.5.2
+// Options page logic for general settings, API key fields, and debug tools.
+// Keeps existing language selects, supplements missing fixed-language options,
+// loads/saves settings, and manages debug log actions.
+
+const SUPPORTED_LANGS = [
+  { lang: "en", label: "英語" },
+  { lang: "ja", label: "日本語" },
+  { lang: "zh", label: "中国語" },
+  { lang: "ko", label: "韓国語" },
+  { lang: "fr", label: "フランス語" },
+  { lang: "de", label: "ドイツ語" },
+  { lang: "es", label: "スペイン語" },
+];
+
 const DEFAULT_GENERAL_SETTINGS = {
   primaryLang: "en",
   secondaryLang: "",
@@ -96,6 +111,35 @@ async function appendDebugLog(line) {
   }
 
   await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
+}
+
+function ensureLanguageOptions() {
+  const ensureOptions = (selectEl, langs, allowEmpty = false) => {
+    if (!selectEl) return;
+
+    const existingValues = new Set(
+      Array.from(selectEl.options).map((option) => option.value),
+    );
+
+    if (allowEmpty && !existingValues.has("")) {
+      const emptyOpt = document.createElement("option");
+      emptyOpt.value = "";
+      emptyOpt.textContent = "ブラウザ言語を使う";
+      selectEl.insertBefore(emptyOpt, selectEl.firstChild);
+    }
+
+    langs.forEach(({ lang, label }) => {
+      if (existingValues.has(lang)) return;
+
+      const opt = document.createElement("option");
+      opt.value = lang;
+      opt.textContent = label;
+      selectEl.appendChild(opt);
+    });
+  };
+
+  ensureOptions(els.primaryLang, SUPPORTED_LANGS, false);
+  ensureOptions(els.secondaryLang, SUPPORTED_LANGS, true);
 }
 
 function formatDebugLine(line) {
@@ -199,6 +243,8 @@ function toggleSecretInput(inputEl, buttonEl) {
 async function loadSettings() {
   const lineStart = debugLog("options", "Loading settings");
   await appendDebugLog(lineStart);
+
+  ensureLanguageOptions();
 
   const [general, local] = await Promise.all([
     chrome.storage.sync.get(DEFAULT_GENERAL_SETTINGS),
@@ -337,7 +383,7 @@ function bindEvents() {
     els.debugSectionToggle.addEventListener("click", () => {
       const isHidden = els.debugSectionBody.hidden;
       els.debugSectionBody.hidden = !isHidden;
-              els.debugSectionToggle.textContent = isHidden ? "▼" : "▶";
+      els.debugSectionToggle.textContent = isHidden ? "▼" : "▶";
       els.debugSectionToggle.setAttribute("aria-expanded", String(isHidden));
     });
   }

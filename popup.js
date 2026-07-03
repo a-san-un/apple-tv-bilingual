@@ -1,6 +1,9 @@
-// popup.js v2.5
+// popup.js v2.5.2
+// Popup UI for subtitle language settings.
+// Uses a fixed supported-language list, allows empty secondaryLang,
+// saves settings to chrome.storage.sync, and notifies content.js on apply.
 
-const FALLBACK_LANGS = [
+const SUPPORTED_LANGS = [
   { lang: "en", label: "English" },
   { lang: "ja", label: "日本語" },
   { lang: "zh", label: "中文" },
@@ -88,11 +91,20 @@ async function appendDebugLog(line) {
   await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
 }
 
-function populateSelects(langs, savedPrimary = "en", savedSecondary = "ja") {
+function populateSelects(langs, savedPrimary = "en", savedSecondary = "") {
   [primarySel, secondarySel].forEach((sel, idx) => {
     const saved = idx === 0 ? savedPrimary : savedSecondary;
 
     sel.innerHTML = "";
+
+    if (idx === 1) {
+      const emptyOpt = document.createElement("option");
+      emptyOpt.value = "";
+      emptyOpt.textContent = "ブラウザ言語を使う";
+      if (saved === "") emptyOpt.selected = true;
+      sel.appendChild(emptyOpt);
+    }
+
     langs.forEach((l) => {
       const opt = document.createElement("option");
       opt.value = l.lang;
@@ -109,64 +121,19 @@ async function initPopup() {
 
   chrome.storage.sync.get(GENERAL_KEYS, async (result) => {
     const savedPrimary = result.primaryLang || "en";
-    const savedSecondary = result.secondaryLang || "ja";
+    const savedSecondary = result.secondaryLang ?? "";
 
     const lineLoaded = debugLog("popup", "Loaded general settings", result);
     await appendDebugLog(lineLoaded);
 
-    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-      const activeTabId = tabs?.[0]?.id ?? null;
+    populateSelects(SUPPORTED_LANGS, savedPrimary, savedSecondary);
 
-      const lineTabs = debugLog("popup", "Queried active tab", {
-        hasActiveTab: !!tabs?.[0],
-        tabId: activeTabId,
-      });
-      await appendDebugLog(lineTabs);
-
-      if (!tabs[0]) {
-        populateSelects(FALLBACK_LANGS, savedPrimary, savedSecondary);
-
-        const lineFallback = debugLog(
-          "popup",
-          "No active tab found; using fallback languages",
-          { fallbackCount: FALLBACK_LANGS.length },
-        );
-        await appendDebugLog(lineFallback);
-
-        return;
-      }
-
-      chrome.tabs.sendMessage(
-        tabs[0].id,
-        { type: "GET_LANGUAGES" },
-        async (resp) => {
-          const hasRuntimeError = !!chrome.runtime.lastError;
-          const langs = resp && resp.length > 0 ? resp : FALLBACK_LANGS;
-
-          const lineLangs = debugLog(
-            "popup",
-            "Requested languages from content",
-            {
-              tabId: tabs[0].id,
-              usedFallback: !(resp && resp.length > 0),
-              responseCount: Array.isArray(resp) ? resp.length : 0,
-              lastError: hasRuntimeError
-                ? chrome.runtime.lastError.message
-                : null,
-            },
-          );
-          await appendDebugLog(lineLangs);
-
-          populateSelects(langs, savedPrimary, savedSecondary);
-
-          const lineRestored = debugLog("popup", "Restored popup selections", {
-            primaryLang: savedPrimary,
-            secondaryLang: savedSecondary,
-          });
-          await appendDebugLog(lineRestored);
-        },
-      );
+    const lineFixed = debugLog("popup", "Using fixed language list", {
+      languageCount: SUPPORTED_LANGS.length,
+      primaryLang: savedPrimary,
+      secondaryLang: savedSecondary,
     });
+    await appendDebugLog(lineFixed);
   });
 }
 
