@@ -12,8 +12,8 @@
 - `background.js`: 外部 API 通信用 Service Worker
 - `content.js`: Apple TV+ 再生画面へ UI を注入するメインロジック
 - `popup.html` / `popup.js`: 簡易設定 UI
-- `options.html` / `options.css` / `options.js`: 別タブの詳細設定画面 [page:1]
-- `manifest.json` の現バージョンは `2.5.2` [page:1]
+- `options.html` / `options.css` / `options.js`: 別タブの詳細設定画面
+- `manifest.json` の現バージョンは `2.5.2`
 
 ### 1.2 字幕 UI の現状
 
@@ -32,11 +32,11 @@
 
 ### 1.4 言語設定の現状
 
-- `primaryLang` / `secondaryLang` などの一般設定は `chrome.storage.sync` に保存する設計 [cite:3]
-- API キーと debug logs は `chrome.storage.local` に保存する設計 [cite:3]
-- 既定値は `primaryLang = "en"`、`secondaryLang = ""` [cite:3]
-- `secondaryLang` が空の場合はブラウザ言語 fallback を前提に扱う [cite:3]
-- popup / options の言語候補は、動画ごとの `textTracks` 生データではなく、固定言語一覧ベースへ整理する方針 [cite:4][cite:2]
+- `primaryLang` / `secondaryLang` などの一般設定は `chrome.storage.sync` に保存する設計
+- API キーと debug logs は `chrome.storage.local` に保存する設計
+- 既定値は `primaryLang = "en"`、`secondaryLang = ""`
+- `secondaryLang` が空の場合はブラウザ言語 fallback を前提に扱う
+- popup / options の言語候補は、動画ごとの `textTracks` 生データではなく、固定言語一覧ベースへ整理する方針
 
 ---
 
@@ -44,11 +44,11 @@
 
 ### 2.1 基本方針
 
-- 設定導線は popup だけに閉じず、`options.html` を別タブで開く構成を主軸にする [page:1]
+- 設定導線は popup だけに閉じず、`options.html` を別タブで開く構成を主軸にする
 - popup は簡易設定、options は詳細設定という責務分離に寄せる
 - `primaryLang` は必須設定
-- `secondaryLang` は空値を許容し、未設定時はブラウザ言語を使う [cite:3]
-- UI では `textTracks` の生データを直接表示しない [cite:4]
+- `secondaryLang` は空値を許容し、未設定時はブラウザ言語を使う
+- UI では `textTracks` の生データを直接表示しない
 
 ### 2.2 `primaryLang` の意味
 
@@ -66,7 +66,7 @@
 `secondaryLang` は「補助表示に使う言語」を表します。
 
 - 値が設定されていれば、その言語を優先する
-- 空値なら、content 側でブラウザ言語 fallback を適用する想定 [cite:3]
+- 空値なら、content 側でブラウザ言語 fallback を適用する想定
 - UI 上では `secondaryLang` に「ブラウザ言語を使う」を明示する
 
 ### 2.4 今回の整理対象
@@ -74,7 +74,39 @@
 - popup / options の言語候補を固定一覧ベースへ変更する
 - forced 字幕は設定 UI の直接候補に出さない
 - `secondaryLang` の空値許容を前提に UI を整理する
-- `textTracks` の厳密な正規化や resolver 導入は今回の対象外とし、後続タスクへ切り分ける [page:2]
+- `textTracks` の厳密な正規化や resolver 導入は今回の対象外とし、後続タスクへ切り分ける
+
+### 2.5 `content.js` 側の責務境界
+
+popup / options の役割は「設定値を保存すること」であり、再生中の字幕トラック解決ロジックは content.js 側の責務とする。
+
+#### content.js で扱う責務
+
+1. 設定値の読込
+2. `textTracks` の正規化
+3. primary / secondary 用トラックの resolver
+4. current / history / future の描画
+5. 動画レイヤー上への UI 注入と再配置
+
+#### 設定 UI との境界
+
+- popup / options は固定言語一覧のみを表示する
+- UI では `textTracks` の生データや `forced` 付き候補を直接見せない
+- `secondaryLang` が空値の場合のブラウザ言語 fallback は content.js 側で適用する
+- どの track を最終的に採用するかは content.js 側の resolver で決定する
+
+### 2.6 今後の `textTracks` 処理方針
+
+Apple TV+ の `textTracks` には、同一言語でも通常字幕・captions・forced など複数種が混在する可能性がある。  
+そのため、設定 UI では単純な言語選択だけを扱い、実際のトラック選択は content.js 側で段階的に解決する。
+
+#### 解決方針
+
+- UI 層では「1 言語 = 1 候補」として扱う
+- content.js 側で `textTracks` を正規化する
+- resolver は、同一言語候補に対して優先順位ベースで最終採用 track を決定する
+- 優先順位は「通常字幕 → captions → forced」を基本とする
+- forced 字幕は UI の直接候補には出さないが、通常候補が存在しない場合の内部 fallback 候補としては保持する
 
 ---
 
@@ -84,8 +116,8 @@
 
 - 履歴一覧を残す
 - 各ブロックは 2 行表示
-  - 1 行目: primary
-  - 2 行目: secondary
+- 1 行目: primary
+- 2 行目: secondary
 - current 行は視覚的に強調する
 - 履歴ブロックをクリックしてシークできる現機能は維持する
 
@@ -110,10 +142,10 @@
 ### 3.2 設定画面
 
 - `options.html` を別タブで開く
-- `options.html` / `options.css` / `options.js` で責務分離する [page:1]
+- `options.html` / `options.css` / `options.js` で責務分離する
 - ON/OFF はトグルスイッチ中心で整理する
 - `primaryLang` は必須
-- `secondaryLang` は空値時にブラウザ言語を使う [cite:3]
+- `secondaryLang` は空値時にブラウザ言語を使う
 - popup は簡易設定、options は詳細設定として役割を分ける
 
 ```text
@@ -168,8 +200,8 @@ options.js     ← 設定の読込・保存・状態確認
 }
 ```
 
-- `open_in_tab: true` で設定画面を別タブで開く [page:1]
-- popup や UI 上の `⚙️` からは `chrome.runtime.openOptionsPage()` を使う [cite:2]
+- `open_in_tab: true` で設定画面を別タブで開く
+- popup や UI 上の `⚙️` からは `chrome.runtime.openOptionsPage()` を使う
 
 ---
 
@@ -192,15 +224,27 @@ options.js     ← 設定の読込・保存・状態確認
 
 ## 7. 今後の優先順位
 
-1. #6: popup / options の字幕言語一覧を固定一覧ベースへ整理する [page:2]
-2. #7: `secondaryLang` 空値許容とブラウザ言語 fallback 前提の UI 整理を進める [page:2]
-3. #3: 右パネルと動画操作レイヤーの重なりを調整する [page:2]
-4. #9: `content.js` の current 表示強化を後続タスクとして進める [page:2]
-5. #10: 単語ポップアップ UI 改修と AI タブ拡張を後続タスクとして進める [web:2]
+1. #6: popup / options の字幕言語一覧を固定一覧ベースへ整理する
+2. #7: `secondaryLang` 空値許容とブラウザ言語 fallback 前提の UI 整理を進める
+3. #3: 右パネルと動画操作レイヤーの重なりを調整する
+4. #9: `content.js` 側で `textTracks` 正規化、resolver 導入、current 表示強化を進める
+5. #10: 単語ポップアップ UI 改修と AI タブ拡張を後続タスクとして進める
 
 ---
 
-## 8. 文書整理方針
+## 8. 今回やらないこと
+
+今回の #9 着手時点では、以下は対象外とする。
+
+- popup / options / content 間での ES Modules 共有化
+- AI タブ拡張や単語ポップアップ刷新の全面対応
+- debug 基盤の全面整理
+
+`SUPPORTED_LANGS` の共有モジュール化は有効だが、短期的には二重管理のままとし、resolver 整理時またはその後の段階でまとめて検討する。
+
+---
+
+## 9. 文書整理方針
 
 - `docs/v2.5-dev-roadmap.md` は実装順・issue 追跡用
 - `docs/atv-v25-design.md` は設計意図と画面方針の整理用
