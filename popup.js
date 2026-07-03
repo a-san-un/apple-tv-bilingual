@@ -1,7 +1,15 @@
-// popup.js v2.5.2
-// Popup UI for subtitle language settings.
-// Uses a fixed supported-language list, allows empty secondaryLang,
-// saves settings to chrome.storage.sync, and notifies content.js on apply.
+// =============================================================
+// popup.js - Popup UI for subtitle language settings (v2.5.2)
+// -------------------------------------------------------------
+// Responsibilities:
+// - Show a fixed supported-language list for primary/secondary.
+// - Allow empty secondaryLang as "Browser language".
+// - Save settings to chrome.storage.sync only.
+// - Do NOT notify the content script directly on save.
+//   The active Apple TV+ tab will be refreshed by background.js
+//   when that tab becomes active again.
+// - Keep debug logging behavior for troubleshooting.
+// =============================================================
 
 const SUPPORTED_LANGS = [
   { lang: "en", label: "English" },
@@ -51,20 +59,16 @@ function sanitizeForLog(payload) {
 
   function walk(obj) {
     if (!obj || typeof obj !== "object") return obj;
-
     for (const key of Object.keys(obj)) {
       const value = obj[key];
-
       if (key === "googleAiStudioApiKey" || key === "groqApiKey") {
         obj[key] = value ? maskSensitive(value) : "";
         continue;
       }
-
       if (typeof value === "object" && value !== null) {
         walk(value);
       }
     }
-
     return obj;
   }
 
@@ -81,26 +85,26 @@ function debugLog(scope, message, payload = null) {
 async function appendDebugLog(line) {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
-
   debugLogs.push(line);
-
   if (debugLogs.length > DEBUG_LOGS_MAX) {
     debugLogs.splice(0, debugLogs.length - DEBUG_LOGS_MAX);
   }
-
   await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
+}
+
+function formatLanguageLabel(lang) {
+  return lang.label ? `${lang.label} (${lang.lang})` : lang.lang;
 }
 
 function populateSelects(langs, savedPrimary = "en", savedSecondary = "") {
   [primarySel, secondarySel].forEach((sel, idx) => {
     const saved = idx === 0 ? savedPrimary : savedSecondary;
-
     sel.innerHTML = "";
 
     if (idx === 1) {
       const emptyOpt = document.createElement("option");
       emptyOpt.value = "";
-      emptyOpt.textContent = "ブラウザ言語を使う";
+      emptyOpt.textContent = "Browser language";
       if (saved === "") emptyOpt.selected = true;
       sel.appendChild(emptyOpt);
     }
@@ -108,7 +112,7 @@ function populateSelects(langs, savedPrimary = "en", savedSecondary = "") {
     langs.forEach((l) => {
       const opt = document.createElement("option");
       opt.value = l.lang;
-      opt.textContent = l.label ? `${l.label} (${l.lang})` : l.lang;
+      opt.textContent = formatLanguageLabel(l);
       if (l.lang === saved) opt.selected = true;
       sel.appendChild(opt);
     });
@@ -157,50 +161,16 @@ applyBtn.addEventListener("click", async () => {
     );
     await appendDebugLog(lineSaved);
 
-    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-      if (!tabs[0]) {
-        const lineNoTab = debugLog(
-          "popup",
-          "SETTINGS_CHANGED skipped: no active tab",
-          settingsToSave,
-        );
-        await appendDebugLog(lineNoTab);
+    const lineDeferred = debugLog(
+      "popup",
+      "Deferred apply: settings will be reflected when Apple TV+ tab becomes active",
+      settingsToSave,
+    );
+    await appendDebugLog(lineDeferred);
 
-        statusEl.textContent = "✓ 保存しました";
-        setTimeout(() => window.close(), 800);
-        return;
-      }
-
-      const messagePayload = {
-        type: "SETTINGS_CHANGED",
-        settings: settingsToSave,
-      };
-
-      const lineSend = debugLog(
-        "popup",
-        "Sending SETTINGS_CHANGED to content",
-        {
-          tabId: tabs[0].id,
-          payload: messagePayload,
-        },
-      );
-      await appendDebugLog(lineSend);
-
-      chrome.tabs.sendMessage(tabs[0].id, messagePayload, async (response) => {
-        const lineResponse = debugLog("popup", "SETTINGS_CHANGED response", {
-          tabId: tabs[0].id,
-          hasRuntimeError: !!chrome.runtime.lastError,
-          runtimeError: chrome.runtime.lastError
-            ? chrome.runtime.lastError.message
-            : null,
-          response: response ?? null,
-        });
-        await appendDebugLog(lineResponse);
-      });
-    });
-
-    statusEl.textContent = "✓ 保存しました";
-    setTimeout(() => window.close(), 800);
+    statusEl.textContent =
+      "✓ Saved. Changes will apply when you return to the Apple TV+ tab.";
+    setTimeout(() => window.close(), 1200);
   });
 });
 

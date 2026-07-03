@@ -1,16 +1,25 @@
-// options.js v2.5.2
-// Options page logic for general settings, API key fields, and debug tools.
-// Keeps existing language selects, supplements missing fixed-language options,
-// loads/saves settings, and manages debug log actions.
+// =============================================================
+// options.js - Options page logic (v2.5.2)
+// -------------------------------------------------------------
+// Responsibilities:
+// - Load/save general settings and local API-key settings.
+// - Use the same fixed supported-language list as popup.js.
+// - Show language labels in the unified "Label (code)" format.
+// - Allow empty secondaryLang as "Browser language".
+// - Save settings only; do NOT notify content.js directly.
+//   Changes are applied when the Apple TV+ tab becomes active
+//   and background.js sends SETTINGS_CHANGED.
+// - Keep debug tools and existing options page utilities.
+// =============================================================
 
 const SUPPORTED_LANGS = [
-  { lang: "en", label: "英語" },
+  { lang: "en", label: "English" },
   { lang: "ja", label: "日本語" },
-  { lang: "zh", label: "中国語" },
-  { lang: "ko", label: "韓国語" },
-  { lang: "fr", label: "フランス語" },
-  { lang: "de", label: "ドイツ語" },
-  { lang: "es", label: "スペイン語" },
+  { lang: "zh", label: "中文" },
+  { lang: "ko", label: "한국어" },
+  { lang: "fr", label: "Français" },
+  { lang: "de", label: "Deutsch" },
+  { lang: "es", label: "Español" },
 ];
 
 const DEFAULT_GENERAL_SETTINGS = {
@@ -45,7 +54,6 @@ const els = {
   groqApiKey: document.getElementById("groqApiKey"),
   toggleGoogleKey: document.getElementById("toggleGoogleKey"),
   toggleGroqKey: document.getElementById("toggleGroqKey"),
-
   debugSectionToggle: document.getElementById("debugSectionToggle"),
   debugSectionBody: document.getElementById("debugSectionBody"),
   debugLogOutput: document.getElementById("debugLogOutput"),
@@ -73,20 +81,16 @@ function sanitizeForLog(payload) {
 
   function walk(obj) {
     if (!obj || typeof obj !== "object") return obj;
-
     for (const key of Object.keys(obj)) {
       const value = obj[key];
-
       if (key === "googleAiStudioApiKey" || key === "groqApiKey") {
         obj[key] = value ? maskSensitive(value) : "";
         continue;
       }
-
       if (typeof value === "object" && value !== null) {
         walk(value);
       }
     }
-
     return obj;
   }
 
@@ -103,43 +107,37 @@ function debugLog(scope, message, payload = null) {
 async function appendDebugLog(line) {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
-
   debugLogs.push(line);
-
   if (debugLogs.length > DEBUG_LOGS_MAX) {
     debugLogs.splice(0, debugLogs.length - DEBUG_LOGS_MAX);
   }
-
   await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
 }
 
-function ensureLanguageOptions() {
-  const ensureOptions = (selectEl, langs, allowEmpty = false) => {
-    if (!selectEl) return;
+function formatLanguageLabel(lang) {
+  return lang.label ? `${lang.label} (${lang.lang})` : lang.lang;
+}
 
-    const existingValues = new Set(
-      Array.from(selectEl.options).map((option) => option.value),
-    );
+function populateLangSelect(selectEl, langs, saved, allowEmpty) {
+  if (!selectEl) return;
 
-    if (allowEmpty && !existingValues.has("")) {
-      const emptyOpt = document.createElement("option");
-      emptyOpt.value = "";
-      emptyOpt.textContent = "ブラウザ言語を使う";
-      selectEl.insertBefore(emptyOpt, selectEl.firstChild);
-    }
+  selectEl.innerHTML = "";
 
-    langs.forEach(({ lang, label }) => {
-      if (existingValues.has(lang)) return;
+  if (allowEmpty) {
+    const emptyOpt = document.createElement("option");
+    emptyOpt.value = "";
+    emptyOpt.textContent = "Browser language";
+    if (!saved) emptyOpt.selected = true;
+    selectEl.appendChild(emptyOpt);
+  }
 
-      const opt = document.createElement("option");
-      opt.value = lang;
-      opt.textContent = label;
-      selectEl.appendChild(opt);
-    });
-  };
-
-  ensureOptions(els.primaryLang, SUPPORTED_LANGS, false);
-  ensureOptions(els.secondaryLang, SUPPORTED_LANGS, true);
+  langs.forEach((l) => {
+    const opt = document.createElement("option");
+    opt.value = l.lang;
+    opt.textContent = formatLanguageLabel(l);
+    if (l.lang === saved) opt.selected = true;
+    selectEl.appendChild(opt);
+  });
 }
 
 function formatDebugLine(line) {
@@ -153,7 +151,6 @@ async function renderDebugLogs() {
 
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
-
   els.debugLogOutput.value = debugLogs.map(formatDebugLine).join("\n");
   els.debugLogOutput.scrollTop = els.debugLogOutput.scrollHeight;
 }
@@ -161,7 +158,6 @@ async function renderDebugLogs() {
 async function copyDebugLogs() {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
-
   const text = debugLogs.map(formatDebugLine).join("\n");
   await navigator.clipboard.writeText(text);
 
@@ -176,7 +172,6 @@ async function copyDebugLogs() {
 async function downloadDebugLogs() {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
-
   const text = debugLogs.map(formatDebugLine).join("\n");
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -199,6 +194,7 @@ async function downloadDebugLogs() {
 
 async function clearDebugLogs() {
   await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: [] });
+
   if (els.debugLogOutput) {
     els.debugLogOutput.value = "";
   }
@@ -222,12 +218,14 @@ function setPreferredAiProvider(value) {
       `input[name="preferredAiProvider"][value="${value}"]`,
     ) ||
     document.querySelector('input[name="preferredAiProvider"][value="auto"]');
+
   if (target) target.checked = true;
 }
 
 function showSaveStatus(message, isError = false) {
   els.saveStatus.textContent = message;
   els.saveStatus.style.color = isError ? "#ff8b8b" : "#7bd88f";
+
   clearTimeout(showSaveStatus._timer);
   showSaveStatus._timer = setTimeout(() => {
     els.saveStatus.textContent = "";
@@ -244,19 +242,29 @@ async function loadSettings() {
   const lineStart = debugLog("options", "Loading settings");
   await appendDebugLog(lineStart);
 
-  ensureLanguageOptions();
-
   const [general, local] = await Promise.all([
     chrome.storage.sync.get(DEFAULT_GENERAL_SETTINGS),
     chrome.storage.local.get(DEFAULT_LOCAL_SETTINGS),
   ]);
 
-  els.primaryLang.value = general.primaryLang;
-  els.secondaryLang.value = general.secondaryLang;
+  populateLangSelect(
+    els.primaryLang,
+    SUPPORTED_LANGS,
+    general.primaryLang,
+    false,
+  );
+  populateLangSelect(
+    els.secondaryLang,
+    SUPPORTED_LANGS,
+    general.secondaryLang,
+    true,
+  );
+
   els.showSidebar.checked = Boolean(general.showSidebar);
   els.pinSidebar.checked = Boolean(general.pinSidebar);
   els.playWordAudio.checked = Boolean(general.playWordAudio);
   els.enableAiTooltip.checked = Boolean(general.enableAiTooltip);
+
   setPreferredAiProvider(general.preferredAiProvider);
 
   els.googleAiStudioApiKey.value = local.googleAiStudioApiKey || "";
@@ -285,10 +293,10 @@ async function loadSettings() {
 
 async function saveSettings() {
   const primaryLang = els.primaryLang.value;
+
   if (!primaryLang) {
     const line = debugLog("options", "Save blocked: primaryLang missing");
     await appendDebugLog(line);
-
     showSaveStatus("勉強している言語を選択してください", true);
     els.primaryLang.focus();
     await renderDebugLogs();
@@ -327,9 +335,7 @@ async function saveSettings() {
     const lineSecondaryEmpty = debugLog(
       "options",
       "secondaryLang is empty; content fallback expected",
-      {
-        secondaryLang: generalSettings.secondaryLang,
-      },
+      { secondaryLang: generalSettings.secondaryLang },
     );
     await appendDebugLog(lineSecondaryEmpty);
   }
@@ -344,7 +350,16 @@ async function saveSettings() {
     chrome.storage.local.set(localSettings),
   ]);
 
-  showSaveStatus("設定を保存しました");
+  const lineDeferred = debugLog(
+    "options",
+    "Deferred apply: settings will be reflected when Apple TV+ tab becomes active",
+    generalSettings,
+  );
+  await appendDebugLog(lineDeferred);
+
+  showSaveStatus(
+    "Saved. Changes will apply when you return to the Apple TV+ tab.",
+  );
 
   const lineDone = debugLog("options", "Settings saved successfully");
   await appendDebugLog(lineDone);

@@ -1,16 +1,19 @@
 // =============================================================
-// background.js - Service Worker (v2.5)
-// =============================================================
-// Content scripts run in the page context and are subject to
-// the page's CORS policy. Fetches from tv.apple.com to external
-// APIs (jisho.org, translate.googleapis.com) are blocked.
-//
-// Solution: route all external API calls through this service
-// worker, which is NOT subject to CORS restrictions.
-//
-// SW Keepalive: Manifest V3 service workers auto-stop after
-// ~30 seconds of inactivity. The activate handler + onInstalled
-// listener help keep the SW registered and responsive.
+// background.js - Service Worker (v2.5.2)
+// -------------------------------------------------------------
+// Responsibilities:
+// - Proxy external API requests that content scripts cannot fetch
+//   directly because of page-context CORS restrictions.
+// - Keep debug logging for background/network operations.
+// - Watch tab activation events.
+// - When an Apple TV+ tab becomes active, notify its content.js
+//   with SETTINGS_CHANGED so it can reload settings from storage.
+// -------------------------------------------------------------
+// Notes:
+// - This makes popup/options behavior consistent:
+//   both save settings only, and the active Apple TV+ tab applies
+//   them when the user returns to that tab.
+// - Requires "tabs" permission in manifest.json.
 // =============================================================
 
 const DEBUG_LOGS_KEY = "debugLogs";
@@ -35,20 +38,16 @@ function sanitizeForLog(payload) {
 
   function walk(obj) {
     if (!obj || typeof obj !== "object") return obj;
-
     for (const key of Object.keys(obj)) {
       const value = obj[key];
-
       if (key === "googleAiStudioApiKey" || key === "groqApiKey") {
         obj[key] = value ? maskSensitive(value) : "";
         continue;
       }
-
       if (typeof value === "object" && value !== null) {
         walk(value);
       }
     }
-
     return obj;
   }
 
@@ -65,13 +64,10 @@ function debugLog(scope, message, payload = null) {
 async function appendDebugLog(line) {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
-
   debugLogs.push(line);
-
   if (debugLogs.length > DEBUG_LOGS_MAX) {
     debugLogs.splice(0, debugLogs.length - DEBUG_LOGS_MAX);
   }
-
   await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
 }
 
@@ -98,7 +94,28 @@ async function fetchJsonWithLogging(url, meta = {}) {
   return response.json();
 }
 
-// Keep the service worker alive and claim clients immediately on activation
+function isAppleTvUrl(url) {
+  return typeof url === "string" && url.startsWith("https://tv.apple.com/");
+}
+
+async function notifySettingsChangedToTab(tabId, reason = "tab_activated") {
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: "SETTINGS_CHANGED",
+      reason,
+    });
+
+    await logBackground("SETTINGS_CHANGED sent", { tabId, reason });
+  } catch (error) {
+    await logBackground("SETTINGS_CHANGED skipped or failed", {
+      tabId,
+      reason,
+      error: String(error),
+    });
+  }
+}
+
+// Keep the service worker alive and claim clients immediately on activation.
 self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
@@ -106,6 +123,24 @@ self.addEventListener("activate", (event) => {
 chrome.runtime.onInstalled.addListener(() => {
   console.log("[ATV-Bilingual] background.js installed/updated");
   logBackground("background.js installed/updated").catch(() => {});
+});
+
+// Apply saved settings when the user returns to an Apple TV+ tab.
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+
+    if (!isAppleTvUrl(tab?.url)) {
+      return;
+    }
+
+    await notifySettingsChangedToTab(tabId, "tab_activated");
+  } catch (error) {
+    await logBackground("tabs.onActivated error", {
+      tabId,
+      error: String(error),
+    });
+  }
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -136,13 +171,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         const reading = entry.japanese?.[0]?.reading ?? "";
-
         const senses = (entry.senses ?? []).slice(0, 5);
         const meanings = senses.map((sense) => ({
           definitions: sense.english_definitions ?? [],
           partsOfSpeech: sense.parts_of_speech ?? [],
         }));
-
         const jlptRaw = entry.jlpt?.[0] ?? "";
         const jlpt = jlptRaw ? jlptRaw.replace("jlpt-", "").toUpperCase() : "";
         const isCommon = entry.is_common ?? false;
@@ -164,7 +197,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: false, error: error.message || String(error) });
       }
     })();
-
     return true;
   }
 
@@ -179,7 +211,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         });
 
         const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ja&dt=t&q=${encodeURIComponent(msg.text)}`;
-
         const data = await fetchJsonWithLogging(url, {
           label: "fetchTranslate",
           textLength: msg.text ? msg.text.length : 0,
@@ -205,11 +236,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: false, error: error.message || String(error) });
       }
     })();
-
     return true;
   }
 
-  // ---------- Tatoeba 例文取得 ----------
+  // ---------- Tatoeba example sentences ----------
   if (msg.type === "FETCH_TATOEBA") {
     (async () => {
       try {
@@ -219,7 +249,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         });
 
         const url = `https://api.tatoeba.org/unstable/sentences?q=${encodeURIComponent(msg.word)}&lang=eng&trans:lang=jpn&limit=5`;
-
         const data = await fetchJsonWithLogging(url, {
           label: "fetchTatoeba",
           word: msg.word,
@@ -245,7 +274,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: false, error: error.message || String(error) });
       }
     })();
-
     return true;
   }
 });
