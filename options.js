@@ -337,7 +337,7 @@ function bindEvents() {
     els.debugSectionToggle.addEventListener("click", () => {
       const isHidden = els.debugSectionBody.hidden;
       els.debugSectionBody.hidden = !isHidden;
-      els.debugSectionToggle.textContent = isHidden ? "▲" : "▼";
+              els.debugSectionToggle.textContent = isHidden ? "▼" : "▶";
       els.debugSectionToggle.setAttribute("aria-expanded", String(isHidden));
     });
   }
