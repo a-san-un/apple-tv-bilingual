@@ -18,6 +18,7 @@
 
 const DEBUG_LOGS_KEY = "debugLogs";
 const DEBUG_LOGS_MAX = 400;
+let trackedAppleTvTabId = null;
 
 function maskSensitive(value) {
   if (typeof value !== "string") return value;
@@ -98,21 +99,116 @@ function isAppleTvUrl(url) {
   return typeof url === "string" && url.startsWith("https://tv.apple.com/");
 }
 
-async function notifySettingsChangedToTab(tabId, reason = "tab_activated") {
-  try {
-    await chrome.tabs.sendMessage(tabId, {
-      type: "SETTINGS_CHANGED",
-      reason,
-    });
-
-    await logBackground("SETTINGS_CHANGED sent", { tabId, reason });
-  } catch (error) {
-    await logBackground("SETTINGS_CHANGED skipped or failed", {
+async function updateTrackedAppleTvTab(tabId, url, reason) {
+  if (!Number.isInteger(tabId) || !isAppleTvUrl(url)) return;
+  const changed = trackedAppleTvTabId !== tabId;
+  trackedAppleTvTabId = tabId;
+  if (changed) {
+    await logBackground("tracked Apple TV tab updated", {
       tabId,
+      url,
       reason,
-      error: String(error),
     });
   }
+}
+
+async function findAppleTvTabId() {
+  if (Number.isInteger(trackedAppleTvTabId)) {
+    try {
+      const tab = await chrome.tabs.get(trackedAppleTvTabId);
+      if (isAppleTvUrl(tab?.url)) {
+        return trackedAppleTvTabId;
+      }
+    } catch (_) {}
+  }
+
+  const tabs = await chrome.tabs.query({ url: ["https://tv.apple.com/*"] });
+  const candidate = tabs && tabs.length ? tabs[0] : null;
+  if (candidate?.id && isAppleTvUrl(candidate.url)) {
+    await updateTrackedAppleTvTab(candidate.id, candidate.url, "tabs_query");
+    return candidate.id;
+  }
+
+  trackedAppleTvTabId = null;
+  return null;
+}
+
+async function sendSettingsChangedWithRecovery(
+  tabId,
+  reason = "tab_activated",
+  settings = null,
+) {
+  const message = {
+    type: "SETTINGS_CHANGED",
+    reason,
+  };
+  if (settings && typeof settings === "object") {
+    message.settings = settings;
+  }
+
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, message);
+    await logBackground("SETTINGS_CHANGED sent", { tabId, reason });
+    return { ok: true, tabId, reason, response: response ?? null };
+  } catch (error) {
+    const errorText = String(error);
+    await logBackground("SETTINGS_CHANGED send failed", {
+      tabId,
+      reason,
+      error: errorText,
+    });
+
+    if (!errorText.includes("Receiving end does not exist")) {
+      return { ok: false, tabId, reason, error: errorText };
+    }
+
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ["content.js"],
+      });
+      await chrome.scripting.insertCSS({
+        target: { tabId },
+        files: ["overlay.css"],
+      });
+      await logBackground("content script reinjected", { tabId, reason });
+    } catch (injectError) {
+      const injectErrorText = String(injectError);
+      await logBackground("content script reinject failed", {
+        tabId,
+        reason,
+        error: injectErrorText,
+      });
+      return { ok: false, tabId, reason, error: injectErrorText };
+    }
+
+    try {
+      const retryResponse = await chrome.tabs.sendMessage(tabId, message);
+      await logBackground("SETTINGS_CHANGED sent after reinject", {
+        tabId,
+        reason,
+      });
+      return {
+        ok: true,
+        tabId,
+        reason,
+        retried: true,
+        response: retryResponse ?? null,
+      };
+    } catch (retryError) {
+      const retryErrorText = String(retryError);
+      await logBackground("SETTINGS_CHANGED retry failed", {
+        tabId,
+        reason,
+        error: retryErrorText,
+      });
+      return { ok: false, tabId, reason, error: retryErrorText };
+    }
+  }
+}
+
+async function notifySettingsChangedToTab(tabId, reason = "tab_activated") {
+  await sendSettingsChangedWithRecovery(tabId, reason);
 }
 
 // Keep the service worker alive and claim clients immediately on activation.
@@ -134,6 +230,8 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
       return;
     }
 
+    await updateTrackedAppleTvTab(tabId, tab.url, "tabs_onActivated");
+
     await notifySettingsChangedToTab(tabId, "tab_activated");
   } catch (error) {
     await logBackground("tabs.onActivated error", {
@@ -143,7 +241,64 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   }
 });
 
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  try {
+    const url = changeInfo.url || tab?.url;
+    if (!isAppleTvUrl(url)) return;
+    await updateTrackedAppleTvTab(tabId, url, "tabs_onUpdated");
+  } catch (error) {
+    await logBackground("tabs.onUpdated error", {
+      tabId,
+      error: String(error),
+    });
+  }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (trackedAppleTvTabId === tabId) {
+    trackedAppleTvTabId = null;
+  }
+});
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // ---------- Unified settings dispatch ----------
+  if (msg.type === "APPLY_SETTINGS_TO_APPLE_TV") {
+    (async () => {
+      try {
+        const settings = msg.settings || null;
+        await logBackground("APPLY_SETTINGS_TO_APPLE_TV requested", {
+          reason: msg.reason || "unknown",
+          settings,
+        });
+
+        const tabId = await findAppleTvTabId();
+        if (!Number.isInteger(tabId)) {
+          await logBackground("Apple TV tab not found", {
+            reason: msg.reason || "unknown",
+          });
+          sendResponse({ ok: false, error: "no_active_apple_tv_tab" });
+          return;
+        }
+
+        await logBackground("sending SETTINGS_CHANGED to Apple TV tab", {
+          tabId,
+          reason: msg.reason || "unknown",
+          settings,
+        });
+
+        const result = await sendSettingsChangedWithRecovery(
+          tabId,
+          msg.reason || "apply_settings",
+          settings,
+        );
+        sendResponse(result);
+      } catch (error) {
+        sendResponse({ ok: false, error: String(error) });
+      }
+    })();
+    return true;
+  }
+
   // ---------- Dictionary lookup (Jisho) ----------
   if (msg.type === "FETCH_DICT") {
     (async () => {

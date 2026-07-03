@@ -232,6 +232,50 @@ function showSaveStatus(message, isError = false) {
   }, 2800);
 }
 
+function buildLanguageSettingsPayload(primaryLang, secondaryLang) {
+  return {
+    primaryLang,
+    secondaryLang,
+  };
+}
+
+async function dispatchSettingsChangedFromOptions(settingsPayload) {
+  const lineDispatchStart = debugLog(
+    "options",
+    "options dispatch APPLY_SETTINGS_TO_APPLE_TV",
+    {
+      settings: settingsPayload,
+    },
+  );
+  await appendDebugLog(lineDispatchStart);
+
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      {
+        type: "APPLY_SETTINGS_TO_APPLE_TV",
+        reason: "options_save",
+        settings: settingsPayload,
+      },
+      async (response) => {
+        if (chrome.runtime.lastError) {
+          const lineError = debugLog(
+            "options",
+            "options dispatch APPLY_SETTINGS_TO_APPLE_TV failed",
+            {
+              error: chrome.runtime.lastError.message,
+            },
+          );
+          await appendDebugLog(lineError);
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+
+        resolve(response || { ok: false, error: "no_response" });
+      },
+    );
+  });
+}
+
 function toggleSecretInput(inputEl, buttonEl) {
   const show = inputEl.type === "password";
   inputEl.type = show ? "text" : "password";
@@ -293,6 +337,13 @@ async function loadSettings() {
 
 async function saveSettings() {
   const primaryLang = els.primaryLang.value;
+  const secondaryLang = els.secondaryLang.value;
+
+  const lineFormValues = debugLog("options", "options save form values", {
+    primaryLang,
+    secondaryLang,
+  });
+  await appendDebugLog(lineFormValues);
 
   if (!primaryLang) {
     const line = debugLog("options", "Save blocked: primaryLang missing");
@@ -305,7 +356,7 @@ async function saveSettings() {
 
   const generalSettings = {
     primaryLang,
-    secondaryLang: els.secondaryLang.value,
+    secondaryLang,
     showSidebar: els.showSidebar.checked,
     pinSidebar: els.pinSidebar.checked,
     playWordAudio: els.playWordAudio.checked,
@@ -350,16 +401,40 @@ async function saveSettings() {
     chrome.storage.local.set(localSettings),
   ]);
 
-  const lineDeferred = debugLog(
+  const savedValues = await chrome.storage.sync.get([
+    "primaryLang",
+    "secondaryLang",
+  ]);
+  const lineReadback = debugLog(
     "options",
-    "Deferred apply: settings will be reflected when Apple TV+ tab becomes active",
-    generalSettings,
+    "options saved values readback",
+    savedValues,
   );
-  await appendDebugLog(lineDeferred);
+  await appendDebugLog(lineReadback);
 
-  showSaveStatus(
-    "Saved. Changes will apply when you return to the Apple TV+ tab.",
+  const languageSettingsPayload = buildLanguageSettingsPayload(
+    primaryLang,
+    secondaryLang,
   );
+  const dispatchResult = await dispatchSettingsChangedFromOptions(
+    languageSettingsPayload,
+  );
+
+  const lineDispatchResult = debugLog(
+    "options",
+    "options dispatch APPLY_SETTINGS_TO_APPLE_TV result",
+    {
+      payload: languageSettingsPayload,
+      result: dispatchResult,
+    },
+  );
+  await appendDebugLog(lineDispatchResult);
+
+  if (dispatchResult?.ok) {
+    showSaveStatus("Saved and applied.");
+  } else {
+    showSaveStatus("Saved. Open Apple TV+ tab to apply immediately.");
+  }
 
   const lineDone = debugLog("options", "Settings saved successfully");
   await appendDebugLog(lineDone);

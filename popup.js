@@ -4,10 +4,8 @@
 // Responsibilities:
 // - Show a fixed supported-language list for primary/secondary.
 // - Allow empty secondaryLang as "Browser language".
-// - Save settings to chrome.storage.sync only.
-// - Do NOT notify the content script directly on save.
-//   The active Apple TV+ tab will be refreshed by background.js
-//   when that tab becomes active again.
+// - Save settings to chrome.storage.sync.
+// - Notify the active Apple TV+ tab immediately after save.
 // - Keep debug logging behavior for troubleshooting.
 // =============================================================
 
@@ -59,16 +57,20 @@ function sanitizeForLog(payload) {
 
   function walk(obj) {
     if (!obj || typeof obj !== "object") return obj;
+
     for (const key of Object.keys(obj)) {
       const value = obj[key];
+
       if (key === "googleAiStudioApiKey" || key === "groqApiKey") {
         obj[key] = value ? maskSensitive(value) : "";
         continue;
       }
+
       if (typeof value === "object" && value !== null) {
         walk(value);
       }
     }
+
     return obj;
   }
 
@@ -85,10 +87,13 @@ function debugLog(scope, message, payload = null) {
 async function appendDebugLog(line) {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
+
   debugLogs.push(line);
+
   if (debugLogs.length > DEBUG_LOGS_MAX) {
     debugLogs.splice(0, debugLogs.length - DEBUG_LOGS_MAX);
   }
+
   await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
 }
 
@@ -117,6 +122,68 @@ function populateSelects(langs, savedPrimary = "en", savedSecondary = "") {
       sel.appendChild(opt);
     });
   });
+}
+
+async function notifyActiveAppleTvTab(settingsToSend) {
+  const lineNotifyStart = debugLog(
+    "popup",
+    "Dispatching APPLY_SETTINGS_TO_APPLE_TV",
+    settingsToSend,
+  );
+  await appendDebugLog(lineNotifyStart);
+
+  chrome.runtime.sendMessage(
+    {
+      type: "APPLY_SETTINGS_TO_APPLE_TV",
+      reason: "popup_save",
+      settings: settingsToSend,
+    },
+    async (response) => {
+      if (chrome.runtime.lastError) {
+        const lineSendError = debugLog(
+          "popup",
+          "APPLY_SETTINGS_TO_APPLE_TV failed",
+          {
+            error: chrome.runtime.lastError.message,
+          },
+        );
+        await appendDebugLog(lineSendError);
+
+        statusEl.textContent =
+          "✓ Saved. Message delivery failed, but settings are stored.";
+        setTimeout(() => window.close(), 1500);
+        return;
+      }
+
+      if (!response?.ok) {
+        const lineDispatchFailed = debugLog(
+          "popup",
+          "APPLY_SETTINGS_TO_APPLE_TV rejected",
+          {
+            response,
+          },
+        );
+        await appendDebugLog(lineDispatchFailed);
+        statusEl.textContent =
+          "✓ Saved. Could not apply now, retry on Apple TV+ tab.";
+        setTimeout(() => window.close(), 1500);
+        return;
+      }
+
+      const lineSendOk = debugLog(
+        "popup",
+        "APPLY_SETTINGS_TO_APPLE_TV success",
+        {
+          response: response || null,
+          settings: settingsToSend,
+        },
+      );
+      await appendDebugLog(lineSendOk);
+
+      statusEl.textContent = "✓ Saved and applied.";
+      setTimeout(() => window.close(), 1000);
+    },
+  );
 }
 
 async function initPopup() {
@@ -161,16 +228,7 @@ applyBtn.addEventListener("click", async () => {
     );
     await appendDebugLog(lineSaved);
 
-    const lineDeferred = debugLog(
-      "popup",
-      "Deferred apply: settings will be reflected when Apple TV+ tab becomes active",
-      settingsToSave,
-    );
-    await appendDebugLog(lineDeferred);
-
-    statusEl.textContent =
-      "✓ Saved. Changes will apply when you return to the Apple TV+ tab.";
-    setTimeout(() => window.close(), 1200);
+    await notifyActiveAppleTvTab(settingsToSave);
   });
 });
 
