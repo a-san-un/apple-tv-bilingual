@@ -1,0 +1,268 @@
+# Apple TV+ Bilingual Subtitles v2.5-dev 設計まとめ
+
+この文書は、Apple TV+ Bilingual Subtitles v2.5-dev の現状コードで確認できたこと、合意済み仕様、今後の整理方針をまとめた設計メモです。
+
+---
+
+## 1. 現状コードで確認できたこと
+
+### 1.1 現在の構成
+
+- Chrome 拡張 Manifest V3
+- `background.js`: 外部 API 通信用 Service Worker
+- `content.js`: Apple TV+ 再生画面へ UI を注入するメインロジック
+- `popup.html` / `popup.js`: 簡易設定 UI
+- `options.html` / `options.css` / `options.js`: 別タブの詳細設定画面
+- `manifest.json` の現バージョンは `2.5.2`
+
+### 1.2 字幕 UI の現状
+
+- 動画コンテナは 70% 幅を基準に扱い、右側 30% を字幕パネル領域として使う方針
+- 右パネルは「履歴 + 現在 + 未来」の一覧型
+- 各字幕ブロックは primary / secondary の 2 行表示
+- 左下オーバーレイは、右字幕パネルを閉じたときの補助表示として現在字幕 2 行を表示
+- パネルは `✕` で閉じ、閉じた時だけ右上の再表示ボタンで開く構成
+
+### 1.3 単語ポップアップの現状
+
+- 辞書系 UI と AI 系 UI を段階的に整理中
+- 辞書連携は Jisho / Tatoeba / dictionaryapi.dev などを含む構成
+- AI 補助表示は今後の拡張対象
+- 字幕本体の 2 行表示と、学習補助ポップアップは役割を分けて扱う
+
+### 1.4 言語設定の現状
+
+- `primaryLang` / `secondaryLang` などの一般設定は `chrome.storage.sync` に保存する設計
+- API キーと debug logs は `chrome.storage.local` に保存する設計
+- 既定値は `primaryLang = "en"`、`secondaryLang = ""`
+- `secondaryLang` が空の場合はブラウザ言語 fallback を前提に扱う
+- popup / options の言語候補は、動画ごとの `textTracks` 生データではなく、**固定言語一覧** ベースへ整理済み
+- 設定保存後は、**アクティブな Apple TV+ 再生タブへ即時通知**する実装になっている
+
+---
+
+## 2. 言語設定の設計方針
+
+### 2.1 基本方針
+
+- 設定導線は popup だけに閉じず、`options.html` を別タブで開く構成を主軸にする
+- popup は簡易設定、options は詳細設定という責務分離に寄せる
+- `primaryLang` は必須設定
+- `secondaryLang` は空値を許容し、未設定時はブラウザ言語を使う
+- UI では `textTracks` の生データを直接表示しない
+
+### 2.2 `primaryLang` の意味
+
+`primaryLang` は「学習したい主字幕言語」を表します。
+
+想定フロー:
+
+- popup または options でユーザーが設定
+- 例: `primaryLang = "en"`、`secondaryLang = ""`
+- `chrome.storage.sync` に保存
+- `content.js` がそれを読み込み、再生中の字幕処理に反映する
+
+### 2.3 `secondaryLang` の意味
+
+`secondaryLang` は「補助表示に使う言語」を表します。
+
+- 値が設定されていれば、その言語を優先する
+- 空値なら、content 側でブラウザ言語 fallback を適用する
+- UI 上では `secondaryLang` に「ブラウザ言語を使う」を明示する
+
+### 2.4 今回の整理対象
+
+- popup / options の言語候補を固定一覧ベースへ変更する（Issue #6 完了済み）
+- forced 字幕は設定 UI の直接候補に出さない
+- `secondaryLang` の空値許容を前提に UI を整理する（Issue #7 と関連）
+- `textTracks` の厳密な正規化や resolver 導入は、段階的に進める
+
+### 2.5 `content.js` 側の責務境界
+
+popup / options の役割は「設定値を保存すること」であり、再生中の字幕トラック解決ロジックは content.js 側の責務とする。
+
+#### content.js で扱う責務
+
+1. 設定値の読込
+2. `textTracks` の正規化
+3. primary / secondary 用トラックの resolver
+4. current / history / future の描画
+5. 動画レイヤー上への UI 注入と再配置
+
+#### 設定 UI との境界
+
+- popup / options は固定言語一覧のみを表示する
+- UI では `textTracks` の生データや `forced` 付き候補を直接見せない
+- `secondaryLang` が空値の場合のブラウザ言語 fallback は content.js 側で適用する
+- どの track を最終的に採用するかは content.js 側の resolver で決定する
+
+### 2.6 `textTracks` 処理と WebVTT 正規化
+
+Apple TV+ の `textTracks` には、同一言語でも通常字幕・captions・forced など複数種が混在する可能性がある。  
+そのため、設定 UI では単純な言語選択だけを扱い、実際のトラック選択とテキスト正規化は content.js 側で段階的に解決する。
+
+#### 解決方針
+
+- UI 層では「1 言語 = 1 候補」として扱う
+- content.js 側で `textTracks` を正規化する
+- resolver は、同一言語候補に対して優先順位ベースで最終採用 track を決定する
+- 優先順位は「通常字幕 → captions → forced」を基本とする
+- forced 字幕は UI の直接候補には出さないが、通常候補が存在しない場合の内部 fallback 候補としては保持する
+- WebVTT の cue テキストから `<c.styledotitalic>` のようなタグ断片は除去し、
+  - 画面表示上も
+  - F12 Console での `__atvbDumpTracks()` の `hasTag: false` でも
+    正規化済みであることを確認済み
+
+---
+
+## 3. レイアウト確定事項
+
+### 3.1 右字幕パネル
+
+- 履歴一覧を残す
+- 各ブロックは 2 行表示
+  - 1 行目: primary
+  - 2 行目: secondary
+- current 行は視覚的に強調する
+- 履歴ブロックをクリックしてシークできる現機能は維持する
+
+```text
+┌────────────────────────────────────┐
+│ 字幕履歴                    [⚙️][✕] │
+├────────────────────────────────────┤
+│ 12:03                              │
+│ I mean, it sounds weird.           │
+│ つまり、変に聞こえるけど。          │
+│                                    │
+│ ▶ 再生中 [⏵]                       │
+│ but it's still like making a baby. │
+│ でもそれはまだ赤ちゃんを育てるようなもの。│
+│                                    │
+│ 12:07                              │
+│ You have to keep feeding it.       │
+│ ずっと面倒を見ないといけない。       │
+└────────────────────────────────────┘
+```
+
+### 3.2 設定画面
+
+- `options.html` を別タブで開く
+- `options.html` / `options.css` / `options.js` で責務分離する
+- ON/OFF はトグルスイッチ中心で整理する
+- `primaryLang` は必須
+- `secondaryLang` は空値時にブラウザ言語を使う
+- popup は簡易設定、options は詳細設定として役割を分ける
+
+```text
+┌─────────────────────────────────────────────┐
+│ Apple TV+ Bilingual Subtitles        [保存] │
+│ 字幕表示や学習補助の設定を行います           │
+├─────────────────────────────────────────────┤
+│ 基本設定                                    │
+│ 勉強している言語   [ 英語 ▼ ]               │
+│ 自分の言語         [ ブラウザ言語を使う ▼ ] │
+│                                             │
+│ 字幕表示                                    │
+│ [ON/OFF] 右側の字幕パネルを表示する         │
+│ [ON/OFF] 字幕パネルを固定表示する           │
+│                                             │
+│ 音声                                        │
+│ [ON/OFF] 単語クリック時に音声再生           │
+│                                             │
+│ AIツールチップ                              │
+│ [ON/OFF] AI自動翻訳ツールチップ             │
+└─────────────────────────────────────────────┘
+```
+
+### 3.3 単語ポップアップ
+
+- ヘッダーに単語、音声、設定、閉じるを配置
+- 辞書情報、補助説明、例文を段階的に表示する
+- AI は字幕本体の置き換えではなく、学習補助として扱う
+- options から AI 関連設定へ導線を持たせる余地を残す
+
+---
+
+## 4. options ファイル構成と manifest
+
+### 4.1 推奨ファイル構成
+
+```text
+options.html   ← 設定画面のマークアップ
+options.css    ← 設定画面の見た目
+options.js     ← 設定の読込・保存・状態確認
+```
+
+### 4.2 manifest.json 側の設定
+
+```json
+{
+  "version": "2.5.2",
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  }
+}
+```
+
+- `open_in_tab: true` で設定画面を別タブで開く
+- popup や UI 上の `⚙️` からは `chrome.runtime.openOptionsPage()` を使う
+
+---
+
+## 5. AI 補助機能の位置づけ
+
+- AI 表示はあくまで学習補助機能
+- 字幕パネル本体の 2 行字幕は AI で置き換えない
+- AI 訳は意訳を含むため、公式字幕との差分を補助的に見る用途として扱う
+- 設定画面でも、AI は補助であり本字幕置換ではないことを明示する
+
+---
+
+## 6. 再生操作レイヤーと DOM 調整
+
+- 動画本体は 70% 幅、右 30% を字幕パネル専用領域として扱う方針
+- Apple TV+ の再生操作 UI が右パネルに重ならないよう、CSS 上書きと DOM 配置を調整する
+- 実 DOM / class 名への依存は必要最小限にし、壊れにくい調整を優先する
+
+### 6.1 Issue #3 で反映した確定仕様
+
+- 再生開始直後 / 設定反映直後でも、再生バー・シーク UI・ボタン群が右字幕パネルに隠れないこと。
+- `.video-player__footer` と `.unified-controls` は同じ基準で補正し、右側重なりを回避すること。
+- shift 値を保持して再補正時の右戻り（snap-back）を防ぐこと。
+- `amp-volume-control-unified` は中央寄せせず、字幕パネルに重なる分だけ左へ移動すること。
+- 常駐監視に依存せず、起動時 / 再起動時の軽量な補正バーストで安定化すること。
+
+---
+
+## 7. 今後の優先順位
+
+1. #7: `secondaryLang` の空値保存とブラウザ言語 fallback の UI/挙動を統一する
+2. #4: ATV DEBUG を右字幕パネル下部の折り畳みセクションへ統合する
+3. #8: Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する
+4. #9: `content.js` 側で current 表示強化（タイトル・トラック情報の常時表示）
+5. #10: 単語ポップアップ UI 改修と AI タブ拡張、dictionaryapi.dev ハンドラ実装
+
+### 完了済み（本バッチまで）
+
+- #3: 字幕パネル表示時の動画操作レイヤー重なり解消
+- #5: options のデバッグログセクション折り畳み既定化
+- #6: popup / options の言語一覧固定化
+
+---
+
+## 8. 今回やらないこと
+
+- popup / options / content 間での ES Modules 共有化
+- AI タブ拡張や単語ポップアップ刷新の全面対応
+- debug 基盤の全面整理
+
+`SUPPORTED_LANGS` の共有モジュール化は有効だが、短期的には二重管理のままとし、resolver 整理時またはその後の段階でまとめて検討する。
+
+---
+
+## 9. 文書整理方針
+
+- `docs/v2.5-dev-roadmap.md` は実装順・issue 追跡用
+- `docs/atv-v25-design.md` は設計意図と画面方針の整理用
+- README は利用者向けの概要と導入手順を中心に保つ
