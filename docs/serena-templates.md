@@ -21,11 +21,6 @@ Serena でこのプロジェクトを有効化してください。
 
 今回は調査のみです。コード変更はまだしないでください。
 
-最初に確認してください:
-1. このリポジトリと v2.5-dev ブランチを参照できているか
-2. 関連ファイルを直接読めているか
-3. 読めない場合は、その旨と理由を最初に明示する
-
 その後の依頼:
 目的:
 確認対象:
@@ -54,10 +49,6 @@ Serena でこのプロジェクトを有効化してください。
 
 今回は実装まで進めてください。
 
-最初に確認してください:
-1. このリポジトリと v2.5-dev ブランチを参照できているか
-2. 関連ファイルを直接読めているか
-3. 読めない場合は、その旨と理由を最初に明示する
 
 その後の依頼:
 目的:
@@ -117,8 +108,7 @@ Serena でこのプロジェクトを有効化してください。
 今回は調査のみです。コード変更はまだしないでください。
 
 最初に確認してください:
-1. このリポジトリと v2.5-dev ブランチを参照できているか
-2. README.md / docs/v2.5-dev-roadmap.md / docs/atv-v25-design.md / popup.js / options.js / content.js / issue #7 を直接読めているか
+1. README.md / docs/v2.5-dev-roadmap.md / docs/atv-v25-design.md / popup.js / options.js / content.js / issue #7 を直接読めているか
 3. 読めない場合は、その旨と理由を最初に明示する
 
 その後の依頼:
@@ -158,8 +148,7 @@ Serena でこのプロジェクトを有効化してください。
 今回は実装まで進めてください。
 
 最初に確認してください:
-1. このリポジトリと v2.5-dev ブランチを参照できているか
-2. README.md / docs/v2.5-dev-roadmap.md / docs/atv-v25-design.md / popup.js / options.js / content.js / issue #7 を直接読めているか
+1. README.md / docs/v2.5-dev-roadmap.md / docs/atv-v25-design.md / popup.js / options.js / content.js / issue #7 を直接読めているか
 3. 読めない場合は、その旨と理由を最初に明示する
 
 その後の依頼:

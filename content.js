@@ -25,6 +25,23 @@
   const DEBUG_LOGS_MAX = 400;
   const DEBUG_SECONDARY_SUBS = false;
   const SECONDARY_SUBTITLE_GRACE_MS = 1200;
+  const PLAYBACK_CONTROLS_LAYOUT = {
+    footerSelector: ".video-player__footer.scrubbing-enabled",
+    footerFallbackSelector: ".video-player__footer",
+    unifiedSelector: ".unified-controls",
+    volumeSelector: "amp-volume-control-unified",
+    volumeFallbackSelector: ".volume-unified",
+    panelSelector: "#atv-panel-host",
+    videoSelector: ".video-player__video-container",
+    footerGapPx: 8,
+    footerSafeGutterPx: 16,
+  };
+  const PANEL_SLOT_LAYER_STYLE_ID = "atv-panel-slot-layer-style";
+  const PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR = "data-atvb-base-transform";
+  const PLAYBACK_CONTROLS_MANAGED_ATTR = "data-atvb-layout-managed";
+  const PLAYBACK_CONTROLS_SHIFT_X_ATTR = "data-atvb-shift-x";
+  const PLAYBACK_FOOTER_BASE_WIDTH_ATTR = "data-atvb-footer-base-width";
+  const PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR = "data-atvb-footer-base-max-width";
 
   const state = {
     booted: false,
@@ -47,11 +64,21 @@
     debugPanelRoot: null,
     popupDocClickHandler: null,
     messageListenerAttached: false,
+    playbackControlsRafId: 0,
+    playbackControlsMutationObserver: null,
+    playbackControlsResizeObserver: null,
+    playbackControlsResizeTargets: new Set(),
+    playbackControlsResizeHandler: null,
+    playbackControlsOrientationHandler: null,
+    playbackControlsApplying: false,
+    playbackControlsRetryTimers: [],
+    controlSettlingTimers: [],
   };
 
   let secondaryTrackCleanup = null;
   let secondaryTrackBound = null;
   let secondaryTrackSyncInterval = null;
+  let layoutRetryTimers = [];
   let startupCompletedLogged = false;
   let lastSecondaryText = "";
   let lastSecondaryTextAt = 0;
@@ -476,6 +503,8 @@
   }
 
   function ensureSecondarySubtitleElement() {
+    ensurePanelSlotLayerStyle();
+
     const allExisting = document.querySelectorAll(
       "[data-secondary-subtitle], .dual-subtitles-secondary",
     );
@@ -552,6 +581,39 @@
       logContent("secondary element ensured");
     }
     return el;
+  }
+
+  function ensurePanelSlotLayerStyle() {
+    if (document.getElementById(PANEL_SLOT_LAYER_STYLE_ID)) return;
+
+    const style = document.createElement("style");
+    style.id = PANEL_SLOT_LAYER_STYLE_ID;
+    style.textContent = `
+      #atv-panel-host > .dual-subtitles-secondary,
+      #atv-panel-host > [data-secondary-subtitle] {
+        position: relative;
+        z-index: 3;
+        pointer-events: auto;
+        background: transparent;
+        isolation: isolate;
+      }
+      #atv-panel-host > .dual-subtitles-secondary::before,
+      #atv-panel-host > [data-secondary-subtitle]::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: rgba(26, 26, 26, 0.92);
+        border-radius: 6px;
+        z-index: -1;
+        pointer-events: none;
+      }
+      #atv-panel-host > .dual-subtitles-secondary > *,
+      #atv-panel-host > [data-secondary-subtitle] > * {
+        position: relative;
+        z-index: 1;
+      }
+    `;
+    document.head.appendChild(style);
   }
 
   function renderSecondarySubtitle(text, track) {
@@ -704,27 +766,435 @@
     }, 2000);
   }
 
-  function applyLayout(show) {
-    const vc = document.querySelector(".video-player__video-container");
-    if (!vc) return;
+  function isVisibleElement(el) {
+    if (!el) return false;
+    if (!el.isConnected) return false;
+    if (el.getClientRects().length === 0) return false;
+    return getComputedStyle(el).display !== "none";
+  }
 
-    if (show) {
-      vc.style.width = "70%";
-      vc.style.maxWidth = "70%";
-      vc.style.flexShrink = "0";
-    } else {
-      vc.style.width = "";
-      vc.style.maxWidth = "";
-      vc.style.flexShrink = "";
+  function composeManagedTransform(baseTransform, shiftX) {
+    const normalizedBase = String(baseTransform || "").trim();
+    const normalizedShift =
+      Math.abs(shiftX) < 0.5 ? 0 : Number(shiftX.toFixed(2));
+
+    if (!normalizedShift) return normalizedBase;
+
+    const shiftTransform = `translateX(${normalizedShift}px)`;
+    return normalizedBase
+      ? `${normalizedBase} ${shiftTransform}`
+      : shiftTransform;
+  }
+
+  function setTransformIfChanged(el, value) {
+    if (!el) return;
+    const normalizedNext = String(value || "").trim();
+    const normalizedCurrent = String(el.style.transform || "").trim();
+    if (normalizedCurrent === normalizedNext) return;
+    el.style.transform = normalizedNext;
+  }
+
+  function setStyleIfChanged(el, propertyName, value) {
+    if (!el) return;
+    const next = String(value || "");
+    if (el.style[propertyName] === next) return;
+    el.style[propertyName] = next;
+  }
+
+  function applyManagedTranslateX(el, shiftX) {
+    if (!el) return;
+
+    const managed = el.getAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR) === "1";
+    const baseTransform = managed
+      ? el.getAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR) || ""
+      : String(el.style.transform || "").trim();
+
+    if (!managed) {
+      el.setAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR, baseTransform);
     }
+
+    const composed = composeManagedTransform(baseTransform, shiftX);
+    setTransformIfChanged(el, composed);
+    el.setAttribute(PLAYBACK_CONTROLS_SHIFT_X_ATTR, String(shiftX || 0));
+    el.setAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR, "1");
+  }
+
+  function getManagedShiftX(el) {
+    if (!el) return 0;
+    const raw = el.getAttribute(PLAYBACK_CONTROLS_SHIFT_X_ATTR);
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function clearManagedTranslateX(el) {
+    if (!el) return;
+    if (el.getAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR) !== "1") return;
+
+    const baseTransform =
+      el.getAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR) || "";
+    setTransformIfChanged(el, baseTransform);
+    el.removeAttribute(PLAYBACK_CONTROLS_SHIFT_X_ATTR);
+    el.removeAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR);
+    el.removeAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR);
+  }
+
+  function applyManagedFooterSizing(footer, widthPx) {
+    if (!footer) return;
+
+    if (!footer.hasAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR)) {
+      footer.setAttribute(
+        PLAYBACK_FOOTER_BASE_WIDTH_ATTR,
+        footer.style.width || "",
+      );
+    }
+    if (!footer.hasAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR)) {
+      footer.setAttribute(
+        PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR,
+        footer.style.maxWidth || "",
+      );
+    }
+
+    const safeWidth = `${Math.max(0, widthPx).toFixed(2)}px`;
+    setStyleIfChanged(footer, "width", safeWidth);
+    setStyleIfChanged(footer, "maxWidth", safeWidth);
+  }
+
+  function clearManagedFooterSizing(footer) {
+    if (!footer) return;
+
+    if (footer.hasAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR)) {
+      setStyleIfChanged(
+        footer,
+        "width",
+        footer.getAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR) || "",
+      );
+      footer.removeAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR);
+    }
+
+    if (footer.hasAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR)) {
+      setStyleIfChanged(
+        footer,
+        "maxWidth",
+        footer.getAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR) || "",
+      );
+      footer.removeAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR);
+    }
+  }
+
+  function clearPlaybackControlRetryTimers() {
+    if (!state.playbackControlsRetryTimers.length) return;
+    state.playbackControlsRetryTimers.forEach((timerId) =>
+      clearTimeout(timerId),
+    );
+    state.playbackControlsRetryTimers = [];
+  }
+
+  function scheduleAdjustPlaybackControls(
+    reason = "unknown",
+    retryDelays = [],
+    options = {},
+  ) {
+    const immediate = options.immediate !== false;
+
+    const runOnce = (runReason) => {
+      if (state.playbackControlsRafId) return;
+      state.playbackControlsRafId = window.requestAnimationFrame(() => {
+        state.playbackControlsRafId = 0;
+        adjustPlaybackControlsForPanel(runReason);
+      });
+    };
+
+    clearPlaybackControlRetryTimers();
+    if (immediate) runOnce(reason);
+
+    retryDelays.forEach((delayMs) => {
+      const timerId = window.setTimeout(() => {
+        runOnce(`${reason}-retry-${delayMs}`);
+      }, delayMs);
+      state.playbackControlsRetryTimers.push(timerId);
+    });
+  }
+
+  function clearControlSettlingTimers() {
+    if (!state.controlSettlingTimers.length) return;
+    state.controlSettlingTimers.forEach((timerId) => clearTimeout(timerId));
+    state.controlSettlingTimers = [];
+  }
+
+  function scheduleControlSettlingBurst(
+    reason = "unknown",
+    delays = [180, 420, 800, 1300, 1900, 2700, 3800],
+  ) {
+    clearControlSettlingTimers();
+
+    delays.forEach((delayMs) => {
+      const timerId = window.setTimeout(() => {
+        if (!state.panelVisible) return;
+        scheduleAdjustPlaybackControls(`${reason}-settle-${delayMs}`, [], {
+          immediate: true,
+        });
+      }, delayMs);
+      state.controlSettlingTimers.push(timerId);
+    });
+  }
+
+  function getPlaybackControlsLayoutTargets() {
+    return {
+      panel: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.panelSelector),
+      footer:
+        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerSelector) ||
+        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerFallbackSelector),
+      unified: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.unifiedSelector),
+      volume:
+        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.volumeSelector) ||
+        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.volumeFallbackSelector),
+      video: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.videoSelector),
+    };
+  }
+
+  function refreshPlaybackControlResizeObserverTargets() {
+    const ro = state.playbackControlsResizeObserver;
+    if (!ro) return;
+
+    const { panel, footer, unified, volume, video } =
+      getPlaybackControlsLayoutTargets();
+    const targets = [panel, footer, unified, volume, video].filter(Boolean);
+
+    for (const target of targets) {
+      if (state.playbackControlsResizeTargets.has(target)) continue;
+      ro.observe(target);
+      state.playbackControlsResizeTargets.add(target);
+    }
+
+    for (const prev of [...state.playbackControlsResizeTargets]) {
+      if (targets.includes(prev) && prev.isConnected) continue;
+      ro.unobserve(prev);
+      state.playbackControlsResizeTargets.delete(prev);
+    }
+  }
+
+  function clearPlaybackControlsTransforms() {
+    const { footer, unified, volume } = getPlaybackControlsLayoutTargets();
+    clearManagedTranslateX(footer);
+    clearManagedFooterSizing(footer);
+    clearManagedTranslateX(unified);
+    clearManagedTranslateX(volume);
+  }
+
+  function adjustPlaybackControlsForPanel(reason = "unknown") {
+    if (state.playbackControlsApplying) return;
+
+    state.playbackControlsApplying = true;
+    try {
+      const { panel, footer, unified, volume, video } =
+        getPlaybackControlsLayoutTargets();
+      if (!footer && !unified && !volume) return;
+
+      if (!isVisibleElement(panel) || !isVisibleElement(video)) {
+        clearManagedTranslateX(footer);
+        clearManagedFooterSizing(footer);
+        clearManagedTranslateX(unified);
+        clearManagedTranslateX(volume);
+        return;
+      }
+
+      const videoRect = video.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      const footerMaxRight =
+        panelRect.left - PLAYBACK_CONTROLS_LAYOUT.footerSafeGutterPx;
+      const visibleRight = Math.min(videoRect.right, panelRect.left);
+      const visibleWidth = visibleRight - videoRect.left;
+
+      if (footer) {
+        const footerExistingShiftX = getManagedShiftX(footer);
+
+        if (visibleWidth > 0) {
+          applyManagedFooterSizing(footer, visibleWidth);
+        } else {
+          clearManagedFooterSizing(footer);
+        }
+
+        // Width fit first; then minimal final nudge if still overlapping panel.
+        const footerRect = footer.getBoundingClientRect();
+        let footerShiftX = 0;
+        if (footerRect.right > footerMaxRight) {
+          footerShiftX =
+            footerExistingShiftX + (footerMaxRight - footerRect.right);
+        } else {
+          // Keep the previous left shift while panel is visible; do not bounce back right.
+          footerShiftX = footerExistingShiftX;
+        }
+        applyManagedTranslateX(footer, footerShiftX);
+      }
+
+      if (visibleWidth <= 0) {
+        clearManagedTranslateX(unified);
+        clearManagedTranslateX(volume);
+        return;
+      }
+
+      const targetCenterX = videoRect.left + visibleWidth / 2;
+      const unifiedMaxRight = panelRect.left - 16;
+
+      const computeControlShiftX = (controlRect, existingShiftX) => {
+        const controlCenterX = controlRect.left + controlRect.width / 2;
+        let shiftX = targetCenterX - controlCenterX;
+
+        const shiftedRight = controlRect.right + shiftX;
+        if (shiftedRight > unifiedMaxRight) {
+          shiftX -= shiftedRight - unifiedMaxRight;
+        }
+
+        // Never push controls to the right; only pull left to avoid panel overlap.
+        if (shiftX > 0) {
+          shiftX = 0;
+        }
+
+        // Keep or increase left shift while panel is visible; avoid rightward snap-back.
+        return Math.min(shiftX, existingShiftX, 0);
+      };
+
+      if (unified) {
+        const unifiedRect = unified.getBoundingClientRect();
+        const unifiedExistingShiftX = getManagedShiftX(unified);
+        const unifiedShiftX = computeControlShiftX(
+          unifiedRect,
+          unifiedExistingShiftX,
+        );
+        applyManagedTranslateX(unified, unifiedShiftX);
+
+        if (DEBUG_SECONDARY_SUBS) {
+          logContent("unified controls recentered", {
+            reason,
+            unifiedShiftX: Number(unifiedShiftX.toFixed(2)),
+            visibleRight: Number(visibleRight.toFixed(2)),
+            targetCenterX: Number(targetCenterX.toFixed(2)),
+          });
+        }
+      }
+
+      if (
+        volume &&
+        !(unified && (volume === unified || unified.contains(volume)))
+      ) {
+        const volumeRect = volume.getBoundingClientRect();
+        const volumeExistingShiftX = getManagedShiftX(volume);
+        let volumeShiftX = volumeExistingShiftX;
+        if (volumeRect.right > unifiedMaxRight) {
+          volumeShiftX += unifiedMaxRight - volumeRect.right;
+        }
+        if (volumeShiftX > 0) {
+          volumeShiftX = 0;
+        }
+        applyManagedTranslateX(volume, volumeShiftX);
+      }
+    } finally {
+      state.playbackControlsApplying = false;
+    }
+  }
+
+  function stopPlaybackControlLayoutObservers() {
+    // Disabled intentionally. Kept for future lightweight redesign.
+  }
+
+  function startPlaybackControlLayoutObservers() {
+    // Disabled intentionally. Kept for future lightweight redesign.
+  }
+
+  function applyLayout(show) {
+    const clearLayoutRetryTimers = () => {
+      if (!layoutRetryTimers.length) return;
+      layoutRetryTimers.forEach((timerId) => clearTimeout(timerId));
+      layoutRetryTimers = [];
+    };
+
+    const getLayoutTargets = () => {
+      const opaqueVideoContainer =
+        document.querySelector(".video-container.svelte-1psbnd5.is-opaque") ||
+        document.querySelector(".video-container.is-opaque") ||
+        document.querySelector(".video-container");
+      return {
+        vc: document.querySelector(".video-player__video-container"),
+        content: document.querySelector(".video-player__content"),
+        htmlVideo: document.querySelector("video"),
+        opaqueVideoContainer,
+        backgroundVideo: document.querySelector(".background-video"),
+      };
+    };
+
+    const applyLayoutToTargets = (targets, visible) => {
+      const { vc, content, htmlVideo, opaqueVideoContainer, backgroundVideo } =
+        targets;
+
+      if (visible) {
+        if (vc) {
+          vc.style.width = "70%";
+          vc.style.maxWidth = "70%";
+          vc.style.flexShrink = "0";
+          vc.style.marginRight = "";
+        }
+        if (content) {
+          content.style.width = "";
+          content.style.maxWidth = "";
+          content.style.flexShrink = "";
+          content.style.marginRight = "";
+        }
+        if (htmlVideo) {
+          htmlVideo.style.maxWidth = "100%";
+        }
+        if (opaqueVideoContainer) {
+          opaqueVideoContainer.style.right = "30%";
+        }
+        if (backgroundVideo) {
+          backgroundVideo.style.right = "30%";
+        }
+      } else {
+        if (vc) {
+          vc.style.width = "";
+          vc.style.maxWidth = "";
+          vc.style.flexShrink = "";
+          vc.style.marginRight = "";
+        }
+        if (content) {
+          content.style.width = "";
+          content.style.maxWidth = "";
+          content.style.flexShrink = "";
+          content.style.marginRight = "";
+        }
+        if (htmlVideo) {
+          htmlVideo.style.maxWidth = "";
+        }
+        if (opaqueVideoContainer) {
+          opaqueVideoContainer.style.right = "";
+        }
+        if (backgroundVideo) {
+          backgroundVideo.style.right = "";
+        }
+      }
+    };
+
+    clearLayoutRetryTimers();
+    applyLayoutToTargets(getLayoutTargets(), show);
+
+    const overlayHost = getTarget().querySelector("#atv-overlay-host");
+    if (overlayHost) {
+      // Bottom custom subtitle overlay is unnecessary while panel is visible.
+      overlayHost.style.display = show ? "none" : "";
+    }
+
+    scheduleAdjustPlaybackControls("applyLayout", show ? [1200] : [], {
+      immediate: !show,
+    });
   }
 
   function showRightPanel() {
     if (!state.panelVisible) togglePanel();
+    else applyLayout(true);
   }
 
   function hideRightPanel() {
     if (state.panelVisible) togglePanel();
+    else applyLayout(false);
   }
 
   function pinRightPanel() {}
@@ -788,11 +1258,13 @@
       "right:0",
       "width:30%",
       "height:100vh",
-      "z-index:99999",
-      "pointer-events:auto",
+      "z-index:2",
+      "pointer-events:none",
       "box-sizing:border-box",
     ].join(";");
     getTarget().appendChild(host);
+
+    ensurePanelSlotLayerStyle();
 
     state.panelShadowRoot = host.attachShadow({ mode: "open" });
     state.panelShadowRoot.innerHTML = `
@@ -804,6 +1276,7 @@
           font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
           font-size: 13px; display: flex; flex-direction: column;
           overflow: hidden; box-sizing: border-box;
+          pointer-events: auto;
         }
         #panel-header {
           display: flex; justify-content: space-between; align-items: center;
@@ -1644,10 +2117,18 @@
     const toggleBtn = getTarget().querySelector("#atv-toggle-btn");
 
     if (panelHost) panelHost.style.display = state.panelVisible ? "" : "none";
-    if (overlayHost)
+    if (overlayHost) {
       overlayHost.style.width = state.panelVisible ? "70%" : "100%";
+      overlayHost.style.display = state.panelVisible ? "none" : "";
+    }
     if (toggleBtn)
       toggleBtn.style.display = state.panelVisible ? "none" : "block";
+
+    scheduleAdjustPlaybackControls(
+      "togglePanel",
+      state.panelVisible ? [700, 1600] : [],
+      { immediate: !state.panelVisible },
+    );
 
     logContent("togglePanel", { panelVisible: state.panelVisible });
   }
@@ -1708,6 +2189,14 @@
 
   function teardownForRestart() {
     clearTrackBindings();
+    clearPlaybackControlRetryTimers();
+    clearControlSettlingTimers();
+
+    if (state.playbackControlsRafId) {
+      window.cancelAnimationFrame(state.playbackControlsRafId);
+      state.playbackControlsRafId = 0;
+    }
+    clearPlaybackControlsTransforms();
 
     if (state.popupDocClickHandler) {
       document.removeEventListener("click", state.popupDocClickHandler);
@@ -1752,6 +2241,9 @@
     createPopupHost();
     createToggleButton();
     createDebugPanel();
+    scheduleAdjustPlaybackControls("buildUi", [700, 1600], {
+      immediate: false,
+    });
   }
 
   function renderCurrentSnapshot() {
@@ -1824,6 +2316,7 @@
 
     state.panelVisible = true;
     renderCurrentSnapshot();
+    scheduleControlSettlingBurst("startBilingual");
 
     logContent("startBilingual ready", {
       injectedInto: state.dialogEl ? "dialog.playback-view" : "document.body",
