@@ -26,6 +26,14 @@
   const DEBUG_SECONDARY_SUBS = false;
   const SECONDARY_SUBTITLE_GRACE_MS = 1200;
   const PLAYBACK_CONTROLS_LAYOUT = {
+    headerSelector: ".video-player__header",
+    controlsSelector: ".video-player__controls",
+    progressSelector: ".video-player__progress",
+    metadataSelector: ".video-player__metadata",
+    tabsSelector: ".video-player__tabs",
+    autoSubsNoteSelector: ".video-player__auto-subs-note",
+    skipOverlaySelector:
+      ".skip-overlay__button-container, .skip-overlay__controls-container",
     footerSelector: ".video-player__footer.scrubbing-enabled",
     footerFallbackSelector: ".video-player__footer",
     unifiedSelector: ".unified-controls",
@@ -40,8 +48,18 @@
   const PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR = "data-atvb-base-transform";
   const PLAYBACK_CONTROLS_MANAGED_ATTR = "data-atvb-layout-managed";
   const PLAYBACK_CONTROLS_SHIFT_X_ATTR = "data-atvb-shift-x";
+  const PLAYBACK_HEADER_BASE_WIDTH_ATTR = "data-atvb-header-base-width";
+  const PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR = "data-atvb-header-base-max-width";
   const PLAYBACK_FOOTER_BASE_WIDTH_ATTR = "data-atvb-footer-base-width";
   const PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR = "data-atvb-footer-base-max-width";
+  const PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR =
+    "data-atvb-progress-base-min-width";
+  const PLAYBACK_PROGRESS_BASE_WIDTH_ATTR = "data-atvb-progress-base-width";
+  const PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR =
+    "data-atvb-progress-base-max-width";
+  const PLAYBACK_SKIP_BASE_LEFT_ATTR = "data-atvb-skip-base-left";
+  const PLAYBACK_SKIP_BASE_RIGHT_ATTR = "data-atvb-skip-base-right";
+  const PLAYBACK_SKIP_BASE_TRANSFORM_ATTR = "data-atvb-skip-base-transform";
 
   const state = {
     booted: false,
@@ -838,7 +856,7 @@
     el.removeAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR);
   }
 
-  function applyManagedFooterSizing(footer, widthPx) {
+  function applyManagedFooterSizing(footer, widthPx, leftPx = 0) {
     if (!footer) return;
 
     if (!footer.hasAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR)) {
@@ -857,6 +875,13 @@
     const safeWidth = `${Math.max(0, widthPx).toFixed(2)}px`;
     setStyleIfChanged(footer, "width", safeWidth);
     setStyleIfChanged(footer, "maxWidth", safeWidth);
+    applyManagedInlineStyle(
+      footer,
+      "footer",
+      "marginLeft",
+      `${Math.max(0, leftPx).toFixed(2)}px`,
+    );
+    applyManagedInlineStyle(footer, "footer", "marginRight", "auto");
   }
 
   function clearManagedFooterSizing(footer) {
@@ -879,6 +904,329 @@
       );
       footer.removeAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR);
     }
+
+    clearManagedInlineStyle(footer, "footer", "marginLeft");
+    clearManagedInlineStyle(footer, "footer", "marginRight");
+  }
+
+  function applyManagedHeaderSizing(header, widthPx, leftPx = 0) {
+    if (!header) return;
+
+    if (!header.hasAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR)) {
+      header.setAttribute(
+        PLAYBACK_HEADER_BASE_WIDTH_ATTR,
+        header.style.width || "",
+      );
+    }
+    if (!header.hasAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR)) {
+      header.setAttribute(
+        PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR,
+        header.style.maxWidth || "",
+      );
+    }
+
+    const safeWidth = `${Math.max(0, widthPx).toFixed(2)}px`;
+    setStyleIfChanged(header, "width", safeWidth);
+    setStyleIfChanged(header, "maxWidth", safeWidth);
+    applyManagedInlineStyle(
+      header,
+      "header",
+      "marginLeft",
+      `${Math.max(0, leftPx).toFixed(2)}px`,
+    );
+    applyManagedInlineStyle(header, "header", "marginRight", "auto");
+  }
+
+  function clearManagedHeaderSizing(header) {
+    if (!header) return;
+
+    if (header.hasAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR)) {
+      setStyleIfChanged(
+        header,
+        "width",
+        header.getAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR) || "",
+      );
+      header.removeAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR);
+    }
+
+    if (header.hasAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR)) {
+      setStyleIfChanged(
+        header,
+        "maxWidth",
+        header.getAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR) || "",
+      );
+      header.removeAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR);
+    }
+
+    clearManagedInlineStyle(header, "header", "marginLeft");
+    clearManagedInlineStyle(header, "header", "marginRight");
+  }
+
+  function applyManagedProgressInset(progress) {
+    if (!progress) return;
+
+    if (!progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR)) {
+      progress.setAttribute(
+        PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR,
+        progress.style.minWidth || "",
+      );
+    }
+    if (!progress.hasAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR)) {
+      progress.setAttribute(
+        PLAYBACK_PROGRESS_BASE_WIDTH_ATTR,
+        progress.style.width || "",
+      );
+    }
+    if (!progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR)) {
+      progress.setAttribute(
+        PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR,
+        progress.style.maxWidth || "",
+      );
+    }
+
+    setStyleIfChanged(progress, "minWidth", "0");
+    setStyleIfChanged(progress, "width", "calc(100% - 48px)");
+    setStyleIfChanged(progress, "maxWidth", "calc(100% - 48px)");
+  }
+
+  function clearManagedProgressInset(progress) {
+    if (!progress) return;
+
+    if (progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR)) {
+      setStyleIfChanged(
+        progress,
+        "minWidth",
+        progress.getAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR) || "",
+      );
+      progress.removeAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR);
+    }
+    if (progress.hasAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR)) {
+      setStyleIfChanged(
+        progress,
+        "width",
+        progress.getAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR) || "",
+      );
+      progress.removeAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR);
+    }
+    if (progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR)) {
+      setStyleIfChanged(
+        progress,
+        "maxWidth",
+        progress.getAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR) || "",
+      );
+      progress.removeAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR);
+    }
+  }
+
+  function applyManagedSkipPosition(skipOverlay, safeAreaRight) {
+    if (!skipOverlay) return;
+
+    if (!skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR)) {
+      skipOverlay.setAttribute(
+        PLAYBACK_SKIP_BASE_LEFT_ATTR,
+        skipOverlay.style.left || "",
+      );
+    }
+    if (!skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR)) {
+      skipOverlay.setAttribute(
+        PLAYBACK_SKIP_BASE_RIGHT_ATTR,
+        skipOverlay.style.right || "",
+      );
+    }
+    if (!skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR)) {
+      skipOverlay.setAttribute(
+        PLAYBACK_SKIP_BASE_TRANSFORM_ATTR,
+        skipOverlay.style.transform || "",
+      );
+    }
+
+    const rect = skipOverlay.getBoundingClientRect();
+    const left = safeAreaRight - rect.width;
+    setStyleIfChanged(skipOverlay, "left", `${left.toFixed(2)}px`);
+    setStyleIfChanged(skipOverlay, "right", "auto");
+    setStyleIfChanged(skipOverlay, "transform", "none");
+  }
+
+  function clearManagedSkipPosition(skipOverlay) {
+    if (!skipOverlay) return;
+
+    if (skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR)) {
+      setStyleIfChanged(
+        skipOverlay,
+        "left",
+        skipOverlay.getAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR) || "",
+      );
+      skipOverlay.removeAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR);
+    }
+    if (skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR)) {
+      setStyleIfChanged(
+        skipOverlay,
+        "right",
+        skipOverlay.getAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR) || "",
+      );
+      skipOverlay.removeAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR);
+    }
+    if (skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR)) {
+      setStyleIfChanged(
+        skipOverlay,
+        "transform",
+        skipOverlay.getAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR) || "",
+      );
+      skipOverlay.removeAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR);
+    }
+  }
+
+  function getManagedInlineStyleAttr(scope, propertyName) {
+    return `data-atvb-${scope}-${propertyName.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`)}`;
+  }
+
+  function applyManagedInlineStyle(el, scope, propertyName, value) {
+    if (!el) return;
+    const attrName = getManagedInlineStyleAttr(scope, propertyName);
+    if (!el.hasAttribute(attrName)) {
+      el.setAttribute(attrName, el.style[propertyName] || "");
+    }
+    setStyleIfChanged(el, propertyName, value);
+  }
+
+  function clearManagedInlineStyle(el, scope, propertyName) {
+    if (!el) return;
+    const attrName = getManagedInlineStyleAttr(scope, propertyName);
+    if (!el.hasAttribute(attrName)) return;
+    setStyleIfChanged(el, propertyName, el.getAttribute(attrName) || "");
+    el.removeAttribute(attrName);
+  }
+
+  function applyManagedFooterChildSizing(footer, safeAreaWidth) {
+    if (!footer) return;
+
+    const metadata = footer.querySelector(
+      PLAYBACK_CONTROLS_LAYOUT.metadataSelector,
+    );
+    const progress = footer.querySelector(
+      PLAYBACK_CONTROLS_LAYOUT.progressSelector,
+    );
+    const tabs = footer.querySelector(PLAYBACK_CONTROLS_LAYOUT.tabsSelector);
+    const autoSubsNote = footer.querySelector(
+      PLAYBACK_CONTROLS_LAYOUT.autoSubsNoteSelector,
+    );
+
+    [metadata, progress, tabs].forEach((el, index) => {
+      const scope = ["metadata", "progress", "tabs"][index];
+      if (!el) return;
+      applyManagedInlineStyle(el, scope, "minWidth", "0");
+      applyManagedInlineStyle(el, scope, "maxWidth", "100%");
+      applyManagedInlineStyle(el, scope, "overflow", "hidden");
+      applyManagedInlineStyle(el, scope, "flexShrink", "1");
+    });
+
+    if (progress) {
+      applyManagedInlineStyle(progress, "progress", "width", "100%");
+    }
+
+    if (autoSubsNote) {
+      applyManagedInlineStyle(
+        autoSubsNote,
+        "auto-subs-note",
+        "maxWidth",
+        "100%",
+      );
+      applyManagedInlineStyle(
+        autoSubsNote,
+        "auto-subs-note",
+        "overflow",
+        "hidden",
+      );
+      applyManagedInlineStyle(
+        autoSubsNote,
+        "auto-subs-note",
+        "flexShrink",
+        "1",
+      );
+      if (safeAreaWidth < 1200) {
+        applyManagedInlineStyle(
+          autoSubsNote,
+          "auto-subs-note",
+          "display",
+          "none",
+        );
+      } else {
+        clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "display");
+      }
+    }
+  }
+
+  function clearManagedFooterChildSizing(footer) {
+    if (!footer) return;
+
+    const metadata = footer.querySelector(
+      PLAYBACK_CONTROLS_LAYOUT.metadataSelector,
+    );
+    const progress = footer.querySelector(
+      PLAYBACK_CONTROLS_LAYOUT.progressSelector,
+    );
+    const tabs = footer.querySelector(PLAYBACK_CONTROLS_LAYOUT.tabsSelector);
+    const autoSubsNote = footer.querySelector(
+      PLAYBACK_CONTROLS_LAYOUT.autoSubsNoteSelector,
+    );
+
+    [
+      [metadata, "metadata"],
+      [progress, "progress"],
+      [tabs, "tabs"],
+    ].forEach(([el, scope]) => {
+      clearManagedInlineStyle(el, scope, "minWidth");
+      clearManagedInlineStyle(el, scope, "maxWidth");
+      clearManagedInlineStyle(el, scope, "overflow");
+      clearManagedInlineStyle(el, scope, "flexShrink");
+    });
+
+    clearManagedInlineStyle(progress, "progress", "width");
+
+    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "maxWidth");
+    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "overflow");
+    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "flexShrink");
+    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "display");
+  }
+
+  function getPlaybackPanelLayoutAnchor() {
+    return (
+      document.querySelector(".dual-subtitles-secondary") ||
+      document.querySelector("[data-secondary-subtitle]") ||
+      document.querySelector(PLAYBACK_CONTROLS_LAYOUT.panelSelector)
+    );
+  }
+
+  function computePlaybackVisibleArea(panelAnchor, video) {
+    if (!isVisibleElement(panelAnchor) || !isVisibleElement(video)) return null;
+
+    const videoRect = video.getBoundingClientRect();
+    const panelRect = panelAnchor.getBoundingClientRect();
+    const safeAreaLeft = videoRect.left;
+    const safeAreaRight = Math.min(videoRect.right, panelRect.left);
+    const safeAreaWidth = Math.max(0, safeAreaRight - safeAreaLeft);
+
+    return {
+      panelRect,
+      videoRect,
+      safeAreaLeft,
+      safeAreaRight,
+      safeAreaWidth,
+    };
+  }
+
+  function getShadowProgressTargets() {
+    const host = document.querySelector("amp-playback-controls-progress");
+    const root = host?.shadowRoot;
+    if (!root) {
+      return { host: null, bar: null, remaining: null };
+    }
+
+    return {
+      host,
+      bar: root.querySelector("#playback-progress"),
+      remaining: root.querySelector("time.remaining"),
+    };
   }
 
   function clearPlaybackControlRetryTimers() {
@@ -940,7 +1288,17 @@
 
   function getPlaybackControlsLayoutTargets() {
     return {
-      panel: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.panelSelector),
+      panel: getPlaybackPanelLayoutAnchor(),
+      header: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.headerSelector),
+      controls: document.querySelector(
+        PLAYBACK_CONTROLS_LAYOUT.controlsSelector,
+      ),
+      progress: document.querySelector(
+        PLAYBACK_CONTROLS_LAYOUT.progressSelector,
+      ),
+      skipOverlay: document.querySelector(
+        PLAYBACK_CONTROLS_LAYOUT.skipOverlaySelector,
+      ),
       footer:
         document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerSelector) ||
         document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerFallbackSelector),
@@ -974,9 +1332,19 @@
   }
 
   function clearPlaybackControlsTransforms() {
-    const { footer, unified, volume } = getPlaybackControlsLayoutTargets();
+    const { header, controls, progress, skipOverlay, footer, unified, volume } =
+      getPlaybackControlsLayoutTargets();
+    const { bar, remaining } = getShadowProgressTargets();
+    clearManagedHeaderSizing(header);
+    clearManagedTranslateX(controls);
+    clearManagedProgressInset(progress);
+    clearManagedTranslateX(bar);
+    clearManagedTranslateX(remaining);
+    clearManagedSkipPosition(skipOverlay);
+    clearManagedTranslateX(skipOverlay);
     clearManagedTranslateX(footer);
     clearManagedFooterSizing(footer);
+    clearManagedFooterChildSizing(footer);
     clearManagedTranslateX(unified);
     clearManagedTranslateX(volume);
   }
@@ -986,81 +1354,112 @@
 
     state.playbackControlsApplying = true;
     try {
-      const { panel, footer, unified, volume, video } =
-        getPlaybackControlsLayoutTargets();
-      if (!footer && !unified && !volume) return;
+      const {
+        panel,
+        header,
+        controls,
+        progress,
+        skipOverlay,
+        footer,
+        unified,
+        volume,
+        video,
+      } = getPlaybackControlsLayoutTargets();
+      const { bar: shadowProgressBar, remaining: shadowRemainingTime } =
+        getShadowProgressTargets();
+      if (
+        !header &&
+        !controls &&
+        !progress &&
+        !skipOverlay &&
+        !footer &&
+        !unified &&
+        !volume &&
+        !shadowProgressBar &&
+        !shadowRemainingTime
+      ) {
+        return;
+      }
 
-      if (!isVisibleElement(panel) || !isVisibleElement(video)) {
+      const visibleArea = computePlaybackVisibleArea(panel, video);
+      if (!visibleArea) {
+        clearManagedHeaderSizing(header);
+        clearManagedTranslateX(controls);
+        clearManagedProgressInset(progress);
+        clearManagedTranslateX(shadowProgressBar);
+        clearManagedTranslateX(shadowRemainingTime);
+        clearManagedSkipPosition(skipOverlay);
+        clearManagedTranslateX(skipOverlay);
         clearManagedTranslateX(footer);
         clearManagedFooterSizing(footer);
+        clearManagedFooterChildSizing(footer);
         clearManagedTranslateX(unified);
         clearManagedTranslateX(volume);
         return;
       }
 
-      const videoRect = video.getBoundingClientRect();
-      const panelRect = panel.getBoundingClientRect();
-      const footerMaxRight =
-        panelRect.left - PLAYBACK_CONTROLS_LAYOUT.footerSafeGutterPx;
-      const visibleRight = Math.min(videoRect.right, panelRect.left);
-      const visibleWidth = visibleRight - videoRect.left;
+      const { panelRect, safeAreaLeft, safeAreaRight, safeAreaWidth } =
+        visibleArea;
+      const visibleRight = safeAreaRight;
+      const visibleWidth = safeAreaWidth;
 
-      if (footer) {
-        const footerExistingShiftX = getManagedShiftX(footer);
-
+      if (header) {
         if (visibleWidth > 0) {
-          applyManagedFooterSizing(footer, visibleWidth);
+          applyManagedHeaderSizing(header, visibleWidth, safeAreaLeft);
+        } else {
+          clearManagedHeaderSizing(header);
+        }
+      }
+
+      clearManagedTranslateX(footer);
+      if (footer) {
+        if (visibleWidth > 0) {
+          applyManagedFooterSizing(footer, visibleWidth, safeAreaLeft);
+          applyManagedFooterChildSizing(footer, visibleWidth);
         } else {
           clearManagedFooterSizing(footer);
+          clearManagedFooterChildSizing(footer);
         }
-
-        // Width fit first; then minimal final nudge if still overlapping panel.
-        const footerRect = footer.getBoundingClientRect();
-        let footerShiftX = 0;
-        if (footerRect.right > footerMaxRight) {
-          footerShiftX =
-            footerExistingShiftX + (footerMaxRight - footerRect.right);
-        } else {
-          // Keep the previous left shift while panel is visible; do not bounce back right.
-          footerShiftX = footerExistingShiftX;
-        }
-        applyManagedTranslateX(footer, footerShiftX);
       }
 
+      clearManagedProgressInset(progress);
+
       if (visibleWidth <= 0) {
+        clearManagedHeaderSizing(header);
+        clearManagedFooterSizing(footer);
+        clearManagedFooterChildSizing(footer);
+        clearManagedTranslateX(controls);
+        clearManagedProgressInset(progress);
+        clearManagedTranslateX(shadowProgressBar);
+        clearManagedTranslateX(shadowRemainingTime);
+        clearManagedSkipPosition(skipOverlay);
+        clearManagedTranslateX(skipOverlay);
         clearManagedTranslateX(unified);
         clearManagedTranslateX(volume);
         return;
       }
 
-      const targetCenterX = videoRect.left + visibleWidth / 2;
+      const targetCenterX = safeAreaLeft + visibleWidth / 2;
       const unifiedMaxRight = panelRect.left - 16;
-
-      const computeControlShiftX = (controlRect, existingShiftX) => {
-        const controlCenterX = controlRect.left + controlRect.width / 2;
-        let shiftX = targetCenterX - controlCenterX;
-
-        const shiftedRight = controlRect.right + shiftX;
-        if (shiftedRight > unifiedMaxRight) {
-          shiftX -= shiftedRight - unifiedMaxRight;
-        }
-
-        // Never push controls to the right; only pull left to avoid panel overlap.
-        if (shiftX > 0) {
-          shiftX = 0;
-        }
-
-        // Keep or increase left shift while panel is visible; avoid rightward snap-back.
-        return Math.min(shiftX, existingShiftX, 0);
-      };
+      const controlsTargetRight = panelRect.left - 40;
+      const volumeTargetRight = panelRect.left - 60;
+      const progressTargetRight = panelRect.left - 40;
+      const progressMinLeft = safeAreaLeft + 24;
+      const remainingTargetRight = panelRect.left - 60;
 
       if (unified) {
         const unifiedRect = unified.getBoundingClientRect();
         const unifiedExistingShiftX = getManagedShiftX(unified);
-        const unifiedShiftX = computeControlShiftX(
-          unifiedRect,
-          unifiedExistingShiftX,
-        );
+        const unifiedCenterX = unifiedRect.left + unifiedRect.width / 2;
+        let unifiedShiftX =
+          unifiedExistingShiftX + (targetCenterX - unifiedCenterX);
+
+        const unifiedDeltaShift = unifiedShiftX - unifiedExistingShiftX;
+        const shiftedUnifiedRight = unifiedRect.right + unifiedDeltaShift;
+        if (shiftedUnifiedRight > unifiedMaxRight) {
+          unifiedShiftX -= shiftedUnifiedRight - unifiedMaxRight;
+        }
+
         applyManagedTranslateX(unified, unifiedShiftX);
 
         if (DEBUG_SECONDARY_SUBS) {
@@ -1080,13 +1479,65 @@
         const volumeRect = volume.getBoundingClientRect();
         const volumeExistingShiftX = getManagedShiftX(volume);
         let volumeShiftX = volumeExistingShiftX;
-        if (volumeRect.right > unifiedMaxRight) {
-          volumeShiftX += unifiedMaxRight - volumeRect.right;
+        if (volumeRect.right > volumeTargetRight) {
+          volumeShiftX += volumeTargetRight - volumeRect.right;
         }
         if (volumeShiftX > 0) {
           volumeShiftX = 0;
         }
         applyManagedTranslateX(volume, volumeShiftX);
+      }
+
+      if (controls) {
+        const controlsRect = controls.getBoundingClientRect();
+        const controlsExistingShiftX = getManagedShiftX(controls);
+        let controlsShiftX = controlsExistingShiftX;
+        if (controlsRect.right > controlsTargetRight) {
+          controlsShiftX += controlsTargetRight - controlsRect.right;
+        }
+        if (controlsShiftX > 0) {
+          controlsShiftX = 0;
+        }
+        controlsShiftX = Math.min(controlsShiftX, controlsExistingShiftX, 0);
+        applyManagedTranslateX(controls, controlsShiftX);
+      }
+
+      if (shadowProgressBar) {
+        const progressRect = shadowProgressBar.getBoundingClientRect();
+        const progressExistingShiftX = getManagedShiftX(shadowProgressBar);
+        const rightFitShift = progressTargetRight - progressRect.right;
+        const leftFitShift = progressMinLeft - progressRect.left;
+        const minShiftX = progressExistingShiftX + leftFitShift;
+        const maxShiftX = progressExistingShiftX + rightFitShift;
+        let progressShiftX = progressExistingShiftX;
+
+        progressShiftX = Math.min(progressShiftX, maxShiftX);
+        progressShiftX = Math.max(progressShiftX, minShiftX);
+
+        if (minShiftX > maxShiftX) {
+          progressShiftX = maxShiftX;
+        }
+
+        applyManagedTranslateX(shadowProgressBar, progressShiftX);
+      }
+
+      if (shadowRemainingTime) {
+        const remainingRect = shadowRemainingTime.getBoundingClientRect();
+        const remainingExistingShiftX = getManagedShiftX(shadowRemainingTime);
+        let remainingShiftX = remainingExistingShiftX;
+        if (remainingRect.right > remainingTargetRight) {
+          remainingShiftX += remainingTargetRight - remainingRect.right;
+        }
+        if (remainingShiftX > 0) {
+          remainingShiftX = 0;
+        }
+        remainingShiftX = Math.min(remainingShiftX, remainingExistingShiftX, 0);
+        applyManagedTranslateX(shadowRemainingTime, remainingShiftX);
+      }
+
+      if (skipOverlay) {
+        clearManagedTranslateX(skipOverlay);
+        applyManagedSkipPosition(skipOverlay, safeAreaRight);
       }
     } finally {
       state.playbackControlsApplying = false;
