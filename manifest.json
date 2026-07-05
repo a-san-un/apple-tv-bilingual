@@ -3,7 +3,7 @@
   "name": "Apple TV+ Bilingual Subtitles",
   "version": "2.6.0",
   "description": "Displays bilingual subtitles with right panel and dictionary popup on Apple TV+",
-  "permissions": ["storage", "tabs", "scripting"],
+  "permissions": ["storage", "tabs", "scripting", "downloads"],
   "host_permissions": [
     "https://tv.apple.com/*",
     "https://jisho.org/*",

@@ -1,19 +1,8 @@
 // =============================================================
-// background.js - Service Worker (v2.5.2)
-// -------------------------------------------------------------
-// Responsibilities:
-// - Proxy external API requests that content scripts cannot fetch
-//   directly because of page-context CORS restrictions.
-// - Keep debug logging for background/network operations.
-// - Watch tab activation events.
-// - When an Apple TV+ tab becomes active, notify its content.js
-//   with SETTINGS_CHANGED so it can reload settings from storage.
-// -------------------------------------------------------------
-// Notes:
-// - This makes popup/options behavior consistent:
-//   both save settings only, and the active Apple TV+ tab applies
-//   them when the user returns to that tab.
-// - Requires "tabs" permission in manifest.json.
+// background.js - Service Worker
+// version: 2.6.0
+// Issue #4: Debug ログ保存を saveAs ダイアログ経由で扱う
+// 既存の SETTINGS_CHANGED 導線は維持し、最小差分で追加する
 // =============================================================
 
 const DEBUG_LOGS_KEY = "debugLogs";
@@ -293,6 +282,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         );
         sendResponse(result);
       } catch (error) {
+        sendResponse({ ok: false, error: String(error) });
+      }
+    })();
+    return true;
+  }
+
+  // ---------- Debug log download (saveAs dialog) ----------
+  if (msg.type === "DOWNLOAD_DEBUG_LOG") {
+    (async () => {
+      try {
+        const text = String(msg.text || "");
+        const filename = `atvb-debug-${new Date().toISOString().replace(/[:.]/g, "-")}.log`;
+        const url = `data:text/plain;charset=utf-8,${encodeURIComponent(text)}`;
+
+        // 保存先選択を優先して、ユーザーに保存場所を選ばせる。
+        const downloadId = await chrome.downloads.download({
+          url,
+          filename,
+          saveAs: true,
+          conflictAction: "uniquify",
+        });
+
+        await logBackground("debug log download requested", {
+          filename,
+          downloadId,
+          lineCount: text ? text.split("\n").length : 0,
+        });
+
+        sendResponse({ ok: true, downloadId });
+      } catch (error) {
+        await logBackground("debug log download failed", {
+          error: String(error),
+        });
         sendResponse({ ok: false, error: String(error) });
       }
     })();
