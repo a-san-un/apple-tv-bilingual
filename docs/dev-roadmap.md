@@ -30,6 +30,7 @@
 | [#8](../../issues/8)   | Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する               | P1     | Phase 3    | 未完了           | `p1` `enhancement` `area:options` `area:content`     |
 | [#9](../../issues/9)   | content.js の current 表示強化（タイトル・トラック情報の常時表示）     | P1     | 後続タスク | 未完了           | GitHub issue の実内容に合わせて整理                  |
 | [#10](../../issues/10) | 単語ポップアップ UI 刷新・AI タブ拡張と dictionaryapi.dev ハンドラ実装 | P2     | 後続タスク | 未完了           | GitHub issue の実内容に合わせて整理                  |
+| [#12](../../issues/12) | content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す     | P1     | Phase 3    | 未完了           | `p1` `enhancement` `area:content`                    |
 
 ---
 
@@ -70,9 +71,11 @@
 
 ### Phase 3: ログ基盤整理
 
-**ゴール**: options と字幕パネルが同じログソースを共有し、必要なカテゴリだけを既定表示できること。
+**ゴール**: options と字幕パネルが同じログソースを共有し、必要なカテゴリだけを既定表示できること。  
+加えて、後続の content.js 分割を安全に進められるよう、ログ基盤と独立責務の切り出しを先行して進める。
 
 - [ ] [#8] Debug ログカテゴリ設計整理
+- [ ] [#12] content.js の Phase A 分割（WebVTT 正規化と Debug logger の切り出し）
 
 ---
 
@@ -168,9 +171,10 @@
    - `video-player__content` 基準の 70 / 30 レイアウトを再確認
    - 動画操作レイヤーの重なりを解消（#3）
 
-3. Debug
+3. Debug / content.js 分割準備
    - Debug Panel を右字幕パネル側へ統合（#4）
    - ログカテゴリ設計を整理（#8）
+   - content.js の Phase A 分割（#12）
 
 4. 後続タスク
    - `content.js` の current 表示強化（#9）
