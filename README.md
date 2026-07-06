@@ -100,4 +100,4 @@ Manifest V3 の Service Worker はアイドル時に自動停止します。
 
 ## バージョン
 
-- Current: `2.6.0`
+- Current: `2.6.1`
