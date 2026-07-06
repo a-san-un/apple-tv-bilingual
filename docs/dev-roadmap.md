@@ -86,6 +86,22 @@
 - Debug 統合は完了。
 - current 行の再評価タイミングや中央配置の改善は、Issue #4 の完了範囲に含めず、`content.js` 分割 / current 表示強化（#9）側で別途扱う。
 
+**#4 観測済み追記（Step 14 切り分け結果）**
+
+- `after-renderSecondarySubtitle` / `before-secondary-fallback` の追加ログで、`allBlocksCount` / `historyCount` / `hasCurrentBlock` / `currentPrimary` / `currentSecondary` / `secondaryElText` を観測できる状態にした。
+- 初期の不具合では、`after-renderSecondarySubtitle` 実行時点で `allBlocksCount: 0` / `historyCount: 0` / `hasCurrentBlock: false` を確認。
+- `before-secondary-fallback` でも同様に panel list 用ブロックが 0 件であることを確認し、fallback 到達前から current / history / future 構築が空であると切り分けた。
+- 周辺ログでは、`tracks resolved` と `Selected tracks detail` で `primaryTrackFound: false` / `secondaryTrackFound: false` / `primaryTrack: null` / `secondaryTrack: null` を確認する一方、`initial cue recovery render` では `secondaryActiveCues: 1` を確認し、secondary 側だけが recovery/fallback 経路で描画される状態を観測した。
+- 修正後は `allBlocksCount` が 1 以上となり、最終的に `38〜71`、`historyCount` も `3〜26`、`hasCurrentBlock: true` を確認。
+- secondary-only current を current block に含めつつ、host 直下の独立 secondary 帯を非表示化し、右字幕パネルを `docs/atv-design.md` の「履歴 + 現在 + 未来」の一覧型仕様へ寄せた。
+- `sync interval primary recovery` 条件は、旧条件 `!state.primaryTrack && secondaryTrackFound && trackCount > 1` から、「secondary 信号あり」かつ「primary 信号なし」かつ `trackCount > 1` へ拡張した。
+- これにより、`state.primaryTrack` オブジェクトが存在していても primary テキストが空のケースで recovery が走ることを確認。
+- 右字幕パネル下部の Debug セクションで、`sync interval primary recovery` / `secondary track sync context` を継続観測できることを確認。
+- `startBilingual ready` 直後は `primaryTrackFound: false` / `secondaryTrackFound: false` でも、その後 `sync interval primary recovery` により両方 `true` へ回復するケースを確認。
+- `after-renderSecondarySubtitle` の snapshot は安定後に大量連投しやすいため、6 項目シグネチャ変化時のみ出力する重複抑制を導入した。
+- 以上より、Debug 統合 UI 自体は不具合原因ではなく、問題の本体は `content.js` 側の resolver / recovery / current-history-future 構築経路にあると切り分け済み。
+- 今後の観測は、F12 Console の大量 snapshot ではなく、右字幕パネル下部の Debug セクションログを主ログとして使う。
+
 ### #5 options の「デバッグログ（開発者向け）」セクションを折り畳み既定にする
 
 **確認済み内容**

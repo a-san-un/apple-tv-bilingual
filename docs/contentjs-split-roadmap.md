@@ -201,3 +201,48 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - ロードマップは Phase A〜E で確定済み
 - 今すぐ着手するのは Phase A のみ
 - Phase B 以降は Phase A 完了後に順番に進める
+
+---
+
+## Phase A 着手前の issue 化方針
+
+- Phase A は `content.js` 分割の最初の実装単位として、着手前に専用 issue を作成してから進める。
+- issue の目的は、`vtt-normalizer.js` / `debug-logger.js` 切り出しの対象範囲・非対象範囲・確認項目を固定し、Phase B 以降へ責務を持ち越さないようにすること。
+- この issue では、既存挙動を変えない差分ゼロ移行を前提とし、実装途中の責務拡張は行わない。
+- `content.js` の全面分割や広範囲な書き換えには進まず、Phase A の対象である純関数と独立 logger の切り出しに限定する。
+- `manifest.json` の `content_scripts` 追加、`content.js` 上部のラッパー追加、既存 logger / VTT 関数本体の移設を同一 issue のスコープに含める。
+- 受け入れ条件は本書 Phase A の「確認項目」をそのまま使う。
+- Issue 進捗・完了状態は `docs/dev-roadmap.md` 側で管理し、本書は分割方針と実装順の整理に限定する。
+
+### issue タイトル案
+
+- `[P1] content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す`
+
+### issue 本文に含めるべき観点
+
+- 対象:
+  - `vtt-normalizer.js`
+  - `debug-logger.js`
+- やること:
+  - `normalizeSubtitleText` / `cleanCueText` / `formatTime` の移設
+  - 既存 logger 関数群の移設
+  - `window.ATVB` 名前空間経由の公開
+  - `content.js` 側ラッパー追加
+  - `manifest.json` の `content_scripts` 順更新
+- やらないこと:
+  - resolver の切り出し
+  - settings bridge / Debug UI API 分離
+  - binder / sidebar / observer / bootstrap 整理
+  - `content.js` の全面分割
+- 確認項目:
+  - 拡張の reload でエラーが出ない
+  - Console に `[ATVB]` ログが従来どおり出る
+  - 字幕整形が従来どおり動く
+  - Debug UI が残っている場合、ログ更新が従来どおり動く
+
+### 着手順メモ
+
+1. VSCode Copilot で `content.js` の現状マッピング結果を確認する
+2. Phase A 専用 issue を作成する
+3. issue 番号確定後、必要なら `docs/dev-roadmap.md` に追加する
+4. その後にだけ Phase A 実装へ進む
