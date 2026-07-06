@@ -3,6 +3,7 @@
 // version: 2.6.0
 // Issue #4: Debug 配置修正と再生ページ限定 build、初回字幕回復導線を最小差分で整理
 // 既存の起動導線は維持し、layout/observer/retry/polling は変更しない
+// Phase A: VTT 正規化と logger を外部モジュールへ分離し、ここでは橋渡しを担当する。
 // =============================================================
 //
 (function () {
@@ -17,8 +18,6 @@
     preferredAiProvider: "auto",
   };
 
-  const DEBUG_LOGS_KEY = "debugLogs";
-  const DEBUG_LOGS_MAX = 400;
   const DEBUG_SECONDARY_SUBS = false;
   const TRACK_RESOLVE_RETRY_DELAYS_MS = [120, 260, 420, 680];
   const SECONDARY_SUBTITLE_GRACE_MS = 1200;
@@ -91,78 +90,34 @@
   let lastSecondaryText = "";
   let lastSecondaryTextAt = 0;
 
-  function maskSensitive(value) {
-    if (typeof value !== "string") return value;
-    if (!value) return "";
-    if (value.length <= 8) return "***";
-    return `${value.slice(0, 4)}...${value.slice(-2)}`;
-  }
+  // logger API の debugLog へ橋渡しする。
+  const debugLog = (...args) => window.ATVB?.logger?.debugLog?.(...args);
+  // logger API の appendDebugLog へ橋渡しする。
+  const appendDebugLog = (...args) =>
+    window.ATVB?.logger?.appendDebugLog?.(...args);
+  // logger API の logContent へ橋渡しする。
+  const logContent = (...args) => window.ATVB?.logger?.logContent?.(...args);
+  // logger API の getDebugLogText へ橋渡しする。
+  const getDebugLogText = async (...args) =>
+    (await window.ATVB?.logger?.getDebugLogText?.(...args)) ?? "";
+  // logger API の clearDebugLogs へ橋渡しする。
+  const clearDebugLogs = async (...args) =>
+    (await window.ATVB?.logger?.clearDebugLogs?.(...args)) ?? undefined;
 
-  function sanitizeForLog(payload) {
-    if (payload == null) return payload;
-    let cloned;
-    try {
-      cloned = JSON.parse(JSON.stringify(payload));
-    } catch (_) {
-      return { note: "unserializable payload" };
-    }
-    function walk(obj) {
-      if (!obj || typeof obj !== "object") return obj;
-      for (const key of Object.keys(obj)) {
-        const value = obj[key];
-        if (key === "googleAiStudioApiKey" || key === "groqApiKey") {
-          obj[key] = value ? maskSensitive(value) : "";
-          continue;
-        }
-        if (typeof value === "object" && value !== null) walk(value);
-      }
-      return obj;
-    }
-    return walk(cloned);
-  }
+  // vtt API の normalizeSubtitleText へ橋渡しする。
+  const normalizeSubtitleText = (...args) =>
+    window.ATVB?.vtt?.normalizeSubtitleText?.(...args) ?? "";
+  // vtt API の cleanCueText へ橋渡しする。
+  const cleanCueText = (...args) =>
+    window.ATVB?.vtt?.cleanCueText?.(...args) ?? "";
+  // vtt API の formatTime へ橋渡しする。
+  const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 
-  function debugLog(scope, message, payload = null) {
-    const time = new Date().toISOString();
-    const safePayload = sanitizeForLog(payload);
-    console.log(`[ATVB][${time}][${scope}] ${message}`, safePayload ?? "");
-    return { time, scope, message, payload: safePayload };
-  }
-
-  async function appendDebugLog(line) {
-    try {
-      const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
-        await chrome.storage.local.get(DEBUG_LOGS_KEY);
-      debugLogs.push(line);
-      if (debugLogs.length > DEBUG_LOGS_MAX) {
-        debugLogs.splice(0, debugLogs.length - DEBUG_LOGS_MAX);
-      }
-      await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
-      // logger と panel 更新の結合点はここに集約する。
-      notifyDebugPanelUpdated();
-    } catch (error) {
-      console.warn("[ATV-Bilingual] appendDebugLog failed:", error);
-    }
-  }
-
-  function notifyDebugPanelUpdated() {
-    updateLiveDebugPanel();
-  }
-
-  function logContent(message, payload = null) {
-    const line = debugLog("content", message, payload);
-    appendDebugLog(line);
-  }
-
-  function formatDebugLine(line) {
-    const payloadText =
-      line.payload != null ? ` ${JSON.stringify(line.payload)}` : "";
-    return `[${line.time}] [${line.scope}] ${line.message}${payloadText}`;
-  }
-
-  async function getDebugLogText() {
-    const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
-      await chrome.storage.local.get(DEBUG_LOGS_KEY);
-    return debugLogs.map(formatDebugLine).join("\n");
+  // logger の更新通知を Debug パネル更新へ接続する。
+  function registerDebugLogUpdateCallback() {
+    window.ATVB?.logger?.setOnLogUpdated?.(() => {
+      updateLiveDebugPanel();
+    });
   }
 
   function applySecondaryLangFallback(settings) {
@@ -193,34 +148,6 @@
   function ejdictLookup(word) {
     if (!state.ejdictMap) return null;
     return state.ejdictMap[word] || state.ejdictMap[word.toLowerCase()] || null;
-  }
-
-  function formatTime(sec) {
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    const s = Math.floor(sec % 60);
-    return h > 0
-      ? `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
-      : `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  }
-
-  function normalizeSubtitleText(raw) {
-    return String(raw || "")
-      .replace(/\r\n?/g, "\n")
-      .replace(/<c(\.[^>]+)?>/g, "")
-      .replace(/<\/c>/g, "")
-      .replace(/<[^>]+>/g, "")
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">");
-  }
-
-  function cleanCueText(cue) {
-    if (!cue) return "";
-    if (cue.getCueAsHTML) {
-      return normalizeSubtitleText(cue.getCueAsHTML().textContent || "");
-    }
-    return normalizeSubtitleText(cue.text || "");
   }
 
   function findCueAt(track, time) {
@@ -2022,7 +1949,7 @@
     if (clearBtn) {
       clearBtn.addEventListener("click", async () => {
         try {
-          await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: [] });
+          await clearDebugLogs();
           logContent("Debug panel cleared logs");
         } catch (error) {
           logContent("Debug panel clear failed", { error: String(error) });
@@ -3267,6 +3194,7 @@
   function boot() {
     if (state.booted) return;
     state.booted = true;
+    registerDebugLogUpdateCallback();
     logContent("content startup begin");
     ensureMessageListener();
     ensureSecondaryTrackSyncInterval();

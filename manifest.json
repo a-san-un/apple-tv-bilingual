@@ -17,7 +17,7 @@
   "content_scripts": [
     {
       "matches": ["https://tv.apple.com/*"],
-      "js": ["content.js"],
+      "js": ["vtt-normalizer.js", "debug-logger.js", "content.js"],
       "css": ["overlay.css"],
       "run_at": "document_idle"
     }

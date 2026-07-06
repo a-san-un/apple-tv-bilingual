@@ -13,6 +13,10 @@
 
 ## Phase A: 純関数と独立 logger の切り出し
 
+### 関連 issue
+
+- [#12](../../issues/12) content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す
+
 ### 対象
 
 - `vtt-normalizer.js`
@@ -22,6 +26,8 @@
 
 - `content.js` の肥大化を安全に減らす
 - 既存ロジックを壊さずに最初の分離を行う
+- popup / options / background / content から同じログ基盤を使える状態を先に作る
+- 後続の #8（ログカテゴリ整理）と #9（current 表示強化）の土台を整える
 
 ### ルール
 
@@ -69,8 +75,9 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 
 - 拡張の reload でエラーが出ない
 - Console に `[ATVB]` ログが従来どおり出る
-- 字幕整形が従来どおり動く
-- Debug UI が残っている場合、ログ更新が従来どおり動く
+- popup / options / background / content の各ログが共通基盤経由で取得できる
+- Debug UI が残っている場合、Clear → 再操作後にログが再蓄積される
+- 字幕整形が従来どおり動き、タグ断片やエンティティが表示上に残らない
 
 ---
 
