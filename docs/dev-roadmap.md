@@ -1,7 +1,7 @@
 # phase-2 実装ロードマップ
 
 > **ブランチ**: `phase-2`  
-> **最終更新**: 2026-07-06  
+> **最終更新**: 2026-07-07  
 > **マージ先**: `main`（`phase-2` 側で機能が安定したタイミングでマージ）
 
 ---
@@ -30,7 +30,8 @@
 | [#8](../../issues/8)   | Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する               | P1     | Phase 3    | 未完了           | `p1` `enhancement` `area:options` `area:content`     |
 | [#9](../../issues/9)   | content.js の current 表示強化（タイトル・トラック情報の常時表示）     | P1     | 後続タスク | 未完了           | GitHub issue の実内容に合わせて整理                  |
 | [#10](../../issues/10) | 単語ポップアップ UI 刷新・AI タブ拡張と dictionaryapi.dev ハンドラ実装 | P2     | 後続タスク | 未完了           | GitHub issue の実内容に合わせて整理                  |
-| [#12](../../issues/12) | content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す     | P1     | Phase 3    | 未完了           | `p1` `enhancement` `area:content`                    |
+| [#12](../../issues/12) | content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す     | P1     | Phase 3    | **完了**         | `p1` `enhancement` `area:content`                    |
+| [#13](../../issues/13) | content.js Phase B: subtitle-track-resolver.js を切り出す              | P1     | Phase 3    | 未完了           | `p1` `enhancement` `area:content`                    |
 
 ---
 
@@ -75,7 +76,8 @@
 加えて、後続の content.js 分割を安全に進められるよう、ログ基盤と独立責務の切り出しを先行して進める。
 
 - [ ] [#8] Debug ログカテゴリ設計整理
-- [ ] [#12] content.js の Phase A 分割（WebVTT 正規化と Debug logger の切り出し）
+- [x] [#12] content.js の Phase A 分割（WebVTT 正規化と Debug logger の切り出し）
+- [ ] [#13] content.js の Phase B 分割（subtitle-track-resolver の切り出し）
 
 ---
 

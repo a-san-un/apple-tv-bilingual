@@ -1,6 +1,6 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - content.js
-// version: 2.6.0
+// version: 2.6.1
 // Issue #4: Debug 配置修正と再生ページ限定 build、初回字幕回復導線を最小差分で整理
 // 既存の起動導線は維持し、layout/observer/retry/polling は変更しない
 // Phase A: VTT 正規化と logger を外部モジュールへ分離し、ここでは橋渡しを担当する。
@@ -112,6 +112,22 @@
     window.ATVB?.vtt?.cleanCueText?.(...args) ?? "";
   // vtt API の formatTime へ橋渡しする。
   const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
+
+  // resolver API の getUniqueTracks へ橋渡しする。
+  const getUniqueTracks = (...args) =>
+    window.ATVB?.resolver?.getUniqueTracks?.(...args) ?? [];
+  // resolver API の getTrackCuesLength へ橋渡しする。
+  const getTrackCuesLength = (...args) =>
+    window.ATVB?.resolver?.getTrackCuesLength?.(...args) ?? 0;
+  // resolver API の getTrackActiveCuesLength へ橋渡しする。
+  const getTrackActiveCuesLength = (...args) =>
+    window.ATVB?.resolver?.getTrackActiveCuesLength?.(...args) ?? 0;
+  // resolver API の pickBestSubtitleTrack へ橋渡しする。
+  const pickBestSubtitleTrack = (...args) =>
+    window.ATVB?.resolver?.pickBestSubtitleTrack?.(...args) ?? null;
+  // resolver API の resolveSecondarySubtitleTrack へ橋渡しする。
+  const resolveSecondarySubtitleTrack = (...args) =>
+    window.ATVB?.resolver?.resolveSecondarySubtitleTrack?.(...args) ?? null;
 
   // logger の更新通知を Debug パネル更新へ接続する。
   function registerDebugLogUpdateCallback() {
@@ -387,75 +403,6 @@
     check();
   }
 
-  function normalizeTrackLabel(label) {
-    return String(label || "")
-      .trim()
-      .replace(/\s+/g, " ");
-  }
-
-  function normalizeTrackLanguage(value) {
-    return String(value || "")
-      .trim()
-      .toLowerCase();
-  }
-
-  function matchesRequestedLanguage(track, requestedLang) {
-    const lang = normalizeTrackLanguage(track.language);
-    const requested = normalizeTrackLanguage(requestedLang);
-
-    if (!lang || !requested) return false;
-
-    // Chinese family handling:
-    // zh should match zh, zh-Hans, zh-Hant, zh-CN, zh-TW, etc.
-    if (requested === "zh") {
-      return lang === "zh" || lang.startsWith("zh-");
-    }
-
-    return lang === requested || lang.startsWith(`${requested}-`);
-  }
-
-  function isForcedLikeTrack(track) {
-    const label = normalizeTrackLabel(track?.label).toLowerCase();
-    return /\(forced\)|forced/.test(label);
-  }
-
-  function getUniqueTracks(textTracks) {
-    const seen = new Set();
-    const result = [];
-    for (let i = 0; i < textTracks.length; i++) {
-      const t = textTracks[i];
-      if (t.kind !== "subtitles" && t.kind !== "captions") continue;
-      if (isForcedLikeTrack(t)) continue;
-      const key = `${t.language}::${normalizeTrackLabel(t.label)}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        result.push({
-          index: i,
-          lang: t.language,
-          label: normalizeTrackLabel(t.label),
-          track: t,
-        });
-      }
-    }
-    return result;
-  }
-
-  function getTrackCuesLength(track) {
-    try {
-      return track?.cues ? track.cues.length : 0;
-    } catch {
-      return 0;
-    }
-  }
-
-  function getTrackActiveCuesLength(track) {
-    try {
-      return track?.activeCues ? track.activeCues.length : 0;
-    } catch {
-      return 0;
-    }
-  }
-
   function getSecondaryTrackDebugPayload(requestedSecondaryLanguage, track) {
     return {
       requestedSecondaryLanguage: requestedSecondaryLanguage || "",
@@ -463,81 +410,6 @@
       cuesLength: getTrackCuesLength(track),
       activeCuesLength: getTrackActiveCuesLength(track),
     };
-  }
-
-  function scoreSubtitleTrack(track, index) {
-    const cuesLength = getTrackCuesLength(track);
-    const activeCuesLength = getTrackActiveCuesLength(track);
-
-    let score = 0;
-
-    if (track.kind === "subtitles") score += 20;
-    if (track.mode !== "disabled") score += 10;
-
-    // Most important: avoid empty duplicate tracks.
-    if (cuesLength > 0) score += 1000;
-
-    // Prefer tracks currently producing text.
-    if (activeCuesLength > 0) score += 200;
-
-    // Small tie-breaker: more cues is usually the real content track.
-    score += Math.min(cuesLength, 100);
-
-    // Very small tie-breaker: later indices often looked more "real" in this Apple TV+ case.
-    score += index * 0.001;
-
-    return score;
-  }
-
-  function pickBestSubtitleTrack(textTracks, requestedLang) {
-    const candidates = [...textTracks]
-      .map((track, index) => ({ track, index }))
-      .filter(({ track }) => {
-        const isSubtitleKind =
-          track.kind === "subtitles" || track.kind === "captions";
-        if (!isSubtitleKind) return false;
-        if (isForcedLikeTrack(track)) return false;
-        return matchesRequestedLanguage(track, requestedLang);
-      });
-
-    if (candidates.length === 0) {
-      return null;
-    }
-
-    candidates.sort((a, b) => {
-      return (
-        scoreSubtitleTrack(b.track, b.index) -
-        scoreSubtitleTrack(a.track, a.index)
-      );
-    });
-
-    return candidates[0].track;
-  }
-
-  function resolveSecondarySubtitleTrack(video, requestedLang) {
-    if (!video || !video.textTracks) return null;
-
-    const selectedTrack = pickBestSubtitleTrack(
-      video.textTracks,
-      requestedLang,
-    );
-
-    if (!selectedTrack) {
-      return null;
-    }
-
-    // Keep hidden so native subtitle UI is not forced onscreen,
-    // but activeCues / cuechange still work.
-    if (selectedTrack.mode === "disabled") {
-      selectedTrack.mode = "hidden";
-    } else if (
-      selectedTrack.mode !== "hidden" &&
-      selectedTrack.mode !== "showing"
-    ) {
-      selectedTrack.mode = "hidden";
-    }
-
-    return selectedTrack;
   }
 
   function canReadCueFromTrack(track) {

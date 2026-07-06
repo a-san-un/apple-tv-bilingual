@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Apple TV+ Bilingual Subtitles",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "description": "Displays bilingual subtitles with right panel and dictionary popup on Apple TV+",
   "permissions": ["storage", "tabs", "scripting", "downloads"],
   "host_permissions": [
@@ -17,7 +17,12 @@
   "content_scripts": [
     {
       "matches": ["https://tv.apple.com/*"],
-      "js": ["vtt-normalizer.js", "debug-logger.js", "content.js"],
+      "js": [
+        "vtt-normalizer.js",
+        "debug-logger.js",
+        "subtitle-track-resolver.js",
+        "content.js"
+      ],
       "css": ["overlay.css"],
       "run_at": "document_idle"
     }
