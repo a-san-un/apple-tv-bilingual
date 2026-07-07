@@ -328,10 +328,11 @@ options.js     ← 設定の読込・保存・状態確認
 
 ## 7. 今後の優先順位
 
-1. #8: Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する
-2. Phase C: settings-bridge / debug-panel の責務分離
-3. #9: `content.js` 側で current 表示強化（タイトル・トラック情報の常時表示）
-4. #10: 単語ポップアップ UI 改修と AI タブ拡張、dictionaryapi.dev ハンドラ実装
+1. Phase C（#16）: settings-bridge / debug-panel の責務分離
+2. #9: `content.js` 側で current 表示強化（タイトル・トラック情報の常時表示）
+3. Phase D: binder / sidebar の責務分離
+4. Phase E: layout / observer / bootstrap の最終整理
+5. #10: 単語ポップアップ UI 改修と AI タブ拡張、dictionaryapi.dev ハンドラ実装
 
 ### 完了済み（本バッチまで）
 
@@ -340,6 +341,7 @@ options.js     ← 設定の読込・保存・状態確認
 - #5: options のデバッグログセクション折り畳み既定化
 - #6: popup / options の言語一覧固定化
 - #14: 設定ライフサイクル再整理（設定変更時 / 動画初期化時を主トリガー化、離脱時は cleanup 中心）
+- #8: Debug ログカテゴリ整理と共通ログ基盤の整合（Clear 挙動含む）
 
 ---
 
