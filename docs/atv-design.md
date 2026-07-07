@@ -291,6 +291,39 @@ options.js     ← 設定の読込・保存・状態確認
 - `amp-volume-control-unified` は中央寄せせず、字幕パネルに重なる分だけ左へ移動すること。
 - 常駐監視に依存せず、起動時 / 再起動時の軽量な補正バーストで安定化すること。
 
+### 6.2 playback controls 調整の現状と限界
+
+- 調整の目的は、右字幕パネル（`#atv-panel-host` 配下）を表示した状態でも、Apple TV+ 側の playback controls が操作可能な範囲へ収まるようにすること。
+- 特に `.unified-controls` を可視領域中心へ寄せ、header / footer / progress / volume / skip が字幕パネル裏へ隠れないことを優先した。
+- 実装上は `content.js` の `adjustPlaybackControlsForPanel` 周辺を段階的に調整し、header / footer の safe area ベース sizing、footer 子要素の shrink 補正、skip overlay の位置補正を加えた。
+- footer 子要素には `.video-player__metadata` / `.video-player__progress` / `.video-player__tabs` / `.video-player__auto-subs-note` へ `min-width: 0`, `max-width: 100%`, `overflow: hidden`, `flex-shrink: 1` を付与する補正を入れている。
+- `auto-subs-note` は small resolution で safe area を大きく壊しやすいため、狭い横幅では `display: none` の suppress を許容している。
+
+#### 実測で分かったこと
+
+- 大きめのデスクトップ解像度では、`.unified-controls` の center offset は safe area に対してほぼ 0 まで改善し、header / footer / progress も概ね操作可能範囲へ収まる。
+- 一方で small resolution では、safe area 幅に対して Apple TV+ 側の intrinsic 幅が大きく、`header` / `footer` / `progress` / `controls` の `rightOverflow` が非常に大きくなるケースが残る。
+- このレンジでは、単なる width/max-width の制御だけでなく、Apple TV+ 側の flex / grid レイアウト再計算と拡張側の transform / inline style 管理が複雑に干渉する。
+- そのため、最小差分パッチだけでは small resolution 全域で安定した controls layout を保証できないことが確認された。
+
+#### 現状の方針
+
+- 一般的なデスクトップ解像度では、right panel ON の状態でも playback controls の操作性は実用範囲内とみなす。
+- small resolution は既知の制約として扱い、現行版では「layout が崩れる可能性がある」ことを明記する。
+- 再度この issue を扱う場合は、最小差分パッチの延長ではなく、small resolution 専用のレイアウト分岐や CSS 設計を前提に再検討する。
+
+#### 開発者向けメモ
+
+- `adjustPlaybackControlsForPanel` の現在の挙動は、大きめ解像度では問題ない範囲なので、このレンジを壊さないことを優先する。
+- small resolution を再調整する場合は、Apple TV+ 側 DOM と flex / grid 制約を整理し直してから着手した方がよい。
+- 調査時は `safeAreaLeft/right/width` と、`header` / `footer` / `progress` / `unified` の rect ログを必ずセットで残すこと。
+
+#### TODO: small resolution 再検討時
+
+- small resolution 専用の layout branch を切るか判断する。
+- footer 子要素の shrink 条件を CSS レベルで再設計する。
+- `auto-subs-note` の抑制を恒久仕様にするか再評価する。
+
 ---
 
 ## 7. 今後の優先順位

@@ -75,6 +75,13 @@ Apple TV+ は動画要素まわりで特殊なレイヤー構造を持つため�
 起動時 / 設定反映時の軽量な補正バーストで位置を安定化し、`footer` / `unified-controls` / `volume` を同一基準で補正します。  
 音量 UI は中央寄せではなく、右字幕パネルとの重なり分だけ移動する挙動に調整しています。
 
+### playback controls レイアウトの制約
+
+右字幕パネル表示時でも、Apple TV+ 側の header / footer / unified-controls / progress / volume / skip を操作可能範囲へ収めるよう、`content.js` の `adjustPlaybackControlsForPanel` 周辺で段階的な補正を行っています。  
+大きめのデスクトップ解像度では、`.unified-controls` の中央寄せと、header / footer / progress の panel 回避は概ね実用範囲まで改善しています。  
+一方で、極端に小さい横幅では Apple TV+ 側の intrinsic 幅と内部レイアウトの影響が大きく、small resolution では header / footer / progress / controls の layout が崩れる可能性があります。  
+このレンジは現行版の既知制約であり、将来的には small resolution 専用のレイアウト分岐や CSS 再設計が必要です。
+
 ### CORS 問題
 
 コンテンツスクリプトから外部辞書 API へ直接 `fetch()` すると、CORS 制約でブロックされることがあります。  
