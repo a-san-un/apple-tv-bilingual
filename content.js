@@ -144,7 +144,9 @@
         .split("-")[0];
       result.secondaryLang = browserLang;
       logContent("secondaryLang empty: applying browser language fallback", {
+        requestedSecondaryLang: settings?.secondaryLang ?? "",
         browserLanguage: browserLang,
+        resolvedSecondaryLanguage: browserLang,
       });
     }
     return result;
@@ -711,8 +713,6 @@
         }
         state.lastAfterRenderSecondarySnapshotSignature = signature;
       }
-
-      console.log("[ATVB] panel state snapshot", payload);
     } catch (error) {
       console.warn("[ATVB] panel state snapshot failed", {
         tag,
@@ -2900,19 +2900,6 @@
       secondaryTrackFound: !!state.secondaryTrack,
       ejdictLoaded: !!state.ejdictMap,
     });
-
-    console.log(
-      "[ATV-Bilingual] v2.5 ready | injected into:",
-      state.dialogEl ? "dialog.playback-view ✅" : "document.body (fallback)",
-      "| tracks:",
-      state.contentSettings.primaryLang,
-      "+",
-      state.contentSettings.secondaryLang,
-      "| EJDict:",
-      state.ejdictMap
-        ? Object.keys(state.ejdictMap).length + " entries"
-        : "loading...",
-    );
   }
 
   function attachTracks(v) {

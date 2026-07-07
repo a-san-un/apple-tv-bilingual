@@ -53,11 +53,10 @@
     return walk(cloned);
   }
 
-  // [ATVB] 形式で 1 行ログを生成して console 出力する。
+  // [ATVB] 形式で 1 行ログを生成する。
   function debugLog(scope, message, payload = null) {
     const time = new Date().toISOString();
     const safePayload = sanitizeForLog(payload);
-    console.log(`[ATVB][${time}][${scope}] ${message}`, safePayload ?? "");
     return { time, scope, message, payload: safePayload };
   }
 
