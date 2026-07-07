@@ -104,3 +104,7 @@ Manifest V3 の Service Worker はアイドル時に自動停止します。
 ## バージョン
 
 - Current: `2.6.1`
+
+## 開発向けドキュメント
+
+- AI セッション運用ルールとテンプレートは `docs/ai-session-templates.md` を参照してください。
