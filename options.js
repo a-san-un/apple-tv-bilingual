@@ -225,6 +225,18 @@ function formatDebugLine(line) {
   return `[${localTime}] [${normalizedLine.category}] [${normalizedLine.source}] ${normalizedLine.message}${payloadText}`;
 }
 
+function buildDebugLineSignature(line) {
+  const normalizedLine = ensureLogShape(line);
+  if (!normalizedLine) return "";
+  return JSON.stringify({
+    time: normalizedLine.time,
+    category: normalizedLine.category,
+    source: normalizedLine.source,
+    message: normalizedLine.message,
+    payload: normalizedLine.payload,
+  });
+}
+
 function getVisibleDebugLogs(logs) {
   return (logs || [])
     .map((line) => ensureLogShape(line))
@@ -300,15 +312,23 @@ async function downloadDebugLogs() {
 async function clearDebugLogs() {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
-  const remainingLogs = debugLogs.filter((line) => line?.scope !== "options");
+
+  const visibleLogs = getVisibleDebugLogs(debugLogs);
+  const visibleSignatures = new Set(
+    visibleLogs.map((line) => buildDebugLineSignature(line)).filter(Boolean),
+  );
+
+  const remainingLogs = (debugLogs || [])
+    .map((line) => ensureLogShape(line))
+    .filter(Boolean)
+    .filter((line) => !visibleSignatures.has(buildDebugLineSignature(line)));
+
   await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: remainingLogs });
 
   if (els.debugLogOutput) {
     els.debugLogOutput.value = "";
   }
 
-  const line = debugLog("options", LOG_CATEGORIES.UI, "Cleared debug logs");
-  await appendDebugLog(line);
   await renderDebugLogs();
   showSaveStatus("デバッグログをクリアしました");
 }
