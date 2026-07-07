@@ -3000,8 +3000,10 @@
       });
       const requestedSecondaryLang = state.requestedSecondaryLang;
       const resolvedSecondaryLanguage = next.secondaryLang;
+      const triggerReason = message.reason || "unknown";
 
       logContent("SETTINGS_CHANGED received", {
+        triggerReason,
         settings: {
           ...next,
           requestedSecondaryLang,
@@ -3024,6 +3026,7 @@
       const appliedResolvedSecondaryLanguage = resolvedSecondaryLanguage;
 
       logContent("content applied settings to tracks", {
+        triggerReason,
         hasVideo: !!state.video,
         primaryLang: state.contentSettings.primaryLang,
         secondaryLang: state.contentSettings.secondaryLang,
