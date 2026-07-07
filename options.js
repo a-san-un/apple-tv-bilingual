@@ -31,7 +31,7 @@ const DEFAULT_LOCAL_SETTINGS = {
 };
 
 const DEBUG_LOGS_KEY = "debugLogs";
-const DEBUG_LOGS_MAX = 400;
+const DEBUG_LOGS_MAX = 300;
 const LOG_CATEGORIES = Object.freeze({
   SETTINGS: "settings",
   SUBTITLE: "subtitle",

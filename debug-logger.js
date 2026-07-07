@@ -10,7 +10,7 @@
   window.ATVB = window.ATVB || {};
 
   const DEBUG_LOGS_KEY = "debugLogs";
-  const DEBUG_LOGS_MAX = 400;
+  const RETAINED_DEBUG_LOGS_LIMIT = 300;
   const LOG_CATEGORIES = Object.freeze({
     SETTINGS: "settings",
     SUBTITLE: "subtitle",
@@ -127,8 +127,8 @@
       if (!normalizedLine) return;
 
       debugLogs.push(normalizedLine);
-      if (debugLogs.length > DEBUG_LOGS_MAX) {
-        debugLogs.splice(0, debugLogs.length - DEBUG_LOGS_MAX);
+      if (debugLogs.length > RETAINED_DEBUG_LOGS_LIMIT) {
+        debugLogs.splice(0, debugLogs.length - RETAINED_DEBUG_LOGS_LIMIT);
       }
       await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
       onLogUpdated();
@@ -165,12 +165,29 @@
     const scopes = Array.isArray(filter.scopes)
       ? new Set(filter.scopes.map((item) => String(item || "").trim()))
       : null;
+    const contentKey = String(filter.contentKey || "").trim();
+
+    function extractContentKey(payload) {
+      if (!payload || typeof payload !== "object") return "";
+      const candidates = [
+        payload.contentKey,
+        payload.nextContentKey,
+        payload.currentContentKey,
+      ];
+      const found = candidates.find((item) => String(item || "").trim());
+      return found ? String(found).trim() : "";
+    }
 
     return (logs || []).filter((line) => {
       const normalized = ensureLogShape(line);
       if (!normalized) return false;
       if (categories && !categories.has(normalized.category)) return false;
       if (scopes && !scopes.has(normalized.source)) return false;
+      if (contentKey) {
+        const lineContentKey = extractContentKey(normalized.payload);
+        if (!lineContentKey) return false;
+        if (lineContentKey !== contentKey) return false;
+      }
       return true;
     });
   }
@@ -202,5 +219,6 @@
     getDebugLogText,
     clearDebugLogs,
     LOG_CATEGORIES,
+    RETAINED_DEBUG_LOGS_LIMIT,
   };
 })();

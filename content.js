@@ -127,7 +127,36 @@
   const appendDebugLog = (...args) =>
     window.ATVB?.logger?.appendDebugLog?.(...args);
   // logger API の logContent へ橋渡しする。
-  const logContent = (...args) => window.ATVB?.logger?.logContent?.(...args);
+  // 既存の logContent(message, payload) 互換を維持しつつ contentKey を付与する。
+  function logContent(...args) {
+    const logger = window.ATVB?.logger;
+    if (!logger?.logContent) return;
+
+    if (args.length >= 3) {
+      const [category, message, payload] = args;
+      return logger.logContent(
+        category,
+        message,
+        buildContentScopedPayload(payload),
+      );
+    }
+
+    if (args.length === 2) {
+      const [first, second] = args;
+      const normalizedFirst = String(first || "").toLowerCase();
+      const isCategory = Object.values(LOG_CATEGORIES).includes(normalizedFirst);
+      if (isCategory && typeof second === "string") {
+        return logger.logContent(first, second, buildContentScopedPayload(null));
+      }
+      return logger.logContent(first, buildContentScopedPayload(second));
+    }
+
+    if (args.length === 1) {
+      return logger.logContent(args[0], buildContentScopedPayload(null));
+    }
+
+    return logger.logContent();
+  }
   // logger API の getDebugLogText へ橋渡しする。
   const getDebugLogText = async (...args) =>
     (await window.ATVB?.logger?.getDebugLogText?.(...args)) ?? "";
@@ -135,16 +164,60 @@
   const clearDebugLogs = async (...args) =>
     (await window.ATVB?.logger?.clearDebugLogs?.(...args)) ?? undefined;
 
+  function buildContentScopedPayload(payload = null) {
+    const contentKey = String(state.currentContentKey || "").trim();
+    const scopedContentKey = contentKey || "content:unknown";
+    if (payload == null) {
+      return { contentKey: scopedContentKey };
+    }
+    if (Array.isArray(payload)) {
+      return { value: payload, contentKey: scopedContentKey };
+    }
+    if (typeof payload === "object") {
+      return {
+        ...payload,
+        contentKey:
+          String(payload.contentKey || payload.nextContentKey || "").trim() ||
+          scopedContentKey,
+      };
+    }
+    return { value: payload, contentKey: scopedContentKey };
+  }
+
   const logContentSettings = (message, payload = null) =>
-    logContent(LOG_CATEGORIES.SETTINGS, message, payload);
+    logContent(
+      LOG_CATEGORIES.SETTINGS,
+      message,
+      buildContentScopedPayload(payload),
+    );
   const logContentSubtitle = (message, payload = null) =>
-    logContent(LOG_CATEGORIES.SUBTITLE, message, payload);
+    logContent(
+      LOG_CATEGORIES.SUBTITLE,
+      message,
+      buildContentScopedPayload(payload),
+    );
   const logContentUi = (message, payload = null) =>
-    logContent(LOG_CATEGORIES.UI, message, payload);
+    logContent(LOG_CATEGORIES.UI, message, buildContentScopedPayload(payload));
   const logContentApi = (message, payload = null) =>
-    logContent(LOG_CATEGORIES.API, message, payload);
+    logContent(LOG_CATEGORIES.API, message, buildContentScopedPayload(payload));
   const logContentError = (message, payload = null) =>
-    logContent(LOG_CATEGORIES.ERROR, message, payload);
+    logContent(
+      LOG_CATEGORIES.ERROR,
+      message,
+      buildContentScopedPayload(payload),
+    );
+
+  function getLiveDebugLogFilter() {
+    const filter = {
+      categories: CONTENT_DEFAULT_DEBUG_CATEGORIES,
+      scopes: ["content"],
+    };
+    const contentKey = String(state.currentContentKey || "").trim();
+    if (contentKey) {
+      filter.contentKey = contentKey;
+    }
+    return filter;
+  }
 
   // vtt API の normalizeSubtitleText へ橋渡しする。
   const normalizeSubtitleText = (...args) =>
@@ -2264,9 +2337,7 @@
 
     if (copyBtn) {
       copyBtn.addEventListener("click", async () => {
-        const text = await getDebugLogText({
-          categories: CONTENT_DEFAULT_DEBUG_CATEGORIES,
-        });
+        const text = await getDebugLogText(getLiveDebugLogFilter());
         try {
           await navigator.clipboard.writeText(text);
           logContentUi("Debug panel copied logs", {
@@ -2281,9 +2352,7 @@
     if (downloadBtn) {
       downloadBtn.addEventListener("click", async () => {
         // 保存先ダイアログは background 側の downloads API で開く。
-        const text = await getDebugLogText({
-          categories: CONTENT_DEFAULT_DEBUG_CATEGORIES,
-        });
+        const text = await getDebugLogText(getLiveDebugLogFilter());
         sendToBackground({ type: "DOWNLOAD_DEBUG_LOG", text }, (res) => {
           if (res?.ok) {
             logContentUi("Debug panel downloaded logs", {
@@ -2317,9 +2386,7 @@
   async function updateLiveDebugPanel() {
     if (!state.debugPanelRoot) return;
     try {
-      const text = await getDebugLogText({
-        categories: CONTENT_DEFAULT_DEBUG_CATEGORIES,
-      });
+      const text = await getDebugLogText(getLiveDebugLogFilter());
       const textarea = state.debugPanelRoot.getElementById("debug-log");
       if (!textarea) return;
       textarea.value = text;
