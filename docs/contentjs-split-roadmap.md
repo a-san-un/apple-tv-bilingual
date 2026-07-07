@@ -74,7 +74,7 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 ### 確認項目
 
 - 拡張の reload でエラーが出ない
-- Console に `[ATVB]` ログが従来どおり出る
+- 右字幕パネル / options の Debug 表示で、共通 `debugLogs` 経由のログが従来どおり追える
 - popup / options / background / content の各ログが共通基盤経由で取得できる
 - Debug UI が残っている場合、Clear → 再操作後にログが再蓄積される
 - 字幕整形が従来どおり動き、タグ断片やエンティティが表示上に残らない
@@ -243,7 +243,7 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
   - `content.js` の全面分割
 - 確認項目:
   - 拡張の reload でエラーが出ない
-  - Console に `[ATVB]` ログが従来どおり出る
+  - 右字幕パネル / options の Debug 表示で、共通 `debugLogs` 経由のログが従来どおり追える
   - 字幕整形が従来どおり動く
   - Debug UI が残っている場合、ログ更新が従来どおり動く
 
