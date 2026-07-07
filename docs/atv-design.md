@@ -1,6 +1,6 @@
 # Apple TV+ Bilingual Subtitles phase-2 設計まとめ
 
-この文書は、Apple TV+ Bilingual Subtitles phase-2（v2.6.0）の現状コードで確認できたこと、合意済み仕様、今後の整理方針をまとめた設計メモです。
+この文書は、Apple TV+ Bilingual Subtitles phase-2（v2.6.1）の現状コードで確認できたこと、合意済み仕様、今後の整理方針をまとめた設計メモです。
 
 ---
 
@@ -13,7 +13,7 @@
 - `content.js`: Apple TV+ 再生画面へ UI を注入するメインロジック
 - `popup.html` / `popup.js`: 簡易設定 UI
 - `options.html` / `options.css` / `options.js`: 別タブの詳細設定画面
-- `manifest.json` の現バージョンは `2.6.0`
+- `manifest.json` の現バージョンは `2.6.1`
 
 ### 1.2 字幕 UI の現状
 
@@ -113,6 +113,63 @@ Apple TV+ の `textTracks` には、同一言語でも通常字幕・captions・
   - F12 Console での `__atvbDumpTracks()` の `hasTag: false` でも
     正規化済みであることを確認済み
 
+### 2.7 設定ライフサイクルの理想図（#14 前提）
+
+#### 主トリガー
+
+- 設定適用の主トリガーは **設定変更時** と **動画ページ初期化時** の 2 つとする。
+- ページ離脱時は「必要最小限のクリーンアップ」に留め、設定反映の主トリガーにはしない。
+
+#### fallback 方針
+
+- `secondaryLang = ""` の場合は、content 側でブラウザ言語 fallback を適用する。
+- fallback 適用後の値で resolver を実行し、最終採用 track を決定する。
+
+#### 責務境界
+
+- popup / options: 設定値の入力・保存（`chrome.storage.sync`）
+- background: 必要な通知・外部連携の橋渡し
+- content: 設定読込、fallback 適用、resolver 実行、再生中 UI への反映
+- どの track を採用するかの最終判断は content 側で行う。
+
+#### 動画ページ間移動時の方針
+
+- 動画ページ間移動時は、直近の反映済み設定を保持したまま次の初期化へ引き継ぐ。
+- 離脱イベントで「設定を戻す」前提ではなく、次の初期化で必要差分のみ再適用する。
+
+#### 擬似フロー
+
+設定変更時フロー:
+
+```text
+popup/options で設定保存
+  -> storage.sync 更新
+  -> （必要なら）background 経由で content へ通知
+  -> content が設定を再読込
+  -> secondaryLang が空ならブラウザ言語 fallback
+  -> resolver 実行
+  -> UI へ再適用
+```
+
+動画ページ初期化時フロー:
+
+```text
+content 初期化
+  -> storage.sync から設定読込
+  -> secondaryLang が空ならブラウザ言語 fallback
+  -> resolver 実行
+  -> UI 初期描画
+```
+
+ページ離脱時フロー（非主経路）:
+
+```text
+ページ離脱検知
+  -> listener / timer / observer を必要最小限で解放
+  -> 設定値そのものは storage 側を変更しない
+  -> 次回の初期化時フローで再適用
+```
+
 ---
 
 ## 3. レイアウト確定事項
@@ -197,7 +254,7 @@ options.js     ← 設定の読込・保存・状態確認
 
 ```json
 {
-  "version": "2.6.0",
+  "version": "2.6.1",
   "options_ui": {
     "page": "options.html",
     "open_in_tab": true
@@ -237,10 +294,9 @@ options.js     ← 設定の読込・保存・状態確認
 
 ## 7. 今後の優先順位
 
-1. #7: `secondaryLang` の空値保存とブラウザ言語 fallback の UI/挙動を統一する
-2. #8: Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する
-3. #9: `content.js` 側で current 表示強化（タイトル・トラック情報の常時表示）
-4. #10: 単語ポップアップ UI 改修と AI タブ拡張、dictionaryapi.dev ハンドラ実装
+1. #8: Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する
+2. #9: `content.js` 側で current 表示強化（タイトル・トラック情報の常時表示）
+3. #10: 単語ポップアップ UI 改修と AI タブ拡張、dictionaryapi.dev ハンドラ実装
 
 ### 完了済み（本バッチまで）
 
