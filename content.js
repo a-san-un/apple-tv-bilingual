@@ -407,9 +407,9 @@
     check();
   }
 
-  function getSecondaryTrackDebugPayload(requestedSecondaryLanguage, track) {
+  function getSecondaryTrackDebugPayload(effectiveSecondaryLanguage, track) {
     return {
-      requestedSecondaryLanguage: requestedSecondaryLanguage || "",
+      effectiveSecondaryLanguage: effectiveSecondaryLanguage || "",
       selectedTrackLanguage: track?.language || "",
       cuesLength: getTrackCuesLength(track),
       activeCuesLength: getTrackActiveCuesLength(track),
@@ -463,11 +463,11 @@
 
     const onSecondaryCueChange = () => {
       if (DEBUG_SECONDARY_SUBS) {
-        const requestedSecondaryLanguage =
+        const effectiveSecondaryLanguage =
           state.requestedSecondaryLang || state.contentSettings.secondaryLang;
         logContent(
           "secondary cuechange render",
-          getSecondaryTrackDebugPayload(requestedSecondaryLanguage, track),
+          getSecondaryTrackDebugPayload(effectiveSecondaryLanguage, track),
         );
       }
       renderSecondarySubtitle(getCurrentCueText(track), track);
@@ -785,14 +785,14 @@
         }
       }
 
-      const requestedSecondaryLanguage =
+      const effectiveSecondaryLanguage =
         state.requestedSecondaryLang || state.contentSettings.secondaryLang;
-      if (!state.video || !requestedSecondaryLanguage) return;
+      if (!state.video || !effectiveSecondaryLanguage) return;
 
       const previousSecondaryTrack = state.secondaryTrack;
       syncSecondarySubtitleTrack(
         state.video,
-        requestedSecondaryLanguage,
+        effectiveSecondaryLanguage,
         renderSecondarySubtitle,
       );
       state.secondaryTrack = secondaryTrackBound;
@@ -830,7 +830,7 @@
         state.lastSecondarySyncContext = syncContextSummary;
         logContent("secondary track sync context", {
           reason: "sync_interval",
-          requestedSecondaryLanguage,
+          effectiveSecondaryLanguage,
           trackCount: state.video?.textTracks?.length ?? 0,
           primaryTrackFound: Boolean(state.primaryTrack),
           secondaryTrackFound: Boolean(state.secondaryTrack),
@@ -2473,12 +2473,12 @@
     const switched = syncHistoryContextWithPlayback(reason);
     clearInternalSubtitleState(reason);
 
-    const requestedSecondaryLanguage =
+    const effectiveSecondaryLanguage =
       state.requestedSecondaryLang || state.contentSettings.secondaryLang;
     const trackSelection = selectPrimaryAndSecondaryTracks(
       state.video,
       state.contentSettings.primaryLang,
-      requestedSecondaryLanguage,
+      effectiveSecondaryLanguage,
       reason,
     );
     const primaryTrackFound = trackSelection.primaryTrackFound;
@@ -2833,12 +2833,12 @@
     syncHistoryContextWithPlayback("startBilingual");
 
     bindTracks();
-    const requestedSecondaryLanguage =
+    const effectiveSecondaryLanguage =
       state.requestedSecondaryLang || state.contentSettings.secondaryLang;
-    if (state.video && requestedSecondaryLanguage) {
+    if (state.video && effectiveSecondaryLanguage) {
       syncSecondarySubtitleTrack(
         state.video,
-        requestedSecondaryLanguage,
+        effectiveSecondaryLanguage,
         renderSecondarySubtitle,
       );
       state.secondaryTrack = secondaryTrackBound;
@@ -2919,12 +2919,12 @@
     chrome.storage.sync.get(DEFAULT_SETTINGS, (rawSettings) => {
       state.requestedSecondaryLang = rawSettings.secondaryLang || "";
       state.contentSettings = applySecondaryLangFallback(rawSettings);
-      const requestedSecondaryLanguage =
+      const effectiveSecondaryLanguage =
         state.requestedSecondaryLang || state.contentSettings.secondaryLang;
-      if (state.video && requestedSecondaryLanguage) {
+      if (state.video && effectiveSecondaryLanguage) {
         syncSecondarySubtitleTrack(
           state.video,
-          requestedSecondaryLanguage,
+          effectiveSecondaryLanguage,
           renderSecondarySubtitle,
         );
         state.secondaryTrack = secondaryTrackBound;
