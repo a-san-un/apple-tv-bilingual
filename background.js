@@ -110,9 +110,10 @@ function getAppleTvContentScriptAssets() {
     Array.isArray(appleTvEntry?.js) && appleTvEntry.js.length
       ? appleTvEntry.js
       : defaultJsFiles;
-  const cssFiles = Array.isArray(appleTvEntry?.css) && appleTvEntry.css.length
-    ? appleTvEntry.css
-    : defaultCssFiles;
+  const cssFiles =
+    Array.isArray(appleTvEntry?.css) && appleTvEntry.css.length
+      ? appleTvEntry.css
+      : defaultCssFiles;
 
   return { jsFiles, cssFiles };
 }
