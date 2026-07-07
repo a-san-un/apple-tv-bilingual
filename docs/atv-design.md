@@ -1,6 +1,6 @@
 # Apple TV+ Bilingual Subtitles phase-2 設計まとめ
 
-この文書は、Apple TV+ Bilingual Subtitles phase-2（v2.6.1）の現状コードで確認できたこと、合意済み仕様、今後の整理方針をまとめた設計メモです。
+この文書は、Apple TV+ Bilingual Subtitles phase-2（v2.6.2）の現状コードで確認できたこと、合意済み仕様、今後の整理方針をまとめた設計メモです。
 
 ---
 
@@ -13,7 +13,7 @@
 - `content.js`: Apple TV+ 再生画面へ UI を注入するメインロジック
 - `popup.html` / `popup.js`: 簡易設定 UI
 - `options.html` / `options.css` / `options.js`: 別タブの詳細設定画面
-- `manifest.json` の現バージョンは `2.6.1`
+- `manifest.json` の現バージョンは `2.6.2`
 
 ### 1.2 字幕 UI の現状
 
@@ -255,7 +255,7 @@ options.js     ← 設定の読込・保存・状態確認
 
 ```json
 {
-  "version": "2.6.1",
+  "version": "2.6.2",
   "options_ui": {
     "page": "options.html",
     "open_in_tab": true
