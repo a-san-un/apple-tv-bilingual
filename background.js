@@ -92,6 +92,13 @@ function getAppleTvContentScriptAssets() {
   const contentScripts = Array.isArray(manifest?.content_scripts)
     ? manifest.content_scripts
     : [];
+  const defaultJsFiles = [
+    "vtt-normalizer.js",
+    "debug-logger.js",
+    "subtitle-track-resolver.js",
+    "content.js",
+  ];
+  const defaultCssFiles = ["overlay.css"];
 
   const appleTvEntry = contentScripts.find((entry) =>
     Array.isArray(entry?.matches)
@@ -102,8 +109,10 @@ function getAppleTvContentScriptAssets() {
   const jsFiles =
     Array.isArray(appleTvEntry?.js) && appleTvEntry.js.length
       ? appleTvEntry.js
-      : ["content.js"];
-  const cssFiles = Array.isArray(appleTvEntry?.css) ? appleTvEntry.css : [];
+      : defaultJsFiles;
+  const cssFiles = Array.isArray(appleTvEntry?.css) && appleTvEntry.css.length
+    ? appleTvEntry.css
+    : defaultCssFiles;
 
   return { jsFiles, cssFiles };
 }

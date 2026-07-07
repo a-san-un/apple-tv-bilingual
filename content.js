@@ -143,7 +143,10 @@
         .toLowerCase()
         .split("-")[0];
       result.secondaryLang = browserLang;
-      logContent("secondaryLang empty: applying browser language fallback", browserLang);
+      logContent(
+        "secondaryLang empty: applying browser language fallback",
+        browserLang,
+      );
     }
     return result;
   }
