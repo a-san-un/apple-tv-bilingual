@@ -144,9 +144,14 @@
     if (args.length === 2) {
       const [first, second] = args;
       const normalizedFirst = String(first || "").toLowerCase();
-      const isCategory = Object.values(LOG_CATEGORIES).includes(normalizedFirst);
+      const isCategory =
+        Object.values(LOG_CATEGORIES).includes(normalizedFirst);
       if (isCategory && typeof second === "string") {
-        return logger.logContent(first, second, buildContentScopedPayload(null));
+        return logger.logContent(
+          first,
+          second,
+          buildContentScopedPayload(null),
+        );
       }
       return logger.logContent(first, buildContentScopedPayload(second));
     }
