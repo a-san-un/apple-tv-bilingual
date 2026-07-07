@@ -1,11 +1,11 @@
 # AI Session Templates
 
-このファイルは、VS Code の Copilot（Serena 拡張を含む）に渡す指示文テンプレートと、  
+このファイルは、VS Code の GitHub Copilot（Serena MCP 連携を含む）に渡す指示文テンプレートと、  
 このチャット（Perplexity）とのセッション運用ルールをまとめたものです。
 
 - ユーザー → このチャット に渡す「次スレ冒頭テンプレ」
 - このチャットが確認すべきチェックリスト
-- このチャット → VS Code の Copilot に渡す指示文テンプレ（調査 / 実装 / 影響範囲 / docs）
+- このチャット → VS Code の Copilot / Serena に渡す指示文テンプレ（調査 / 実装 / 影響範囲 / docs）
 
 をまとめた「AI セッション用テンプレ集」です。
 
@@ -13,13 +13,13 @@
 
 ## 1. セッション運用方針
 
-- この文書は「VS Code の Copilot に何をどう渡すか」のテンプレ集として使う。
-- Copilot の Serena 機能は、判断コストが高い作業（2 ファイル以上に波及、影響範囲が読みにくい、参照関係をきちんと追いたい場合など）で使う。
+- この文書は「VS Code の GitHub Copilot / Serena に何をどう渡すか」のテンプレ集として使う。
+- Serena MCP は、判断コストが高い作業（2 ファイル以上に波及、影響範囲が読みにくい、参照関係をきちんと追いたい場合など）で使う。[web:90][web:87]
 - 1 ファイルだけの軽微修正は、通常の Copilot 提案で十分な場合が多い。
-- Copilot への指示文の冒頭で「調査のみ」か「実装まで進める」かを必ず宣言する。
+- Copilot / Serena への指示文の冒頭で「調査のみ」か「実装まで進める」かを必ず宣言する。
 - 指示文では「現在位置」「目的」「変更しない範囲」「完了条件」を明示する。
-- このチャットは、調査・切り分け・方針整理・Copilot 用指示文作成を担当し、  
-  VS Code 側の Copilot は、実際のコード修正・docs 反映・コミット準備を担当する。
+- このチャットは、調査・切り分け・方針整理・Copilot / Serena 用指示文作成を担当し、  
+  VS Code 側の Copilot / Serena は、実際のコード修正・docs 反映・コミット準備を担当する。
 
 ---
 
@@ -35,11 +35,11 @@
   - 例: resolver / secondaryLang fallback / content.js 全面分割 など
 - docs は「ズレが見つかった場合のみ最小差分」というルールを意識しているか？
 - 重複コードを増やさないルールを意識しているか？
-- 今回の作業が Serena 機能を使う条件に当てはまるか確認したか？
+- 今回の作業が Serena MCP を使う条件に当てはまるか確認したか？
   - 2 ファイル以上に波及
   - 影響範囲が読みにくい
-  - 既存ルールとの整合確認が重要 等
-- 条件に当てはまる場合、下のテンプレから適切なものを選んで、Copilot 用指示文を作ったか？
+  - 既存ルールとの整合確認が重要 等[web:90]
+- 条件に当てはまる場合、下のテンプレから適切なものを選んで、Copilot / Serena 用指示文を作ったか？
 
 ---
 
@@ -82,7 +82,7 @@
 
 ## 4. 共通ルール（実装・docs 共通）
 
-このチャットから VS Code の Copilot に「実装」や「docs 更新」を依頼するときに常に意識する前提ルール。
+このチャットから VS Code の Copilot / Serena に「実装」や「docs 更新」を依頼するときに常に意識する前提ルール。
 
 - 変更は最小差分を優先する。
 - 既存 helper / 既存フロー / 既存 state を再利用し、別経路のコピペ実装を増やさない。
@@ -93,12 +93,12 @@
 
 ---
 
-## 5. 調査テンプレート（このチャット → Copilot/Serena）
+## 5. 調査テンプレート（このチャット → Copilot / Serena）
 
-実装に入る前に、「まず調査だけ」を VS Code の Copilot/ Serena に依頼するときのテンプレ。
+実装に入る前に、「まず調査だけ」を VS Code の Copilot / Serena に依頼するときのテンプレ。
 
 ```text
-VS Code の Copilot / Serena でこのプロジェクトを有効化してください。
+VS Code の GitHub Copilot / Serena MCP でこのプロジェクトを有効化してください。
 プロジェクト名: apple-tv-bilingual
 対象ブランチ: phase-2
 
@@ -133,12 +133,12 @@ VS Code の Copilot / Serena でこのプロジェクトを有効化してくだ
 
 ---
 
-## 6. 実装テンプレート（このチャット → Copilot/Serena）
+## 6. 実装テンプレート（このチャット → Copilot / Serena）
 
 実装まで VS Code の Copilot / Serena に任せるときのテンプレ。
 
 ```text
-VS Code の Copilot / Serena でこのプロジェクトを有効化してください。
+VS Code の GitHub Copilot / Serena MCP でこのプロジェクトを有効化してください。
 プロジェクト名: apple-tv-bilingual
 対象ブランチ: phase-2
 
@@ -185,12 +185,12 @@ commit / push 方針:
 
 ---
 
-## 7. docs 更新テンプレート（このチャット → Copilot/Serena）
+## 7. docs 更新テンプレート（このチャット → Copilot / Serena）
 
 「docs だけ最小差分で直したい」ときのテンプレ。
 
 ```text
-VS Code の Copilot / Serena でこのプロジェクトを有効化してください。
+VS Code の GitHub Copilot / Serena MCP でこのプロジェクトを有効化してください。
 プロジェクト名: apple-tv-bilingual
 対象ブランチ: phase-2
 
