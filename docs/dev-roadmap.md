@@ -20,18 +20,18 @@
 
 ## Issue 一覧
 
-| #                      | タイトル                                                               | 優先度 | フェーズ   | 状態             | ラベル                                               |
-| ---------------------- | ---------------------------------------------------------------------- | ------ | ---------- | ---------------- | ---------------------------------------------------- |
-| [#3](../../issues/3)   | 字幕パネル表示時に動画操作レイヤーが右パネルに隠れないよう調整する     | P0     | Phase 1    | **完了**         | `p0` `bug` `enhancement` `area:ui`                   |
-| [#4](../../issues/4)   | ATV DEBUG を独立表示から右字幕パネル下部の折り畳みセクションへ統合する | P1     | Phase 2    | **完了**         | `p1` `enhancement` `area:ui` `area:content`          |
-| [#5](../../issues/5)   | options の「デバッグログ（開発者向け）」セクションを折り畳み既定にする | P1     | Phase 2    | 完了             | `p1` `enhancement` `area:options`                    |
-| [#6](../../issues/6)   | popup / options の字幕言語一覧を動画状態から分離して固定化する         | P0     | Phase 1    | **完了**         | `p0` `bug` `enhancement` `area:popup` `area:content` |
-| [#7](../../issues/7)   | secondaryLang の空値保存とブラウザ言語 fallback の挙動を統一する       | P0     | Phase 1    | 実装あり・整理中 | `p0` `bug` `enhancement` `area:popup` `area:content` |
-| [#8](../../issues/8)   | Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する               | P1     | Phase 3    | 未完了           | `p1` `enhancement` `area:options` `area:content`     |
-| [#9](../../issues/9)   | content.js の current 表示強化（タイトル・トラック情報の常時表示）     | P1     | 後続タスク | 未完了           | GitHub issue の実内容に合わせて整理                  |
-| [#10](../../issues/10) | 単語ポップアップ UI 刷新・AI タブ拡張と dictionaryapi.dev ハンドラ実装 | P2     | 後続タスク | 未完了           | GitHub issue の実内容に合わせて整理                  |
-| [#12](../../issues/12) | content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す     | P1     | Phase 3    | **完了**         | `p1` `enhancement` `area:content`                    |
-| [#13](../../issues/13) | content.js Phase B: subtitle-track-resolver.js を切り出す              | P1     | Phase 3    | 未完了           | `p1` `enhancement` `area:content`                    |
+| #                      | タイトル                                                               | 優先度 | フェーズ   | 状態     | ラベル                                               |
+| ---------------------- | ---------------------------------------------------------------------- | ------ | ---------- | -------- | ---------------------------------------------------- |
+| [#3](../../issues/3)   | 字幕パネル表示時に動画操作レイヤーが右パネルに隠れないよう調整する     | P0     | Phase 1    | **完了** | `p0` `bug` `enhancement` `area:ui`                   |
+| [#4](../../issues/4)   | ATV DEBUG を独立表示から右字幕パネル下部の折り畳みセクションへ統合する | P1     | Phase 2    | **完了** | `p1` `enhancement` `area:ui` `area:content`          |
+| [#5](../../issues/5)   | options の「デバッグログ（開発者向け）」セクションを折り畳み既定にする | P1     | Phase 2    | 完了     | `p1` `enhancement` `area:options`                    |
+| [#6](../../issues/6)   | popup / options の字幕言語一覧を動画状態から分離して固定化する         | P0     | Phase 1    | **完了** | `p0` `bug` `enhancement` `area:popup` `area:content` |
+| [#7](../../issues/7)   | secondaryLang の空値保存とブラウザ言語 fallback の挙動を統一する       | P0     | Phase 1    | 完了     | `p0` `bug` `enhancement` `area:popup` `area:content` |
+| [#8](../../issues/8)   | Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する               | P1     | Phase 3    | 未完了   | `p1` `enhancement` `area:options` `area:content`     |
+| [#9](../../issues/9)   | content.js の current 表示強化（タイトル・トラック情報の常時表示）     | P1     | 後続タスク | 未完了   | GitHub issue の実内容に合わせて整理                  |
+| [#10](../../issues/10) | 単語ポップアップ UI 刷新・AI タブ拡張と dictionaryapi.dev ハンドラ実装 | P2     | 後続タスク | 未完了   | GitHub issue の実内容に合わせて整理                  |
+| [#12](../../issues/12) | content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す     | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
+| [#13](../../issues/13) | content.js Phase B: subtitle-track-resolver.js を切り出す              | P1     | Phase 3    | 完了     | `p1` `enhancement` `area:content`                    |
 
 ---
 
@@ -43,7 +43,7 @@
 加えて、動画再生 UI が右字幕パネルに妨げられない状態を作る。
 
 - [x] [#6] 固定言語一覧ベースへの変更と UI からの textTracks 生データ分離
-- [ ] [#7] secondaryLang 空値許容とブラウザ言語 fallback 前提の UI 整理
+- [x] [#7] secondaryLang 空値許容とブラウザ言語 fallback 前提の UI 整理
 - [x] [#3] 動画操作レイヤーの重なり解消
 
 **#6 完了メモ**
@@ -77,7 +77,7 @@
 
 - [ ] [#8] Debug ログカテゴリ設計整理
 - [x] [#12] content.js の Phase A 分割（WebVTT 正規化と Debug logger の切り出し）
-- [ ] [#13] content.js の Phase B 分割（subtitle-track-resolver の切り出し）
+- [x] [#13] content.js の Phase B 分割（subtitle-track-resolver の切り出し）
 
 ---
 
