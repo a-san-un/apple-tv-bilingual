@@ -138,23 +138,29 @@ function formatDebugLine(line) {
   return `[${line.time}] [${line.scope}] ${line.message}${payloadText}`;
 }
 
+function getVisibleDebugLogs(logs) {
+  return (logs || []).filter((line) => line?.scope === "options");
+}
+
 async function renderDebugLogs() {
   if (!els.debugLogOutput) return;
 
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
-  els.debugLogOutput.value = debugLogs.map(formatDebugLine).join("\n");
+  const visibleLogs = getVisibleDebugLogs(debugLogs);
+  els.debugLogOutput.value = visibleLogs.map(formatDebugLine).join("\n");
   els.debugLogOutput.scrollTop = els.debugLogOutput.scrollHeight;
 }
 
 async function copyDebugLogs() {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
-  const text = debugLogs.map(formatDebugLine).join("\n");
+  const visibleLogs = getVisibleDebugLogs(debugLogs);
+  const text = visibleLogs.map(formatDebugLine).join("\n");
   await navigator.clipboard.writeText(text);
 
   const line = debugLog("options", "Copied debug logs", {
-    lineCount: debugLogs.length,
+    lineCount: visibleLogs.length,
   });
   await appendDebugLog(line);
   await renderDebugLogs();
@@ -164,7 +170,8 @@ async function copyDebugLogs() {
 async function downloadDebugLogs() {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
-  const text = debugLogs.map(formatDebugLine).join("\n");
+  const visibleLogs = getVisibleDebugLogs(debugLogs);
+  const text = visibleLogs.map(formatDebugLine).join("\n");
 
   // 保存先選択ダイアログは content 側と同じ background ハンドラで統一する。
   const response = await new Promise((resolve) => {
@@ -186,7 +193,7 @@ async function downloadDebugLogs() {
   }
 
   const line = debugLog("options", "Downloaded debug logs", {
-    lineCount: debugLogs.length,
+    lineCount: visibleLogs.length,
     downloadId: response.downloadId ?? null,
   });
   await appendDebugLog(line);
@@ -195,7 +202,10 @@ async function downloadDebugLogs() {
 }
 
 async function clearDebugLogs() {
-  await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: [] });
+  const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
+    await chrome.storage.local.get(DEBUG_LOGS_KEY);
+  const remainingLogs = debugLogs.filter((line) => line?.scope !== "options");
+  await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: remainingLogs });
 
   if (els.debugLogOutput) {
     els.debugLogOutput.value = "";
