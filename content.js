@@ -2377,7 +2377,6 @@
       clearBtn.addEventListener("click", async () => {
         try {
           await clearDebugLogs();
-          logContentUi("Debug panel cleared logs");
         } catch (error) {
           logContentError("Debug panel clear failed", { error: String(error) });
         }
