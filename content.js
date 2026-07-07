@@ -19,6 +19,19 @@
   };
 
   const DEBUG_SECONDARY_SUBS = false;
+  const LOG_CATEGORIES = Object.freeze({
+    SETTINGS: "settings",
+    SUBTITLE: "subtitle",
+    UI: "ui",
+    API: "api",
+    ERROR: "error",
+    DEFAULT: "default",
+  });
+  const CONTENT_DEFAULT_DEBUG_CATEGORIES = [
+    LOG_CATEGORIES.SUBTITLE,
+    LOG_CATEGORIES.UI,
+    LOG_CATEGORIES.ERROR,
+  ];
   const TRACK_RESOLVE_RETRY_DELAYS_MS = [120, 260, 420, 680];
   const SECONDARY_SUBTITLE_GRACE_MS = 1200;
   const SUBTITLE_HISTORY_MAX_PER_CONTENT = 500;
@@ -122,6 +135,17 @@
   const clearDebugLogs = async (...args) =>
     (await window.ATVB?.logger?.clearDebugLogs?.(...args)) ?? undefined;
 
+  const logContentSettings = (message, payload = null) =>
+    logContent(LOG_CATEGORIES.SETTINGS, message, payload);
+  const logContentSubtitle = (message, payload = null) =>
+    logContent(LOG_CATEGORIES.SUBTITLE, message, payload);
+  const logContentUi = (message, payload = null) =>
+    logContent(LOG_CATEGORIES.UI, message, payload);
+  const logContentApi = (message, payload = null) =>
+    logContent(LOG_CATEGORIES.API, message, payload);
+  const logContentError = (message, payload = null) =>
+    logContent(LOG_CATEGORIES.ERROR, message, payload);
+
   // vtt API の normalizeSubtitleText へ橋渡しする。
   const normalizeSubtitleText = (...args) =>
     window.ATVB?.vtt?.normalizeSubtitleText?.(...args) ?? "";
@@ -161,7 +185,7 @@
         .toLowerCase()
         .split("-")[0];
       result.secondaryLang = browserLang;
-      logContent(
+      logContentSettings(
         "secondaryLang empty: applying browser language fallback",
         browserLang,
       );
@@ -174,11 +198,11 @@
       const url = chrome.runtime.getURL("dict/ejdict.json");
       const res = await fetch(url);
       state.ejdictMap = await res.json();
-      logContent("EJDict loaded", {
+      logContentApi("EJDict loaded", {
         entries: Object.keys(state.ejdictMap).length,
       });
     } catch (e) {
-      logContent("EJDict load failed", { error: e.message });
+      logContentError("EJDict load failed", { error: e.message });
       console.warn("[ATV-Bilingual] EJDict load failed:", e.message);
     }
   })();
@@ -198,11 +222,11 @@
   }
 
   function sendToBackground(msg, callback) {
-    logContent("sendToBackground start", { type: msg?.type ?? null });
+    logContentApi("sendToBackground start", { type: msg?.type ?? null });
 
     chrome.runtime.sendMessage(msg, (res) => {
       if (chrome.runtime.lastError) {
-        logContent("sendToBackground first attempt failed", {
+        logContentError("sendToBackground first attempt failed", {
           type: msg?.type ?? null,
           error: chrome.runtime.lastError.message,
         });
@@ -210,13 +234,13 @@
         setTimeout(() => {
           chrome.runtime.sendMessage(msg, (res2) => {
             if (chrome.runtime.lastError) {
-              logContent("sendToBackground retry failed", {
+              logContentError("sendToBackground retry failed", {
                 type: msg?.type ?? null,
                 error: chrome.runtime.lastError.message,
               });
               callback({ ok: false, error: chrome.runtime.lastError.message });
             } else {
-              logContent("sendToBackground retry success", {
+              logContentApi("sendToBackground retry success", {
                 type: msg?.type ?? null,
                 ok: res2?.ok ?? null,
               });
@@ -225,7 +249,7 @@
           });
         }, 300);
       } else {
-        logContent("sendToBackground success", {
+        logContentApi("sendToBackground success", {
           type: msg?.type ?? null,
           ok: res?.ok ?? null,
         });
@@ -383,7 +407,7 @@
     loadHistoryForContentKey(resolvedContentKey);
     state.lastPrimaryText = "";
 
-    logContent("history context switched", {
+    logContentSubtitle("history context switched", {
       reason,
       previousContentKey,
       nextContentKey: resolvedContentKey,
@@ -2240,14 +2264,16 @@
 
     if (copyBtn) {
       copyBtn.addEventListener("click", async () => {
-        const text = await getDebugLogText();
+        const text = await getDebugLogText({
+          categories: CONTENT_DEFAULT_DEBUG_CATEGORIES,
+        });
         try {
           await navigator.clipboard.writeText(text);
-          logContent("Debug panel copied logs", {
+          logContentUi("Debug panel copied logs", {
             lineCount: text ? text.split("\n").length : 0,
           });
         } catch (error) {
-          logContent("Debug panel copy failed", { error: String(error) });
+          logContentError("Debug panel copy failed", { error: String(error) });
         }
       });
     }
@@ -2255,16 +2281,18 @@
     if (downloadBtn) {
       downloadBtn.addEventListener("click", async () => {
         // 保存先ダイアログは background 側の downloads API で開く。
-        const text = await getDebugLogText();
+        const text = await getDebugLogText({
+          categories: CONTENT_DEFAULT_DEBUG_CATEGORIES,
+        });
         sendToBackground({ type: "DOWNLOAD_DEBUG_LOG", text }, (res) => {
           if (res?.ok) {
-            logContent("Debug panel downloaded logs", {
+            logContentUi("Debug panel downloaded logs", {
               lineCount: text ? text.split("\n").length : 0,
               downloadId: res.downloadId ?? null,
             });
             return;
           }
-          logContent("Debug panel download failed", {
+          logContentError("Debug panel download failed", {
             error: res?.error ?? "unknown",
           });
         });
@@ -2275,9 +2303,9 @@
       clearBtn.addEventListener("click", async () => {
         try {
           await clearDebugLogs();
-          logContent("Debug panel cleared logs");
+          logContentUi("Debug panel cleared logs");
         } catch (error) {
-          logContent("Debug panel clear failed", { error: String(error) });
+          logContentError("Debug panel clear failed", { error: String(error) });
         }
       });
     }
@@ -2289,7 +2317,9 @@
   async function updateLiveDebugPanel() {
     if (!state.debugPanelRoot) return;
     try {
-      const text = await getDebugLogText();
+      const text = await getDebugLogText({
+        categories: CONTENT_DEFAULT_DEBUG_CATEGORIES,
+      });
       const textarea = state.debugPanelRoot.getElementById("debug-log");
       if (!textarea) return;
       textarea.value = text;
@@ -2937,7 +2967,7 @@
     const primaryListenerBound = trackSelection.primaryListenerBound;
     const secondaryListenerBound = trackSelection.secondaryListenerBound;
 
-    logContent("tracks resolved", {
+    logContentSubtitle("tracks resolved", {
       reason,
       switchedHistoryContext: switched,
       primaryTrackFound,
@@ -2947,7 +2977,7 @@
       secondaryTrack: trackSelection.secondaryTrack,
     });
 
-    logContent("cuechange listeners rebound", {
+    logContentSubtitle("cuechange listeners rebound", {
       reason,
       primaryListenerBound,
       secondaryTrackBound: secondaryListenerBound,
@@ -2977,7 +3007,7 @@
   function scheduleTrackResolveRetry(reason = "video_changed") {
     clearTrackResolveRetryTimers();
 
-    logContent("track resolve retry scheduled", {
+    logContentSubtitle("track resolve retry scheduled", {
       reason,
       retryDelaysMs: TRACK_RESOLVE_RETRY_DELAYS_MS,
     });
@@ -2987,7 +3017,7 @@
         if (state.restarting || !state.video) return;
 
         const attempt = retryIndex + 1;
-        logContent("track resolve retry attempt", {
+        logContentSubtitle("track resolve retry attempt", {
           reason,
           attempt,
           delayMs,
@@ -3005,7 +3035,7 @@
         );
 
         if (retryResult.ready) {
-          logContent("track resolve retry success", {
+          logContentSubtitle("track resolve retry success", {
             reason,
             attempt,
           });
@@ -3014,7 +3044,7 @@
         }
 
         if (attempt === TRACK_RESOLVE_RETRY_DELAYS_MS.length) {
-          logContent("track resolve retry exhausted", {
+          logContentError("track resolve retry exhausted", {
             reason,
             attempts: TRACK_RESOLVE_RETRY_DELAYS_MS.length,
             primaryTrackFound: retryResult.primaryTrackFound,
@@ -3295,7 +3325,7 @@
       state.secondaryTrack = secondaryTrackBound;
     }
 
-    logContent("Selected tracks detail", {
+    logContentSubtitle("Selected tracks detail", {
       requestedPrimaryLang: state.contentSettings.primaryLang,
       requestedSecondaryLang: state.contentSettings.secondaryLang,
       primaryTrack: state.primaryTrack
@@ -3341,7 +3371,7 @@
     scheduleInitialCueRecovery();
     scheduleControlSettlingBurst("startBilingual");
 
-    logContent("startBilingual ready", {
+    logContentSubtitle("startBilingual ready", {
       injectedInto: state.dialogEl ? "dialog.playback-view" : "document.body",
       contentKey: state.currentContentKey,
       primaryLang: state.contentSettings.primaryLang,
@@ -3380,7 +3410,7 @@
         );
         state.secondaryTrack = secondaryTrackBound;
       }
-      logContent("Loaded settings from sync", {
+      logContentSettings("Loaded settings from sync", {
         ...state.contentSettings,
         requestedSecondaryLang: state.requestedSecondaryLang,
       });
@@ -3410,7 +3440,7 @@
         state.dialogEl = found.dialog;
       }
 
-      logContent("restartBilingual begin", {
+      logContentSettings("restartBilingual begin", {
         reason,
         hasVideo: !!state.video,
         trackCount: state.video?.textTracks?.length ?? 0,
@@ -3424,7 +3454,7 @@
       startBilingual();
       ensureSecondarySubtitleElement();
 
-      logContent("restartBilingual done", { reason });
+      logContentSettings("restartBilingual done", { reason });
     } finally {
       state.restarting = false;
     }
@@ -3452,7 +3482,7 @@
       const resolvedSecondaryLanguage = next.secondaryLang;
       const triggerReason = message.reason || "unknown";
 
-      logContent("SETTINGS_CHANGED received", {
+      logContentSettings("SETTINGS_CHANGED received", {
         triggerReason,
         settings: {
           ...next,
@@ -3475,7 +3505,7 @@
       const appliedRequestedSecondaryLang = state.requestedSecondaryLang;
       const appliedResolvedSecondaryLanguage = resolvedSecondaryLanguage;
 
-      logContent("content applied settings to tracks", {
+      logContentSettings("content applied settings to tracks", {
         triggerReason,
         hasVideo: !!state.video,
         primaryLang: state.contentSettings.primaryLang,

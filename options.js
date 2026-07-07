@@ -32,6 +32,18 @@ const DEFAULT_LOCAL_SETTINGS = {
 
 const DEBUG_LOGS_KEY = "debugLogs";
 const DEBUG_LOGS_MAX = 400;
+const LOG_CATEGORIES = Object.freeze({
+  SETTINGS: "settings",
+  SUBTITLE: "subtitle",
+  UI: "ui",
+  API: "api",
+  ERROR: "error",
+  DEFAULT: "default",
+});
+const KNOWN_CATEGORIES = new Set(Object.values(LOG_CATEGORIES));
+const OPTIONS_DEFAULT_VISIBLE_CATEGORIES = new Set(
+  Object.values(LOG_CATEGORIES),
+);
 
 const els = {
   saveBtn: document.getElementById("saveBtn"),
@@ -90,10 +102,55 @@ function sanitizeForLog(payload) {
   return walk(cloned);
 }
 
-function debugLog(scope, message, payload = null) {
+function normalizeCategory(category) {
+  const normalized = String(category || "")
+    .trim()
+    .toLowerCase();
+  if (KNOWN_CATEGORIES.has(normalized)) return normalized;
+  return LOG_CATEGORIES.UI;
+}
+
+function debugLog(scope, categoryOrMessage, messageOrPayload, payloadMaybe) {
+  const source = String(scope || "options");
+  let category = LOG_CATEGORIES.UI;
+  let message = "";
+  let payload = null;
+
+  if (
+    typeof categoryOrMessage === "string" &&
+    KNOWN_CATEGORIES.has(String(categoryOrMessage).toLowerCase())
+  ) {
+    category = normalizeCategory(categoryOrMessage);
+    message = String(messageOrPayload || "");
+    payload = payloadMaybe ?? null;
+  } else {
+    message = String(categoryOrMessage || "");
+    payload = messageOrPayload ?? null;
+  }
+
   const time = new Date().toISOString();
   const safePayload = sanitizeForLog(payload);
-  return { time, scope, message, payload: safePayload };
+  return {
+    time,
+    scope: source,
+    source,
+    category,
+    message,
+    payload: safePayload,
+  };
+}
+
+function ensureLogShape(line) {
+  if (!line || typeof line !== "object") return null;
+  const source = String(line.source || line.scope || "unknown");
+  return {
+    time: line.time || new Date().toISOString(),
+    scope: source,
+    source,
+    category: normalizeCategory(line.category),
+    message: String(line.message || ""),
+    payload: sanitizeForLog(line.payload ?? null),
+  };
 }
 
 async function appendDebugLog(line) {
@@ -133,13 +190,21 @@ function populateLangSelect(selectEl, langs, saved, allowEmpty) {
 }
 
 function formatDebugLine(line) {
+  const normalizedLine = ensureLogShape(line);
+  if (!normalizedLine) return "";
   const payloadText =
-    line.payload != null ? ` ${JSON.stringify(line.payload)}` : "";
-  return `[${line.time}] [${line.scope}] ${line.message}${payloadText}`;
+    normalizedLine.payload != null
+      ? ` ${JSON.stringify(normalizedLine.payload)}`
+      : "";
+  return `[${normalizedLine.time}] [${normalizedLine.category}] [${normalizedLine.source}] ${normalizedLine.message}${payloadText}`;
 }
 
 function getVisibleDebugLogs(logs) {
-  return (logs || []).filter((line) => line?.scope === "options");
+  return (logs || [])
+    .map((line) => ensureLogShape(line))
+    .filter(
+      (line) => line && OPTIONS_DEFAULT_VISIBLE_CATEGORIES.has(line.category),
+    );
 }
 
 async function renderDebugLogs() {
@@ -159,7 +224,7 @@ async function copyDebugLogs() {
   const text = visibleLogs.map(formatDebugLine).join("\n");
   await navigator.clipboard.writeText(text);
 
-  const line = debugLog("options", "Copied debug logs", {
+  const line = debugLog("options", LOG_CATEGORIES.UI, "Copied debug logs", {
     lineCount: visibleLogs.length,
   });
   await appendDebugLog(line);
@@ -192,10 +257,15 @@ async function downloadDebugLogs() {
     return;
   }
 
-  const line = debugLog("options", "Downloaded debug logs", {
-    lineCount: visibleLogs.length,
-    downloadId: response.downloadId ?? null,
-  });
+  const line = debugLog(
+    "options",
+    LOG_CATEGORIES.API,
+    "Downloaded debug logs",
+    {
+      lineCount: visibleLogs.length,
+      downloadId: response.downloadId ?? null,
+    },
+  );
   await appendDebugLog(line);
   await renderDebugLogs();
   showSaveStatus("デバッグログをダウンロードしました");
@@ -211,7 +281,7 @@ async function clearDebugLogs() {
     els.debugLogOutput.value = "";
   }
 
-  const line = debugLog("options", "Cleared debug logs");
+  const line = debugLog("options", LOG_CATEGORIES.UI, "Cleared debug logs");
   await appendDebugLog(line);
   await renderDebugLogs();
   showSaveStatus("デバッグログをクリアしました");
@@ -254,6 +324,7 @@ function buildLanguageSettingsPayload(primaryLang, secondaryLang) {
 async function dispatchSettingsChangedFromOptions(settingsPayload) {
   const lineDispatchStart = debugLog(
     "options",
+    LOG_CATEGORIES.SETTINGS,
     "options dispatch APPLY_SETTINGS_TO_APPLE_TV",
     {
       settings: settingsPayload,
@@ -272,6 +343,7 @@ async function dispatchSettingsChangedFromOptions(settingsPayload) {
         if (chrome.runtime.lastError) {
           const lineError = debugLog(
             "options",
+            LOG_CATEGORIES.ERROR,
             "options dispatch APPLY_SETTINGS_TO_APPLE_TV failed",
             {
               error: chrome.runtime.lastError.message,
@@ -295,7 +367,11 @@ function toggleSecretInput(inputEl, buttonEl) {
 }
 
 async function loadSettings() {
-  const lineStart = debugLog("options", "Loading settings");
+  const lineStart = debugLog(
+    "options",
+    LOG_CATEGORIES.SETTINGS,
+    "Loading settings",
+  );
   await appendDebugLog(lineStart);
 
   const [general, local] = await Promise.all([
@@ -328,20 +404,31 @@ async function loadSettings() {
 
   const lineLoadedGeneral = debugLog(
     "options",
+    LOG_CATEGORIES.SETTINGS,
     "Loaded general settings",
     general,
   );
   await appendDebugLog(lineLoadedGeneral);
 
-  const lineLoadedLocal = debugLog("options", "Loaded API key flags", {
-    hasGoogleAiStudioApiKey: !!local.googleAiStudioApiKey,
-    hasGroqApiKey: !!local.groqApiKey,
-  });
+  const lineLoadedLocal = debugLog(
+    "options",
+    LOG_CATEGORIES.SETTINGS,
+    "Loaded API key flags",
+    {
+      hasGoogleAiStudioApiKey: !!local.googleAiStudioApiKey,
+      hasGroqApiKey: !!local.groqApiKey,
+    },
+  );
   await appendDebugLog(lineLoadedLocal);
 
-  const lineProvider = debugLog("options", "Loaded preferred AI provider", {
-    preferredAiProvider: general.preferredAiProvider,
-  });
+  const lineProvider = debugLog(
+    "options",
+    LOG_CATEGORIES.SETTINGS,
+    "Loaded preferred AI provider",
+    {
+      preferredAiProvider: general.preferredAiProvider,
+    },
+  );
   await appendDebugLog(lineProvider);
 
   await renderDebugLogs();
@@ -351,14 +438,23 @@ async function saveSettings() {
   const primaryLang = els.primaryLang.value;
   const secondaryLang = els.secondaryLang.value;
 
-  const lineFormValues = debugLog("options", "options save form values", {
-    primaryLang,
-    secondaryLang,
-  });
+  const lineFormValues = debugLog(
+    "options",
+    LOG_CATEGORIES.SETTINGS,
+    "options save form values",
+    {
+      primaryLang,
+      secondaryLang,
+    },
+  );
   await appendDebugLog(lineFormValues);
 
   if (!primaryLang) {
-    const line = debugLog("options", "Save blocked: primaryLang missing");
+    const line = debugLog(
+      "options",
+      LOG_CATEGORIES.ERROR,
+      "Save blocked: primaryLang missing",
+    );
     await appendDebugLog(line);
     showSaveStatus("勉強している言語を選択してください", true);
     els.primaryLang.focus();
@@ -383,29 +479,41 @@ async function saveSettings() {
 
   const lineGeneral = debugLog(
     "options",
+    LOG_CATEGORIES.SETTINGS,
     "Saving general settings",
     generalSettings,
   );
   await appendDebugLog(lineGeneral);
 
-  const lineApiFlags = debugLog("options", "Saving API key flags", {
-    hasGoogleAiStudioApiKey: !!localSettings.googleAiStudioApiKey,
-    hasGroqApiKey: !!localSettings.groqApiKey,
-  });
+  const lineApiFlags = debugLog(
+    "options",
+    LOG_CATEGORIES.SETTINGS,
+    "Saving API key flags",
+    {
+      hasGoogleAiStudioApiKey: !!localSettings.googleAiStudioApiKey,
+      hasGroqApiKey: !!localSettings.groqApiKey,
+    },
+  );
   await appendDebugLog(lineApiFlags);
 
   if (!generalSettings.secondaryLang) {
     const lineSecondaryEmpty = debugLog(
       "options",
+      LOG_CATEGORIES.SETTINGS,
       "secondaryLang is empty; content fallback expected",
       { secondaryLang: generalSettings.secondaryLang },
     );
     await appendDebugLog(lineSecondaryEmpty);
   }
 
-  const lineProvider = debugLog("options", "Saving preferred AI provider", {
-    preferredAiProvider: generalSettings.preferredAiProvider,
-  });
+  const lineProvider = debugLog(
+    "options",
+    LOG_CATEGORIES.SETTINGS,
+    "Saving preferred AI provider",
+    {
+      preferredAiProvider: generalSettings.preferredAiProvider,
+    },
+  );
   await appendDebugLog(lineProvider);
 
   await Promise.all([
@@ -419,6 +527,7 @@ async function saveSettings() {
   ]);
   const lineReadback = debugLog(
     "options",
+    LOG_CATEGORIES.SETTINGS,
     "options saved values readback",
     savedValues,
   );
@@ -434,6 +543,7 @@ async function saveSettings() {
 
   const lineDispatchResult = debugLog(
     "options",
+    dispatchResult?.ok ? LOG_CATEGORIES.SETTINGS : LOG_CATEGORIES.ERROR,
     "options dispatch APPLY_SETTINGS_TO_APPLE_TV result",
     {
       payload: languageSettingsPayload,
@@ -448,7 +558,11 @@ async function saveSettings() {
     showSaveStatus("Saved. Open Apple TV+ tab to apply immediately.");
   }
 
-  const lineDone = debugLog("options", "Settings saved successfully");
+  const lineDone = debugLog(
+    "options",
+    LOG_CATEGORIES.SETTINGS,
+    "Settings saved successfully",
+  );
   await appendDebugLog(lineDone);
   await renderDebugLogs();
 }
@@ -494,7 +608,11 @@ function bindEvents() {
 document.addEventListener("DOMContentLoaded", async () => {
   bindEvents();
 
-  const line = debugLog("options", "options page initialized");
+  const line = debugLog(
+    "options",
+    LOG_CATEGORIES.UI,
+    "options page initialized",
+  );
   await appendDebugLog(line);
 
   await loadSettings();
