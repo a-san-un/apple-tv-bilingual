@@ -88,6 +88,27 @@ function isAppleTvUrl(url) {
   return typeof url === "string" && url.startsWith("https://tv.apple.com/");
 }
 
+function getAppleTvContentScriptAssets() {
+  const manifest = chrome.runtime.getManifest();
+  const contentScripts = Array.isArray(manifest?.content_scripts)
+    ? manifest.content_scripts
+    : [];
+
+  const appleTvEntry = contentScripts.find((entry) =>
+    Array.isArray(entry?.matches)
+      ? entry.matches.some((pattern) => pattern === "https://tv.apple.com/*")
+      : false,
+  );
+
+  const jsFiles =
+    Array.isArray(appleTvEntry?.js) && appleTvEntry.js.length
+      ? appleTvEntry.js
+      : ["content.js"];
+  const cssFiles = Array.isArray(appleTvEntry?.css) ? appleTvEntry.css : [];
+
+  return { jsFiles, cssFiles };
+}
+
 async function updateTrackedAppleTvTab(tabId, url, reason) {
   if (!Number.isInteger(tabId) || !isAppleTvUrl(url)) return;
   const changed = trackedAppleTvTabId !== tabId;
@@ -152,15 +173,24 @@ async function sendSettingsChangedWithRecovery(
     }
 
     try {
+      const { jsFiles, cssFiles } = getAppleTvContentScriptAssets();
+
       await chrome.scripting.executeScript({
         target: { tabId },
-        files: ["content.js"],
+        files: jsFiles,
       });
-      await chrome.scripting.insertCSS({
-        target: { tabId },
-        files: ["overlay.css"],
+      if (cssFiles.length > 0) {
+        await chrome.scripting.insertCSS({
+          target: { tabId },
+          files: cssFiles,
+        });
+      }
+      await logBackground("content script reinjected", {
+        tabId,
+        reason,
+        jsFiles,
+        cssFiles,
       });
-      await logBackground("content script reinjected", { tabId, reason });
     } catch (injectError) {
       const injectErrorText = String(injectError);
       await logBackground("content script reinject failed", {
