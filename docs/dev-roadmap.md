@@ -20,18 +20,19 @@
 
 ## Issue 一覧
 
-| #                      | タイトル                                                               | 優先度 | フェーズ   | 状態     | ラベル                                               |
-| ---------------------- | ---------------------------------------------------------------------- | ------ | ---------- | -------- | ---------------------------------------------------- |
-| [#3](../../issues/3)   | 字幕パネル表示時に動画操作レイヤーが右パネルに隠れないよう調整する     | P0     | Phase 1    | **完了** | `p0` `bug` `enhancement` `area:ui`                   |
-| [#4](../../issues/4)   | ATV DEBUG を独立表示から右字幕パネル下部の折り畳みセクションへ統合する | P1     | Phase 2    | **完了** | `p1` `enhancement` `area:ui` `area:content`          |
-| [#5](../../issues/5)   | options の「デバッグログ（開発者向け）」セクションを折り畳み既定にする | P1     | Phase 2    | 完了     | `p1` `enhancement` `area:options`                    |
-| [#6](../../issues/6)   | popup / options の字幕言語一覧を動画状態から分離して固定化する         | P0     | Phase 1    | **完了** | `p0` `bug` `enhancement` `area:popup` `area:content` |
-| [#7](../../issues/7)   | secondaryLang の空値保存とブラウザ言語 fallback の挙動を統一する       | P0     | Phase 1    | 完了     | `p0` `bug` `enhancement` `area:popup` `area:content` |
-| [#8](../../issues/8)   | Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する               | P1     | Phase 3    | 未完了   | `p1` `enhancement` `area:options` `area:content`     |
-| [#9](../../issues/9)   | content.js の current 表示強化（タイトル・トラック情報の常時表示）     | P1     | 後続タスク | 未完了   | GitHub issue の実内容に合わせて整理                  |
-| [#10](../../issues/10) | 単語ポップアップ UI 刷新・AI タブ拡張と dictionaryapi.dev ハンドラ実装 | P2     | 後続タスク | 未完了   | GitHub issue の実内容に合わせて整理                  |
-| [#12](../../issues/12) | content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す     | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
-| [#13](../../issues/13) | content.js Phase B: subtitle-track-resolver.js を切り出す              | P1     | Phase 3    | 完了     | `p1` `enhancement` `area:content`                    |
+| #                      | タイトル                                                                           | 優先度 | フェーズ   | 状態     | ラベル                                               |
+| ---------------------- | ---------------------------------------------------------------------------------- | ------ | ---------- | -------- | ---------------------------------------------------- |
+| [#3](../../issues/3)   | 字幕パネル表示時に動画操作レイヤーが右パネルに隠れないよう調整する                 | P0     | Phase 1    | **完了** | `p0` `bug` `enhancement` `area:ui`                   |
+| [#4](../../issues/4)   | ATV DEBUG を独立表示から右字幕パネル下部の折り畳みセクションへ統合する             | P1     | Phase 2    | **完了** | `p1` `enhancement` `area:ui` `area:content`          |
+| [#5](../../issues/5)   | options の「デバッグログ（開発者向け）」セクションを折り畳み既定にする             | P1     | Phase 2    | 完了     | `p1` `enhancement` `area:options`                    |
+| [#6](../../issues/6)   | popup / options の字幕言語一覧を動画状態から分離して固定化する                     | P0     | Phase 1    | **完了** | `p0` `bug` `enhancement` `area:popup` `area:content` |
+| [#7](../../issues/7)   | secondaryLang の空値保存とブラウザ言語 fallback の挙動を統一する                   | P0     | Phase 1    | 完了     | `p0` `bug` `enhancement` `area:popup` `area:content` |
+| [#8](../../issues/8)   | Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する                           | P1     | Phase 3    | 未完了   | `p1` `enhancement` `area:options` `area:content`     |
+| [#9](../../issues/9)   | content.js の current 表示強化（タイトル・トラック情報の常時表示）                 | P1     | 後続タスク | 未完了   | GitHub issue の実内容に合わせて整理                  |
+| [#10](../../issues/10) | 単語ポップアップ UI 刷新・AI タブ拡張と dictionaryapi.dev ハンドラ実装             | P2     | 後続タスク | 未完了   | GitHub issue の実内容に合わせて整理                  |
+| [#12](../../issues/12) | content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す                 | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
+| [#13](../../issues/13) | content.js Phase B: subtitle-track-resolver.js を切り出す                          | P1     | Phase 3    | 完了     | `p1` `enhancement` `area:content`                    |
+| [#14](../../issues/14) | 設定変更時と動画初期化時を基準に字幕設定を反映し、ページ離脱時リセット依存を減らす | P1     | Phase 3    | 進行中   | `p1` `enhancement` `area:content`                    |
 
 ---
 
@@ -75,9 +76,13 @@
 **ゴール**: options と字幕パネルが同じログソースを共有し、必要なカテゴリだけを既定表示できること。  
 加えて、後続の content.js 分割を安全に進められるよう、ログ基盤と独立責務の切り出しを先行して進める。
 
+設定ライフサイクル再整理（#14）は、設定適用トリガーを「設定変更時 / 動画初期化時」に寄せるための進行中タスクであり、
+Phase C（settings-bridge / debug-panel）および Phase E（bootstrap）整理の前提として扱う。
+
 - [ ] [#8] Debug ログカテゴリ設計整理
 - [x] [#12] content.js の Phase A 分割（WebVTT 正規化と Debug logger の切り出し）
 - [x] [#13] content.js の Phase B 分割（subtitle-track-resolver の切り出し）
+- [ ] [#14] 設定ライフサイクル再整理（設定変更時 / 動画初期化時を主トリガー化）
 
 ---
 
@@ -174,11 +179,13 @@
    - 動画操作レイヤーの重なりを解消（#3）
 
 3. Debug / content.js 分割準備
+   - 設定ライフサイクル再整理（#14）
    - Debug Panel を右字幕パネル側へ統合（#4）
    - ログカテゴリ設計を整理（#8）
    - content.js の Phase A 分割（#12）
 
 4. 後続タスク
+   - Phase C: settings-bridge / debug-panel の責務分離
    - `content.js` の current 表示強化（#9）
    - 単語ポップアップ UI 改修と AI タブ拡張（#10）
 
@@ -188,6 +195,7 @@
 
 Phase 1〜3 の主要項目が完了した段階で、次のバッチとして以下を実装する予定。
 
+- 設定ライフサイクル再整理（#14）→ ログカテゴリ整理（#8）→ Phase C の順で前提を固める
 - `content.js` の current 表示強化（#9）
 - 単語ポップアップ UI 改修（辞書 / AI タブ拡張）（#10）
 - AI プロバイダー連携（説明する / 例 / 文法タブ）
