@@ -153,6 +153,31 @@ function ensureLogShape(line) {
   };
 }
 
+function padNumber(value, width = 2) {
+  return String(value).padStart(width, "0");
+}
+
+function formatLocalTimestamp(timestamp) {
+  const date = timestamp ? new Date(timestamp) : new Date();
+  if (Number.isNaN(date.getTime())) return String(timestamp || "");
+
+  const year = date.getFullYear();
+  const month = padNumber(date.getMonth() + 1);
+  const day = padNumber(date.getDate());
+  const hours = padNumber(date.getHours());
+  const minutes = padNumber(date.getMinutes());
+  const seconds = padNumber(date.getSeconds());
+  const milliseconds = padNumber(date.getMilliseconds(), 3);
+
+  const offsetMinutes = -date.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absOffsetMinutes = Math.abs(offsetMinutes);
+  const offsetHours = padNumber(Math.floor(absOffsetMinutes / 60));
+  const offsetRemainder = padNumber(absOffsetMinutes % 60);
+
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${milliseconds}${sign}${offsetHours}:${offsetRemainder}`;
+}
+
 async function appendDebugLog(line) {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
@@ -192,11 +217,12 @@ function populateLangSelect(selectEl, langs, saved, allowEmpty) {
 function formatDebugLine(line) {
   const normalizedLine = ensureLogShape(line);
   if (!normalizedLine) return "";
+  const localTime = formatLocalTimestamp(normalizedLine.time);
   const payloadText =
     normalizedLine.payload != null
       ? ` ${JSON.stringify(normalizedLine.payload)}`
       : "";
-  return `[${normalizedLine.time}] [${normalizedLine.category}] [${normalizedLine.source}] ${normalizedLine.message}${payloadText}`;
+  return `[${localTime}] [${normalizedLine.category}] [${normalizedLine.source}] ${normalizedLine.message}${payloadText}`;
 }
 
 function getVisibleDebugLogs(logs) {

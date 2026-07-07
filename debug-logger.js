@@ -118,6 +118,32 @@
     return normalized;
   }
 
+  function padNumber(value, width = 2) {
+    return String(value).padStart(width, "0");
+  }
+
+  // 保存済みUTC時刻を、表示時のみローカル時刻へ変換する。
+  function formatLocalTimestamp(timestamp) {
+    const date = timestamp ? new Date(timestamp) : new Date();
+    if (Number.isNaN(date.getTime())) return String(timestamp || "");
+
+    const year = date.getFullYear();
+    const month = padNumber(date.getMonth() + 1);
+    const day = padNumber(date.getDate());
+    const hours = padNumber(date.getHours());
+    const minutes = padNumber(date.getMinutes());
+    const seconds = padNumber(date.getSeconds());
+    const milliseconds = padNumber(date.getMilliseconds(), 3);
+
+    const offsetMinutes = -date.getTimezoneOffset();
+    const sign = offsetMinutes >= 0 ? "+" : "-";
+    const absOffsetMinutes = Math.abs(offsetMinutes);
+    const offsetHours = padNumber(Math.floor(absOffsetMinutes / 60));
+    const offsetRemainder = padNumber(absOffsetMinutes % 60);
+
+    return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${milliseconds}${sign}${offsetHours}:${offsetRemainder}`;
+  }
+
   // storage.local にログを追記し、更新 callback を通知する。
   async function appendDebugLog(line) {
     try {
@@ -155,7 +181,8 @@
       line.payload != null ? ` ${JSON.stringify(line.payload)}` : "";
     const source = line.source || line.scope || "unknown";
     const category = normalizeCategory(line.category);
-    return `[${line.time}] [${category}] [${source}] ${line.message}${payloadText}`;
+    const localTime = formatLocalTimestamp(line.time);
+    return `[${localTime}] [${category}] [${source}] ${line.message}${payloadText}`;
   }
 
   function filterDebugLogs(logs, filter = {}) {
@@ -212,6 +239,7 @@
     normalizeCategory,
     debugLog,
     ensureLogShape,
+    formatLocalTimestamp,
     appendDebugLog,
     logContent,
     formatDebugLine,
