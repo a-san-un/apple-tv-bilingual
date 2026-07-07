@@ -44,6 +44,8 @@ Apple TV+ の動画再生画面に、**バイリンガル字幕パネル**と学
 5. 詳細設定は options ページから変更します
 
 - options から保存した設定も、**アクティブな Apple TV+ 再生タブへ即時反映**されます
+- 設定反映の主トリガーは「設定変更時（popup / options）」と「動画初期化時」です
+- ページ離脱時は設定再適用の主経路ではなく、cleanup 中心で扱います
 
 ## ファイル構成
 
@@ -94,6 +96,7 @@ Manifest V3 の Service Worker はアイドル時に自動停止します。
 
 - popup / options の字幕言語一覧は、動画の `textTracks` に直接依存しない **固定言語一覧** ベースで扱う
 - `secondaryLang` の空値を許容し、未設定時はブラウザ言語 fallback を前提にする
+- 観測時は、保存値（`requestedSecondaryLang`）・解決値（`resolvedSecondaryLanguage`）・実使用値（`effectiveSecondaryLanguage`）を分けて確認する
 - Apple TV+ 側の `textTracks` は content.js 側で正規化し、
   - 設定された `primaryLang` / `secondaryLang` に近いトラックを resolver が選択する
   - forced 字幕は UI の直接候補には出さず、必要に応じて内部 fallback として扱う
@@ -107,4 +110,8 @@ Manifest V3 の Service Worker はアイドル時に自動停止します。
 
 ## バージョン
 
-- Current: `2.5.2`
+- Current: `2.6.2`
+
+## 開発向けドキュメント
+
+- AI セッション運用ルールとテンプレートは `docs/ai-session-templates.md` を参照してください。

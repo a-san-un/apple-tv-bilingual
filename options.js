@@ -1,15 +1,8 @@
 // =============================================================
-// options.js - Options page logic (v2.5.2)
-// -------------------------------------------------------------
-// Responsibilities:
-// - Load/save general settings and local API-key settings.
-// - Use the same fixed supported-language list as popup.js.
-// - Show language labels in the unified "Label (code)" format.
-// - Allow empty secondaryLang as "Browser language".
-// - Save settings only; do NOT notify content.js directly.
-//   Changes are applied when the Apple TV+ tab becomes active
-//   and background.js sends SETTINGS_CHANGED.
-// - Keep debug tools and existing options page utilities.
+// options.js - Options page logic
+// version: 2.6.2
+// Issue #4: Debug Download を background 経由(saveAs)に統一
+// 既存の設定保存導線は維持し、最小差分で実装する
 // =============================================================
 
 const SUPPORTED_LANGS = [
@@ -100,7 +93,6 @@ function sanitizeForLog(payload) {
 function debugLog(scope, message, payload = null) {
   const time = new Date().toISOString();
   const safePayload = sanitizeForLog(payload);
-  console.log(`[ATVB][${time}][${scope}] ${message}`, safePayload ?? "");
   return { time, scope, message, payload: safePayload };
 }
 
@@ -146,23 +138,29 @@ function formatDebugLine(line) {
   return `[${line.time}] [${line.scope}] ${line.message}${payloadText}`;
 }
 
+function getVisibleDebugLogs(logs) {
+  return (logs || []).filter((line) => line?.scope === "options");
+}
+
 async function renderDebugLogs() {
   if (!els.debugLogOutput) return;
 
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
-  els.debugLogOutput.value = debugLogs.map(formatDebugLine).join("\n");
+  const visibleLogs = getVisibleDebugLogs(debugLogs);
+  els.debugLogOutput.value = visibleLogs.map(formatDebugLine).join("\n");
   els.debugLogOutput.scrollTop = els.debugLogOutput.scrollHeight;
 }
 
 async function copyDebugLogs() {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
-  const text = debugLogs.map(formatDebugLine).join("\n");
+  const visibleLogs = getVisibleDebugLogs(debugLogs);
+  const text = visibleLogs.map(formatDebugLine).join("\n");
   await navigator.clipboard.writeText(text);
 
   const line = debugLog("options", "Copied debug logs", {
-    lineCount: debugLogs.length,
+    lineCount: visibleLogs.length,
   });
   await appendDebugLog(line);
   await renderDebugLogs();
@@ -172,20 +170,31 @@ async function copyDebugLogs() {
 async function downloadDebugLogs() {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
-  const text = debugLogs.map(formatDebugLine).join("\n");
-  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
+  const visibleLogs = getVisibleDebugLogs(debugLogs);
+  const text = visibleLogs.map(formatDebugLine).join("\n");
 
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `atvb-debug-${new Date().toISOString().replace(/[:.]/g, "-")}.log`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  // 保存先選択ダイアログは content 側と同じ background ハンドラで統一する。
+  const response = await new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "DOWNLOAD_DEBUG_LOG", text }, (res) => {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      resolve(res || { ok: false, error: "no_response" });
+    });
+  });
+
+  if (!response?.ok) {
+    showSaveStatus(
+      `デバッグログの保存に失敗しました: ${response?.error ?? "unknown"}`,
+      true,
+    );
+    return;
+  }
 
   const line = debugLog("options", "Downloaded debug logs", {
-    lineCount: debugLogs.length,
+    lineCount: visibleLogs.length,
+    downloadId: response.downloadId ?? null,
   });
   await appendDebugLog(line);
   await renderDebugLogs();
@@ -193,7 +202,10 @@ async function downloadDebugLogs() {
 }
 
 async function clearDebugLogs() {
-  await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: [] });
+  const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
+    await chrome.storage.local.get(DEBUG_LOGS_KEY);
+  const remainingLogs = debugLogs.filter((line) => line?.scope !== "options");
+  await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: remainingLogs });
 
   if (els.debugLogOutput) {
     els.debugLogOutput.value = "";

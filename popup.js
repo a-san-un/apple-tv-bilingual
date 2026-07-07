@@ -80,7 +80,6 @@ function sanitizeForLog(payload) {
 function debugLog(scope, message, payload = null) {
   const time = new Date().toISOString();
   const safePayload = sanitizeForLog(payload);
-  console.log(`[ATVB][${time}][${scope}] ${message}`, safePayload ?? "");
   return { time, scope, message, payload: safePayload };
 }
 
