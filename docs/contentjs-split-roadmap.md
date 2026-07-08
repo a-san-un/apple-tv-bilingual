@@ -136,6 +136,21 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - ATV DEBUG の独立表示は #4 で廃止し、右字幕パネル下部の折り畳み Debug セクションへ統合済みである
 - Debug UI API は統合済み UI を前提に、logger / resolver / binder と疎結合で接続できる
 
+### #9 へ渡す read 契約（Phase C 仕上げ）
+
+- settings 状態の取得は `window.ATVB.settingsBridge` を唯一の入口とする。
+  - `getCurrentSettings()` から `requestedSettings` / `effectiveSettings` / `requestedSecondaryLang` / `resolvedSecondaryLanguage` を取得する。
+  - 設定変更通知は `handleRuntimeMessage()` の返却 payload と `onSettingsChanged()` で受ける。
+- Debug UI 操作の入口は `window.ATVB.debugPanel` とする。
+  - `mount` / `update` / `clear` / `unmount` は UI 配線に限定し、保存・フィルタ・整形責務は持たない。
+  - ログ本文の取得・カテゴリ絞り込みは logger（`window.ATVB.logger`）の責務とする。
+- `content.js` / binder / sidebar 側で扱う情報は以下とする。
+  - タイトル・エピソード情報（Apple TV+ DOM 依存）
+  - current cue / history / future の表示用データ
+  - track detail（selected track language / mode / cues など）
+- #9 では settings 導線と debug 導線を増やさない。
+  - 設定は settingsBridge、Debug UI は debugPanel/logger を再利用する。
+
 ---
 
 ## Phase D: track binder と sidebar UI の分離
