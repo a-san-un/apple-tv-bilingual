@@ -125,7 +125,7 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - `settings-bridge.js` は通信ラッパー中心にする
 - `debug-panel.js` はこの段階では UI 完成版にしない
 - まずは API スケルトンだけ固定する
-  - 例: `window.ATVB.debugPanel.updateLiveDebugPanel`
+  - 例: `window.ATVB.settingsBridge.loadSettings` / `window.ATVB.debugPanel.mount`
 - logger 側から直接 panel を知らず、callback 登録で接続する
 
 ### 確認項目
@@ -207,7 +207,7 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 
 - ロードマップは Phase A〜E で確定済み
 - Phase A（#12）/ Phase B（#13）/ 設定ライフサイクル再整理（#14）/ ログカテゴリ整理（#8）は完了済み
-- 次の着手対象は Phase C（#16: settings-bridge.js / debug-panel.js）
+- Phase C（#16）は着手済み（Session 1: settings-bridge.js / debug-panel.js の API スケルトン追加）
 - #9（current 表示強化）は、Phase C で責務境界を確定した後に進める
 
 ---

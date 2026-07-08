@@ -1,7 +1,7 @@
 # phase-3 実装ロードマップ
 
 > **ブランチ**: `phase-3`  
-> **最終更新**: 2026-07-07  
+> **最終更新**: 2026-07-08  
 > **マージ先**: `main`（`phase-3` 側で機能が安定したタイミングでマージ）
 
 ---
@@ -33,7 +33,7 @@
 | [#12](../../issues/12) | content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す                 | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
 | [#13](../../issues/13) | content.js Phase B: subtitle-track-resolver.js を切り出す                          | P1     | Phase 3    | 完了     | `p1` `enhancement` `area:content`                    |
 | [#14](../../issues/14) | 設定変更時と動画初期化時を基準に字幕設定を反映し、ページ離脱時リセット依存を減らす | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
-| [#16](../../issues/16) | Phase C: settings-bridge.js / debug-panel.js を切り出す                            | P1     | Phase C    | 未完了   | `p1` `enhancement` `area:content`                    |
+| [#16](../../issues/16) | Phase C: settings-bridge.js / debug-panel.js を切り出す                            | P1     | Phase C    | 着手中   | `p1` `enhancement` `area:content`                    |
 
 ---
 
@@ -84,7 +84,7 @@
 - [x] [#12] content.js の Phase A 分割（WebVTT 正規化と Debug logger の切り出し）
 - [x] [#13] content.js の Phase B 分割（subtitle-track-resolver の切り出し）
 - [x] [#14] 設定ライフサイクル再整理（設定変更時 / 動画初期化時を主トリガー化）
-- [ ] [#16] Phase C: settings-bridge / debug-panel の責務分離
+- [ ] [#16] Phase C: settings-bridge / debug-panel の責務分離（着手済み: API スケルトン追加と content.js 入口委譲）
 
 ---
 
