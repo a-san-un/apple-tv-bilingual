@@ -1896,6 +1896,7 @@
 
   function destroyUiHosts() {
     // restart 時は UI を一度全破棄し、buildUi で再生成する。
+    window.ATVB?.debugPanel?.unmount?.();
     removeHost("atv-panel-host");
     removeHost("atv-toggle-btn");
     removeHost("atv-popup-host");
@@ -2307,94 +2308,35 @@
   }
 
   function createDebugPanel() {
-    // debug UI の生成責務は、右字幕パネル内の初期化に限定する。
     if (!state.panelShadowRoot) return;
     state.debugPanelRoot = state.panelShadowRoot;
+    const debugPanel = window.ATVB?.debugPanel;
+    if (!debugPanel?.mount) return;
 
-    const root = state.debugPanelRoot;
-    const debugSection = root.getElementById("debug-section");
-    if (!debugSection) return;
-
-    if (debugSection.dataset.bound === "1") {
-      updateLiveDebugPanel();
-      return;
-    }
-
-    const toggleBtn = root.getElementById("debugSectionToggle");
-    const body = root.getElementById("debugSectionBody");
-    const copyBtn = root.getElementById("debugCopyBtn");
-    const downloadBtn = root.getElementById("debugDownloadBtn");
-    const clearBtn = root.getElementById("debugClearBtn");
-
-    // 右字幕パネル下部の統合ポイント: 初期状態は常に閉じる。
-    if (toggleBtn && body) {
-      body.hidden = true;
-      toggleBtn.textContent = "▶";
-      toggleBtn.setAttribute("aria-expanded", "false");
-
-      toggleBtn.addEventListener("click", () => {
-        const isHidden = body.hidden;
-        body.hidden = !isHidden;
-        toggleBtn.textContent = isHidden ? "▼" : "▶";
-        toggleBtn.setAttribute("aria-expanded", String(isHidden));
-      });
-    }
-
-    if (copyBtn) {
-      copyBtn.addEventListener("click", async () => {
-        const text = await getDebugLogText(getLiveDebugLogFilter());
-        try {
-          await navigator.clipboard.writeText(text);
-          logContentUi("Debug panel copied logs", {
-            lineCount: text ? text.split("\n").length : 0,
-          });
-        } catch (error) {
-          logContentError("Debug panel copy failed", { error: String(error) });
-        }
-      });
-    }
-
-    if (downloadBtn) {
-      downloadBtn.addEventListener("click", async () => {
+    debugPanel.mount(state.debugPanelRoot, {
+      getFilter: getLiveDebugLogFilter,
+      getLogText: getDebugLogText,
+      clearLogs: clearDebugLogs,
+      downloadLogs: (text, done) => {
         // 保存先ダイアログは background 側の downloads API で開く。
-        const text = await getDebugLogText(getLiveDebugLogFilter());
         sendToBackground({ type: "DOWNLOAD_DEBUG_LOG", text }, (res) => {
-          if (res?.ok) {
-            logContentUi("Debug panel downloaded logs", {
-              lineCount: text ? text.split("\n").length : 0,
-              downloadId: res.downloadId ?? null,
+          if (typeof done === "function") {
+            done({
+              ok: !!res?.ok,
+              downloadId: res?.downloadId ?? null,
+              error: res?.error ?? "unknown",
             });
-            return;
           }
-          logContentError("Debug panel download failed", {
-            error: res?.error ?? "unknown",
-          });
         });
-      });
-    }
-
-    if (clearBtn) {
-      clearBtn.addEventListener("click", async () => {
-        try {
-          await clearDebugLogs();
-        } catch (error) {
-          logContentError("Debug panel clear failed", { error: String(error) });
-        }
-      });
-    }
-
-    debugSection.dataset.bound = "1";
-    updateLiveDebugPanel();
+      },
+      logInfo: logContentUi,
+      logError: logContentError,
+    });
   }
 
   async function updateLiveDebugPanel() {
-    if (!state.debugPanelRoot) return;
     try {
-      const text = await getDebugLogText(getLiveDebugLogFilter());
-      const textarea = state.debugPanelRoot.getElementById("debug-log");
-      if (!textarea) return;
-      textarea.value = text;
-      textarea.scrollTop = textarea.scrollHeight;
+      await window.ATVB?.debugPanel?.update?.();
     } catch (error) {
       console.warn("[ATV-Bilingual] updateLiveDebugPanel failed:", error);
     }
@@ -3134,10 +3076,7 @@
   function reloadSettingsAndReinitialize(reason = "unknown") {
     if (state.restarting) return;
 
-    chrome.storage.sync.get(DEFAULT_SETTINGS, (rawSettings) => {
-      state.requestedSecondaryLang = rawSettings.secondaryLang || "";
-      state.contentSettings = applySecondaryLangFallback(rawSettings);
-
+    const proceedWithReinitialize = () => {
       const found = getVideoAndDialog();
       if (found) {
         state.video = found.video;
@@ -3156,7 +3095,39 @@
           scheduleTrackResolveRetry(reason);
         }
       }
-    });
+    };
+
+    const loadSettingsFallback = () => {
+      chrome.storage.sync.get(DEFAULT_SETTINGS, (rawSettings) => {
+        state.requestedSecondaryLang = rawSettings.secondaryLang || "";
+        state.contentSettings = applySecondaryLangFallback(rawSettings);
+        proceedWithReinitialize();
+      });
+    };
+
+    const settingsBridge = window.ATVB?.settingsBridge;
+    if (settingsBridge?.loadSettings) {
+      settingsBridge
+        .loadSettings({
+          defaults: DEFAULT_SETTINGS,
+          applyFallback: applySecondaryLangFallback,
+          onLoaded: (resolvedSettings, rawSettings) => {
+            state.requestedSecondaryLang = rawSettings?.secondaryLang || "";
+            state.contentSettings = { ...resolvedSettings };
+            proceedWithReinitialize();
+          },
+        })
+        .catch((error) => {
+          logContentError("settings bridge load failed", {
+            reason,
+            error: String(error),
+          });
+          loadSettingsFallback();
+        });
+      return;
+    }
+
+    loadSettingsFallback();
   }
 
   function runInitialCueRecoveryRender(reason = "unknown") {
@@ -3468,25 +3439,66 @@
   }
 
   function loadSettingsFromSync() {
-    chrome.storage.sync.get(DEFAULT_SETTINGS, (rawSettings) => {
-      state.requestedSecondaryLang = rawSettings.secondaryLang || "";
-      state.contentSettings = applySecondaryLangFallback(rawSettings);
-      const effectiveSecondaryLanguage =
-        state.requestedSecondaryLang || state.contentSettings.secondaryLang;
-      if (state.video && effectiveSecondaryLanguage) {
-        syncSecondarySubtitleTrack(
-          state.video,
-          effectiveSecondaryLanguage,
-          renderSecondarySubtitle,
-        );
-        state.secondaryTrack = secondaryTrackBound;
-      }
-      logContentSettings("Loaded settings from sync", {
-        ...state.contentSettings,
-        requestedSecondaryLang: state.requestedSecondaryLang,
+    const loadSettingsFallback = () => {
+      chrome.storage.sync.get(DEFAULT_SETTINGS, (rawSettings) => {
+        state.requestedSecondaryLang = rawSettings.secondaryLang || "";
+        state.contentSettings = applySecondaryLangFallback(rawSettings);
+        const effectiveSecondaryLanguage =
+          state.requestedSecondaryLang || state.contentSettings.secondaryLang;
+        if (state.video && effectiveSecondaryLanguage) {
+          syncSecondarySubtitleTrack(
+            state.video,
+            effectiveSecondaryLanguage,
+            renderSecondarySubtitle,
+          );
+          state.secondaryTrack = secondaryTrackBound;
+        }
+        logContentSettings("Loaded settings from sync", {
+          ...state.contentSettings,
+          requestedSecondaryLang: state.requestedSecondaryLang,
+        });
+        startBilingual();
       });
-      startBilingual();
-    });
+    };
+
+    const settingsBridge = window.ATVB?.settingsBridge;
+    if (settingsBridge?.loadSettings) {
+      settingsBridge
+        .loadSettings({
+          defaults: DEFAULT_SETTINGS,
+          applyFallback: applySecondaryLangFallback,
+          onLoaded: (resolvedSettings, rawSettings) => {
+            state.requestedSecondaryLang = rawSettings?.secondaryLang || "";
+            state.contentSettings = { ...resolvedSettings };
+            const effectiveSecondaryLanguage =
+              state.requestedSecondaryLang ||
+              state.contentSettings.secondaryLang;
+            if (state.video && effectiveSecondaryLanguage) {
+              syncSecondarySubtitleTrack(
+                state.video,
+                effectiveSecondaryLanguage,
+                renderSecondarySubtitle,
+              );
+              state.secondaryTrack = secondaryTrackBound;
+            }
+            logContentSettings("Loaded settings from sync", {
+              ...state.contentSettings,
+              requestedSecondaryLang: state.requestedSecondaryLang,
+            });
+            startBilingual();
+          },
+        })
+        .catch((error) => {
+          logContentError("settings bridge load failed", {
+            reason: "initial_load",
+            error: String(error),
+          });
+          loadSettingsFallback();
+        });
+      return;
+    }
+
+    loadSettingsFallback();
   }
 
   function restartBilingual(nextSettings = null, reason = "unknown") {
@@ -3543,12 +3555,23 @@
       }
 
       const updated = { ...message.settings };
-      state.requestedSecondaryLang = updated.secondaryLang ?? "";
+      const bridgeResult = window.ATVB?.settingsBridge?.handleRuntimeMessage?.(
+        message,
+        { applyFallback: applySecondaryLangFallback },
+      );
 
-      const next = applySecondaryLangFallback({
-        ...state.contentSettings,
-        ...updated,
-      });
+      let next;
+      if (bridgeResult?.handled) {
+        state.requestedSecondaryLang =
+          bridgeResult.requestedSecondaryLang ?? "";
+        next = { ...bridgeResult.settings };
+      } else {
+        state.requestedSecondaryLang = updated.secondaryLang ?? "";
+        next = applySecondaryLangFallback({
+          ...state.contentSettings,
+          ...updated,
+        });
+      }
       const requestedSecondaryLang = state.requestedSecondaryLang;
       const resolvedSecondaryLanguage = next.secondaryLang;
       const triggerReason = message.reason || "unknown";

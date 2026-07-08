@@ -21,6 +21,8 @@
         "vtt-normalizer.js",
         "debug-logger.js",
         "subtitle-track-resolver.js",
+        "settings-bridge.js",
+        "debug-panel.js",
         "content.js"
       ],
       "css": ["overlay.css"],
