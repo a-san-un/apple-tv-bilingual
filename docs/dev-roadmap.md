@@ -203,12 +203,16 @@ Phase 1〜3 の主要項目（#3/#4/#5/#6/#7/#8/#12/#13/#14/#16）完了後、�
 - AI プロバイダー連携（説明する / 例 / 文法タブ）
 - `background.js` の `dictionaryapi.dev` ハンドラ実装
 
+補足: #17 は current 表示強化（タイトル・トラック情報の常時表示）に限定し、binder/sidebar/layout/observer の責務整理は Phase D/E で別フェーズとして扱う。
+
 ### #17 着手前メモ（対象 / 非対象）
 
 - 対象: 右字幕パネルの current セクションで、タイトル / エピソード情報 / `primaryLang` / `secondaryLang` / selected track label（必要に応じて track detail）を常時表示する。
 - 前提 API: settings 状態は `window.ATVB.settingsBridge`、Debug UI / log 導線は `window.ATVB.debugPanel` / `window.ATVB.logger` を再利用する。
 - 非対象: `content.js` の current 表示強化本体以外（binder / sidebar / observer / bootstrap 分離、settings-bridge.js / debug-panel.js API 変更、resolver / fallback 仕様変更）は今回のスコープに含めない。
 - 重複回避方針: 既存 helper / bridge / logger / debugPanel を再利用し、current 表示強化の中で重複コードを増やさない。
+- 旧 Issue #9 の current 表示強化の設計定義は #17 へ引き継ぎ済みで、#9 は close 済み。
+- ドイツ語主字幕同期の問題は #17 では直接扱わず、別 Issue で扱う予定とする。
 
 ---
 
