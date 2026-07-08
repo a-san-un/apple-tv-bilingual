@@ -1471,8 +1471,9 @@
 
     const videoRect = video.getBoundingClientRect();
     const panelRect = panelAnchor.getBoundingClientRect();
-    const safeAreaLeft = videoRect.left;
-    const safeAreaRight = Math.min(videoRect.right, panelRect.left);
+    const safeGutter = PLAYBACK_CONTROLS_LAYOUT.footerSafeGutterPx;
+    const safeAreaLeft = videoRect.left + safeGutter;
+    const safeAreaRight = Math.min(videoRect.right, panelRect.left) - safeGutter;
     const safeAreaWidth = Math.max(0, safeAreaRight - safeAreaLeft);
 
     return {
@@ -1482,6 +1483,36 @@
       safeAreaRight,
       safeAreaWidth,
     };
+  }
+
+  function clampManagedShiftX(
+    rect,
+    existingShiftX,
+    nextShiftX,
+    minLeft,
+    maxRight,
+  ) {
+    if (!rect) return 0;
+
+    let shiftX = nextShiftX;
+    const projectLeft = (candidateShiftX) =>
+      rect.left + (candidateShiftX - existingShiftX);
+    const projectRight = (candidateShiftX) =>
+      rect.right + (candidateShiftX - existingShiftX);
+
+    if (projectRight(shiftX) > maxRight) {
+      shiftX -= projectRight(shiftX) - maxRight;
+    }
+
+    if (projectLeft(shiftX) < minLeft) {
+      shiftX += minLeft - projectLeft(shiftX);
+    }
+
+    if (shiftX > 0) {
+      shiftX = 0;
+    }
+
+    return shiftX;
   }
 
   function getShadowProgressTargets() {
@@ -1710,11 +1741,15 @@
 
       const targetCenterX = safeAreaLeft + visibleWidth / 2;
       const unifiedMaxRight = panelRect.left - 16;
+      const unifiedMinLeft = safeAreaLeft + 16;
       const controlsTargetRight = panelRect.left - 40;
+      const controlsMinLeft = safeAreaLeft + 16;
       const volumeTargetRight = panelRect.left - 60;
+      const volumeMinLeft = safeAreaLeft + 16;
       const progressTargetRight = panelRect.left - 40;
       const progressMinLeft = safeAreaLeft + 24;
       const remainingTargetRight = panelRect.left - 60;
+      const remainingMinLeft = safeAreaLeft + 24;
 
       if (unified) {
         const unifiedRect = unified.getBoundingClientRect();
@@ -1723,11 +1758,13 @@
         let unifiedShiftX =
           unifiedExistingShiftX + (targetCenterX - unifiedCenterX);
 
-        const unifiedDeltaShift = unifiedShiftX - unifiedExistingShiftX;
-        const shiftedUnifiedRight = unifiedRect.right + unifiedDeltaShift;
-        if (shiftedUnifiedRight > unifiedMaxRight) {
-          unifiedShiftX -= shiftedUnifiedRight - unifiedMaxRight;
-        }
+        unifiedShiftX = clampManagedShiftX(
+          unifiedRect,
+          unifiedExistingShiftX,
+          unifiedShiftX,
+          unifiedMinLeft,
+          unifiedMaxRight,
+        );
 
         applyManagedTranslateX(unified, unifiedShiftX);
 
@@ -1751,9 +1788,13 @@
         if (volumeRect.right > volumeTargetRight) {
           volumeShiftX += volumeTargetRight - volumeRect.right;
         }
-        if (volumeShiftX > 0) {
-          volumeShiftX = 0;
-        }
+        volumeShiftX = clampManagedShiftX(
+          volumeRect,
+          volumeExistingShiftX,
+          volumeShiftX,
+          volumeMinLeft,
+          volumeTargetRight,
+        );
         applyManagedTranslateX(volume, volumeShiftX);
       }
 
@@ -1764,28 +1805,31 @@
         if (controlsRect.right > controlsTargetRight) {
           controlsShiftX += controlsTargetRight - controlsRect.right;
         }
-        if (controlsShiftX > 0) {
-          controlsShiftX = 0;
-        }
-        controlsShiftX = Math.min(controlsShiftX, controlsExistingShiftX, 0);
+        controlsShiftX = clampManagedShiftX(
+          controlsRect,
+          controlsExistingShiftX,
+          controlsShiftX,
+          controlsMinLeft,
+          controlsTargetRight,
+        );
         applyManagedTranslateX(controls, controlsShiftX);
       }
 
       if (shadowProgressBar) {
         const progressRect = shadowProgressBar.getBoundingClientRect();
         const progressExistingShiftX = getManagedShiftX(shadowProgressBar);
-        const rightFitShift = progressTargetRight - progressRect.right;
-        const leftFitShift = progressMinLeft - progressRect.left;
-        const minShiftX = progressExistingShiftX + leftFitShift;
-        const maxShiftX = progressExistingShiftX + rightFitShift;
         let progressShiftX = progressExistingShiftX;
-
-        progressShiftX = Math.min(progressShiftX, maxShiftX);
-        progressShiftX = Math.max(progressShiftX, minShiftX);
-
-        if (minShiftX > maxShiftX) {
-          progressShiftX = maxShiftX;
+        if (progressRect.right > progressTargetRight) {
+          progressShiftX += progressTargetRight - progressRect.right;
         }
+
+        progressShiftX = clampManagedShiftX(
+          progressRect,
+          progressExistingShiftX,
+          progressShiftX,
+          progressMinLeft,
+          progressTargetRight,
+        );
 
         applyManagedTranslateX(shadowProgressBar, progressShiftX);
       }
@@ -1797,10 +1841,13 @@
         if (remainingRect.right > remainingTargetRight) {
           remainingShiftX += remainingTargetRight - remainingRect.right;
         }
-        if (remainingShiftX > 0) {
-          remainingShiftX = 0;
-        }
-        remainingShiftX = Math.min(remainingShiftX, remainingExistingShiftX, 0);
+        remainingShiftX = clampManagedShiftX(
+          remainingRect,
+          remainingExistingShiftX,
+          remainingShiftX,
+          remainingMinLeft,
+          remainingTargetRight,
+        );
         applyManagedTranslateX(shadowRemainingTime, remainingShiftX);
       }
 
@@ -2847,6 +2894,9 @@
       state.panelVisible ? [700, 1600] : [],
       { immediate: !state.panelVisible },
     );
+    if (state.panelVisible) {
+      scheduleControlSettlingBurst("togglePanel", [180, 420, 900, 1500]);
+    }
 
     logContent("togglePanel", { panelVisible: state.panelVisible });
   }
