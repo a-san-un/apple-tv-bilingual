@@ -28,7 +28,7 @@
 | [#6](../../issues/6)   | popup / options の字幕言語一覧を動画状態から分離して固定化する                     | P0     | Phase 1    | **完了** | `p0` `bug` `enhancement` `area:popup` `area:content` |
 | [#7](../../issues/7)   | secondaryLang の空値保存とブラウザ言語 fallback の挙動を統一する                   | P0     | Phase 1    | 完了     | `p0` `bug` `enhancement` `area:popup` `area:content` |
 | [#8](../../issues/8)   | Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する                           | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:options` `area:content`     |
-| [#17](../../issues/17) | content.js の current 表示強化（タイトル・トラック情報の常時表示）                 | P1     | 次タスク   | 未着手   | `p1` `enhancement` `area:content`                    |
+| [#17](../../issues/17) | content.js の current ブロックを強調し、パネル内で中央付近に保つ                   | P1     | 次タスク   | 未着手   | `p1` `enhancement` `area:ui` `area:content`          |
 | [#10](../../issues/10) | 単語ポップアップ UI 刷新・AI タブ拡張と dictionaryapi.dev ハンドラ実装             | P2     | 後続タスク | 未完了   | GitHub issue の実内容に合わせて整理                  |
 | [#12](../../issues/12) | content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す                 | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
 | [#13](../../issues/13) | content.js Phase B: subtitle-track-resolver.js を切り出す                          | P1     | Phase 3    | 完了     | `p1` `enhancement` `area:content`                    |
@@ -77,7 +77,7 @@
 **ゴール**: options と字幕パネルが同じログソースを共有し、必要なカテゴリだけを既定表示できること。  
 加えて、後続の content.js 分割を安全に進められるよう、ログ基盤と独立責務の切り出しを先行して進める。
 
-設定ライフサイクル再整理（#14）は完了し、設定適用トリガーは「設定変更時 / 動画初期化時」を主経路とする方針へ統一済み。
+設定ライフサイクル再整理（#14）は完了し、設定適用トリガーは「設定変更時 / 動画初期化時」を主経路とする方針へ統一済み。  
 ページ離脱時は cleanup を主目的とし、設定反映の主トリガーとしては扱わない。
 
 - [x] [#8] Debug ログカテゴリ設計整理
@@ -96,7 +96,7 @@
 
 - ATV DEBUG の独立表示を廃止し、右字幕パネル下部の折り畳みセクションへ統合。
 - Debug 統合は完了。
-- current 行の再評価タイミングや中央配置の改善は、Issue #4 の完了範囲に含めず、`content.js` 分割 / current 表示強化（#17）側で別途扱う。
+- current 行の再評価タイミングや中央配置の改善は、Issue #4 の完了範囲に含めず、#17 側で別途扱う。
 
 **#4 観測済み追記（Step 14 切り分け結果）**
 
@@ -187,7 +187,7 @@
    - content.js の Phase A 分割（#12）
 
 4. 後続タスク
-   - `content.js` の current 表示強化（#17）
+   - `content.js` の current ブロック改善（#17）
    - 単語ポップアップ UI 改修と AI タブ拡張（#10）
 
 ---
@@ -196,22 +196,38 @@
 
 Phase 1〜3 の主要項目（#3/#4/#5/#6/#7/#8/#12/#13/#14/#16）完了後、次の順で進める。
 
-- #17: `content.js` の current 表示強化
+- #17: `content.js` の current ブロック改善
 - Phase D: binder / sidebar の責務分離
 - Phase E: layout / observer / bootstrap の最終整理
 - 単語ポップアップ UI 改修（辞書 / AI タブ拡張）（#10）
 - AI プロバイダー連携（説明する / 例 / 文法タブ）
 - `background.js` の `dictionaryapi.dev` ハンドラ実装
 
-補足: #17 は current 表示強化（タイトル・トラック情報の常時表示）に限定し、binder/sidebar/layout/observer の責務整理は Phase D/E で別フェーズとして扱う。
+補足: #17 は current ブロックの位置制御と視覚強調に限定し、binder / sidebar / layout / observer の責務整理は Phase D / E で別フェーズとして扱う。[page:37]
 
 ### #17 着手前メモ（対象 / 非対象）
 
-- 対象: 右字幕パネルの current セクションで、タイトル / エピソード情報 / `primaryLang` / `secondaryLang` / selected track label（必要に応じて track detail）を常時表示する。
-- 前提 API: settings 状態は `window.ATVB.settingsBridge`、Debug UI / log 導線は `window.ATVB.debugPanel` / `window.ATVB.logger` を再利用する。
-- 非対象: `content.js` の current 表示強化本体以外（binder / sidebar / observer / bootstrap 分離、settings-bridge.js / debug-panel.js API 変更、resolver / fallback 仕様変更）は今回のスコープに含めない。
-- 重複回避方針: 既存 helper / bridge / logger / debugPanel を再利用し、current 表示強化の中で重複コードを増やさない。
-- 旧 Issue #9 の current 表示強化の設計定義は #17 へ引き継ぎ済みで、#9 は close 済み。
+- 対象:
+  - 右字幕パネルの current ブロック（`▶ 再生中 [⏵]`）の位置制御
+  - current ブロックの視覚的強調
+  - 固定ヘッダー / 固定 debug ログセクション / 字幕スクロール領域の 3 層構造を維持したまま、current を見失いにくくすること
+- 前提 API:
+  - settings 状態は `window.ATVB.settingsBridge`
+  - Debug UI / log 導線は `window.ATVB.debugPanel` / `window.ATVB.logger` を再利用する
+- UI 制約:
+  - ヘッダー（`字幕履歴` / `⚙️` / `閉じる✕`）の構造・位置・文言は維持する
+  - debug ログセクションはヘッダー直下に固定されたままとし、折りたたみ時は 1 行、展開時は数行のログ本文を表示できる状態を維持する
+  - current / history / future のテキストは選択・コピー可能な DOM のまま維持する
+  - 字幕全体の強いグレーアウトは行わず、current テキストだけを少し目立たせる
+- 非対象:
+  - current セクション内へのタイトル・エピソード・`primaryLang` / `secondaryLang` / selected track label の追加表示
+  - `content.js` の current ブロック改善本体以外（binder / sidebar / observer / bootstrap 分離）
+  - `settings-bridge.js` / `debug-panel.js` API 変更
+  - resolver / fallback 仕様変更
+- 重複回避方針:
+  - 既存 helper / bridge / logger / debugPanel を再利用し、current ブロック改善の中で重複コードを増やさない
+  - new timer / observer / listener は追加しない
+- 旧 Issue #9 の current 表示強化の設計定義は #17 へ引き継ぎ済みで、#9 は close 済み。[page:37]
 - ドイツ語主字幕同期の問題は #17 では直接扱わず、別 Issue で扱う予定とする。
 
 ---

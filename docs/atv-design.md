@@ -178,17 +178,29 @@ content 初期化
 ### 3.1 右字幕パネル
 
 - 履歴一覧を残す
-- 各ブロックは 2 行表示
+- 各字幕ブロックは 2 行表示
   - 1 行目: primary
   - 2 行目: secondary
-- current 行は視覚的に強調する
-- 次タスク（#17）では、current セクション内にタイトル / エピソード情報 / `primaryLang` / `secondaryLang` / selected track label（必要に応じて track detail）を常時表示する。
-- #17 では settings / debug の新導線は追加せず、`window.ATVB.settingsBridge` と `window.ATVB.debugPanel` / `window.ATVB.logger` を再利用する。
+- 右字幕パネルは、上から
+  1. 固定ヘッダー（`字幕履歴` / `⚙️` / `閉じる✕`）
+  2. 固定 debug ログセクション
+  3. 字幕一覧のスクロール領域（history / current / future）
+     の3層構造を維持する
+- current 行（`▶ 再生中 [⏵]`）は視覚的に少し強調する
+- 通常時は、current ブロックが字幕一覧スクロール領域の中央付近に来るようにする
+- ただし動画冒頭や履歴不足時は、current が先頭寄りになることは許容する
+- 字幕全体の強いグレーアウトは行わず、current テキストだけを少し目立たせる
+- current / history / future のテキストは、ユーザーが選択・コピー可能な DOM のまま維持する
+- debug ログセクションはヘッダー直下に固定されたままとし、
+  折りたたみ時は 1 行、展開時は数行のログ本文を表示できる状態を維持する
 - 履歴ブロックをクリックしてシークできる現機能は維持する
+- #17 では settings / debug の新導線は追加せず、既存 UI と `window.ATVB.settingsBridge` / `window.ATVB.debugPanel` / `window.ATVB.logger` を再利用する
 
 ```text
 ┌────────────────────────────────────┐
-│ 字幕履歴                    [⚙️][✕] │
+│ 字幕履歴              [⚙️][閉じる✕] │
+├────────────────────────────────────┤
+│ デバッグログ（開発者向け）      ▶︎  │
 ├────────────────────────────────────┤
 │ 12:03                              │
 │ I mean, it sounds weird.           │
@@ -330,16 +342,26 @@ options.js     ← 設定の読込・保存・状態確認
 
 ## 7. 今後の優先順位
 
-1. #17: `content.js` 側で current 表示強化（タイトル・トラック情報の常時表示）
+1. #17: `content.js` 側で current ブロックの視覚強調と中央付近アンカーを整理する
 2. Phase D: binder / sidebar の責務分離
 3. Phase E: layout / observer / bootstrap の最終整理
 4. #10: 単語ポップアップ UI 改修と AI タブ拡張、dictionaryapi.dev ハンドラ実装
 
 ### #17 の対象 / 非対象（着手前）
 
-- 対象: 右字幕パネル current セクションの常時表示情報整理（タイトル、エピソード情報、`primaryLang` / `secondaryLang`、selected track label / track detail）。
-- 非対象: binder / sidebar / observer / bootstrap 分離、`settings-bridge.js` / `debug-panel.js` API 変更、resolver / fallback 仕様変更。
-- 重複回避方針: 既存 helper / bridge / logger / debugPanel を再利用し、current 表示強化の中で重複コードを増やさない。
+- 対象:
+  - 右字幕パネル内の current ブロック（`▶ 再生中 [⏵]`）の位置制御
+  - current ブロックの視覚的強調
+  - 固定ヘッダー / 固定 debug ログセクション / 字幕スクロール領域の3層構造を維持したまま、current を見失いにくくすること
+- 非対象:
+  - current セクション内へのタイトル・エピソード・`primaryLang` / `secondaryLang` / selected track label の追加表示
+  - binder / sidebar / observer / bootstrap 分離
+  - `settings-bridge.js` / `debug-panel.js` API 変更
+  - resolver / fallback 仕様変更
+- 重複回避方針:
+  - 既存 helper / bridge / logger / debugPanel を再利用する
+  - current / history / future のテキストは選択・コピー可能な DOM のまま維持する
+  - 新規 timer / observer / listener は追加しない
 
 ### 完了済み（本バッチまで）
 

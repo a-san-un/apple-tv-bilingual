@@ -27,7 +27,7 @@
 - `content.js` の肥大化を安全に減らす
 - 既存ロジックを壊さずに最初の分離を行う
 - popup / options / background / content から同じログ基盤を使える状態を先に作る
-- 後続の #8（ログカテゴリ整理）と #17（current 表示強化）の土台を整える
+- 後続の #8（ログカテゴリ整理）と #17（current ブロック改善）の土台を整える
 
 ### ルール
 
@@ -145,9 +145,9 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
   - `mount` / `update` / `clear` / `unmount` は UI 配線に限定し、保存・フィルタ・整形責務は持たない。
   - ログ本文の取得・カテゴリ絞り込みは logger（`window.ATVB.logger`）の責務とする。
 - `content.js` / binder / sidebar 側で扱う情報は以下とする。
-  - タイトル・エピソード情報（Apple TV+ DOM 依存）
   - current cue / history / future の表示用データ
-  - track detail（selected track language / mode / cues など）
+  - current ブロックの位置制御・視覚強調に必要な状態
+  - Apple TV+ DOM 依存のレイアウト情報
 - #17 では settings 導線と debug 導線を増やさない。
   - 設定は settingsBridge、Debug UI は debugPanel/logger を再利用する。
 
@@ -213,8 +213,9 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 1. Phase A を実装して確認
 2. Phase B は resolver だけ切る
 3. Phase C は settings bridge と Debug UI API まで
-4. Phase D で binder / sidebar を整理
-5. Phase E で layout / observer / bootstrap を最終整理
+4. #17 で current ブロック改善を行う
+5. Phase D で binder / sidebar を整理
+6. Phase E で layout / observer / bootstrap を最終整理
 
 ---
 
@@ -223,18 +224,33 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - ロードマップは Phase A〜E で確定済み
 - Phase A（#12）/ Phase B（#13）/ 設定ライフサイクル再整理（#14）/ ログカテゴリ整理（#8）は完了済み
 - Phase C（#16）は完了（settings-bridge.js / debug-panel.js の API 契約確定と content.js 入口委譲を反映済み）
-- #17（current 表示強化）を次優先として進める
+- #17（current ブロックの視覚強調と中央付近アンカー）を次優先として進める
 
 ---
 
-## #17 着手前メモ（current 表示強化）
+## #17 着手前メモ（current ブロック改善）
 
-- 関連 issue: [#17](../../issues/17) `[P1] content.js の current 表示を強化し、タイトル・トラック情報を字幕パネル内に常時表示する`
-- 扱う範囲: current セクションの常時表示情報（タイトル / エピソード情報 / `primaryLang` / `secondaryLang` / selected track label、必要に応じて track detail）を整理する。
+- 関連 issue: [#17](../../issues/17) `[P1] content.js の current ブロックを強調し、パネル内で中央付近に保つ`
+- 扱う範囲:
+  - current ブロック（`▶ 再生中 [⏵]`）の位置制御
+  - current ブロックの視覚的強調
+  - 固定ヘッダー / 固定 debug ログセクション / 字幕スクロール領域の3層構造を維持したまま、current を見失いにくくすること
 - 前提 API: settings 状態は `window.ATVB.settingsBridge`、Debug UI / log 導線は `window.ATVB.debugPanel` / `window.ATVB.logger` を再利用する。
 - 導線制約: settings 導線と debug 導線は新設せず、既存 bridge / panel / logger の接続を維持する。
-- 非対象: binder / sidebar / observer / bootstrap の分離、`settings-bridge.js` / `debug-panel.js` API 変更、resolver / fallback 仕様変更はこの issue では扱わない。
-- 実装方針: 既存 helper / bridge / logger / debugPanel を再利用し、current 表示強化の中で重複コードを増やさない。
+- UI 制約:
+  - ヘッダー（`字幕履歴` / `⚙️` / `閉じる✕`）の構造・位置・文言は維持する
+  - debug ログセクションはヘッダー直下に固定されたままとし、折りたたみ時は1行、展開時は数行のログ本文を表示できる状態を維持する
+  - current / history / future のテキストは選択・コピー可能な DOM のまま維持する
+  - 字幕全体の強いグレーアウトは行わず、current テキストだけを少し目立たせる
+- 非対象:
+  - current セクション内へのタイトル・エピソード・`primaryLang` / `secondaryLang` / selected track label の追加表示
+  - binder / sidebar / observer / bootstrap の分離
+  - `settings-bridge.js` / `debug-panel.js` API 変更
+  - resolver / fallback 仕様変更
+- 実装方針:
+  - 既存 helper / bridge / logger / debugPanel を再利用する
+  - 新規 timer / observer / listener は追加しない
+  - current ブロック改善の中で重複コードを増やさない
 
 ---
 
