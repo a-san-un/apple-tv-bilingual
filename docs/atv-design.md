@@ -117,26 +117,26 @@ Apple TV+ の `textTracks` には、同一言語でも通常字幕・captions・
 
 #### 主トリガー
 
-- 設定適用の主トリガーは **設定変更時** と **動画ページ初期化時** の 2 つとする。
-- ページ離脱時は「必要最小限のクリーンアップ」に留め、設定反映の主トリガーにはしない。
+- 設定適用の主トリガーは **設定変更時** と **動画ページ初期化時** の 2 つとする
+- ページ離脱時は「必要最小限のクリーンアップ」に留め、設定反映の主トリガーにはしない
 
 #### fallback 方針
 
-- `secondaryLang = ""` の場合は、content 側でブラウザ言語 fallback を適用する。
-- fallback 適用後の値で resolver を実行し、最終採用 track を決定する。
-- 観測時は、保存値（`requestedSecondaryLang`）・解決値（`resolvedSecondaryLanguage`）・実使用値（`effectiveSecondaryLanguage`）を分けて追える前提とする。
+- `secondaryLang = ""` の場合は、content 側でブラウザ言語 fallback を適用する
+- fallback 適用後の値で resolver を実行し、最終採用 track を決定する
+- 観測時は、保存値（`requestedSecondaryLang`）・解決値（`resolvedSecondaryLanguage`）・実使用値（`effectiveSecondaryLanguage`）を分けて追える前提とする
 
 #### 責務境界
 
 - popup / options: 設定値の入力・保存（`chrome.storage.sync`）
 - background: 必要な通知・外部連携の橋渡し
 - content: 設定読込、fallback 適用、resolver 実行、再生中 UI への反映
-- どの track を採用するかの最終判断は content 側で行う。
+- どの track を採用するかの最終判断は content 側で行う
 
 #### 動画ページ間移動時の方針
 
-- 動画ページ間移動時は、直近の反映済み設定を保持したまま次の初期化へ引き継ぐ。
-- 離脱イベントで「設定を戻す」前提ではなく、次の初期化で必要差分のみ再適用する。
+- 動画ページ間移動時は、直近の反映済み設定を保持したまま次の初期化へ引き継ぐ
+- 離脱イベントで「設定を戻す」前提ではなく、次の初期化で必要差分のみ再適用する
 
 #### 擬似フロー
 
@@ -186,34 +186,43 @@ content 初期化
   2. 固定 debug ログセクション
   3. 字幕一覧のスクロール領域（history / current / future）
      の3層構造を維持する
-- current 行（`▶ 再生中 [⏵]`）は視覚的に少し強調する
-- 通常時は、current ブロックが字幕一覧スクロール領域の中央付近に来るようにする
-- ただし動画冒頭や履歴不足時は、current が先頭寄りになることは許容する
-- 字幕全体の強いグレーアウトは行わず、current テキストだけを少し目立たせる
+- current の表現は、**字幕本文の強調ではなく左側の固定幅マーク欄**を基本とする
+- 字幕行は `[mark][subtitle text]` の 2 カラム構造とし、マークが出ても字幕本文の列位置はずれないようにする
+- current のときだけ左側マーク欄に `▶` などの再生マークを表示する
+- past / current / future の字幕本文は、**色・背景・文字サイズをすべて同一**とする
+- current の背景塗り、強い黄色強調、全体グレーアウトは行わない
 - current / history / future のテキストは、ユーザーが選択・コピー可能な DOM のまま維持する
-- debug ログセクションはヘッダー直下に固定されたままとし、
-  折りたたみ時は 1 行、展開時は数行のログ本文を表示できる状態を維持する
+- debug ログセクションはヘッダー直下に固定されたままとし、折りたたみ時は 1 行、展開時は数行のログ本文を表示できる状態を維持する
 - 履歴ブロックをクリックしてシークできる現機能は維持する
-- #17 では settings / debug の新導線は追加せず、既存 UI と `window.ATVB.settingsBridge` / `window.ATVB.debugPanel` / `window.ATVB.logger` を再利用する
+- #17 は実装済み。settings / debug の新導線は追加せず、既存 UI と `window.ATVB.settingsBridge` / `window.ATVB.debugPanel` / `window.ATVB.logger` を再利用する
+
+#### 字幕スクロール領域の挙動
+
+- 通常時は字幕リストを動かさない
+- 再生位置の変化に応じて、**再生マークだけ** current 行へ移動する
+- current が字幕パネル下部のしきい値（下から 1〜2 件前）まで来た時だけ、字幕リストを上へスクロールする
+- スクロール量は最小限とし、毎 cue ごとの細かいスムーススクロールは行わない
+- current を常に中央付近へ寄せる方式は採用しない。現在は字幕一覧内の current 行 + 左側マーク欄、下端しきい値超過時のみの最小スクロールで運用する
+- 動きの主役は「字幕の強調」ではなく「マーク移動 + 必要時のみ最小スクロール」とする
 
 ```text
-┌────────────────────────────────────┐
-│ 字幕履歴              [⚙️][閉じる✕] │
-├────────────────────────────────────┤
-│ デバッグログ（開発者向け）      ▶︎  │
-├────────────────────────────────────┤
-│ 12:03                              │
-│ I mean, it sounds weird.           │
-│ つまり、変に聞こえるけど。          │
-│                                    │
-│ ▶ 再生中 [⏵]                       │
-│ but it's still like making a baby. │
-│ でもそれはまだ赤ちゃんを育てるようなもの。│
-│                                    │
-│ 12:07                              │
-│ You have to keep feeding it.       │
-│ ずっと面倒を見ないといけない。       │
-└────────────────────────────────────┘
+┌────────────────────────────────────────────┐
+│ 字幕履歴                         [⚙️][閉じる✕] │
+├────────────────────────────────────────────┤
+│ デバッグログ（開発者向け）              ▶︎ │
+├────────────────────────────────────────────┤
+│ [    ]  12:03                             │
+│        I mean, it sounds weird.           │
+│        つまり、変に聞こえるけど。          │
+│                                            │
+│ [ ▶ ]  12:05                             │
+│        but it's still like making a baby. │
+│        でもそれはまだ赤ちゃんを育てるようなもの。│
+│                                            │
+│ [    ]  12:07                             │
+│        You have to keep feeding it.       │
+│        ずっと面倒を見ないといけない。       │
+└────────────────────────────────────────────┘
 ```
 
 ### 3.2 設定画面
@@ -299,59 +308,61 @@ options.js     ← 設定の読込・保存・状態確認
 
 ### 6.1 Issue #3 で反映した確定仕様
 
-- 再生開始直後 / 設定反映直後でも、再生バー・シーク UI・ボタン群が右字幕パネルに隠れないこと。
-- `.video-player__footer` と `.unified-controls` は同じ基準で補正し、右側重なりを回避すること。
-- shift 値を保持して再補正時の右戻り（snap-back）を防ぐこと。
-- `amp-volume-control-unified` は中央寄せせず、字幕パネルに重なる分だけ左へ移動すること。
-- 常駐監視に依存せず、起動時 / 再起動時の軽量な補正バーストで安定化すること。
+- 再生開始直後 / 設定反映直後でも、再生バー・シーク UI・ボタン群が右字幕パネルに隠れないこと
+- `.video-player__footer` と `.unified-controls` は同じ基準で補正し、右側重なりを回避すること
+- shift 値を保持して再補正時の右戻り（snap-back）を防ぐこと
+- `amp-volume-control-unified` は中央寄せせず、字幕パネルに重なる分だけ左へ移動すること
+- 常駐監視に依存せず、起動時 / 再起動時の軽量な補正バーストで安定化すること
 
 ### 6.2 playback controls 調整の現状と限界
 
-- 調整の目的は、右字幕パネル（`#atv-panel-host` 配下）を表示した状態でも、Apple TV+ 側の playback controls が操作可能な範囲へ収まるようにすること。
-- 特に `.unified-controls` を可視領域中心へ寄せ、header / footer / progress / volume / skip が字幕パネル裏へ隠れないことを優先した。
-- 実装上は `content.js` の `adjustPlaybackControlsForPanel` 周辺を段階的に調整し、header / footer の safe area ベース sizing、footer 子要素の shrink 補正、skip overlay の位置補正を加えた。
-- footer 子要素には `.video-player__metadata` / `.video-player__progress` / `.video-player__tabs` / `.video-player__auto-subs-note` へ `min-width: 0`, `max-width: 100%`, `overflow: hidden`, `flex-shrink: 1` を付与する補正を入れている。
-- `auto-subs-note` は small resolution で safe area を大きく壊しやすいため、狭い横幅では `display: none` の suppress を許容している。
+- 調整の目的は、右字幕パネル（`#atv-panel-host` 配下）を表示した状態でも、Apple TV+ 側の playback controls が操作可能な範囲へ収まるようにすること
+- 特に `.unified-controls` を可視領域中心へ寄せ、header / footer / progress / volume / skip が字幕パネル裏へ隠れないことを優先した
+- 実装上は `content.js` の `adjustPlaybackControlsForPanel` 周辺を段階的に調整し、header / footer の safe area ベース sizing、footer 子要素の shrink 補正、skip overlay の位置補正を加えた
+- footer 子要素には `.video-player__metadata` / `.video-player__progress` / `.video-player__tabs` / `.video-player__auto-subs-note` へ `min-width: 0`, `max-width: 100%`, `overflow: hidden`, `flex-shrink: 1` を付与する補正を入れている
+- `auto-subs-note` は small resolution で safe area を大きく壊しやすいため、狭い横幅では `display: none` の suppress を許容している
 
 #### 実測で分かったこと
 
-- 大きめのデスクトップ解像度では、`.unified-controls` の center offset は safe area に対してほぼ 0 まで改善し、header / footer / progress も概ね操作可能範囲へ収まる。
-- 一方で small resolution では、safe area 幅に対して Apple TV+ 側の intrinsic 幅が大きく、`header` / `footer` / `progress` / `controls` の `rightOverflow` が非常に大きくなるケースが残る。
-- このレンジでは、単なる width/max-width の制御だけでなく、Apple TV+ 側の flex / grid レイアウト再計算と拡張側の transform / inline style 管理が複雑に干渉する。
-- そのため、最小差分パッチだけでは small resolution 全域で安定した controls layout を保証できないことが確認された。
+- 大きめのデスクトップ解像度では、`.unified-controls` の center offset は safe area に対してほぼ 0 まで改善し、header / footer / progress も概ね操作可能範囲へ収まる
+- 一方で small resolution では、safe area 幅に対して Apple TV+ 側の intrinsic 幅が大きく、`header` / `footer` / `progress` / `controls` の `rightOverflow` が非常に大きくなるケースが残る
+- このレンジでは、単なる width/max-width の制御だけでなく、Apple TV+ 側の flex / grid レイアウト再計算と拡張側の transform / inline style 管理が複雑に干渉する
+- そのため、最小差分パッチだけでは small resolution 全域で安定した controls layout を保証できないことが確認された
 
 #### 現状の方針
 
-- 一般的なデスクトップ解像度では、right panel ON の状態でも playback controls の操作性は実用範囲内とみなす。
-- small resolution は既知の制約として扱い、現行版では「layout が崩れる可能性がある」ことを明記する。
-- 再度この issue を扱う場合は、最小差分パッチの延長ではなく、small resolution 専用のレイアウト分岐や CSS 設計を前提に再検討する。
+- 一般的なデスクトップ解像度では、right panel ON の状態でも playback controls の操作性は実用範囲内とみなす
+- small resolution は既知の制約として扱い、現行版では「layout が崩れる可能性がある」ことを明記する
+- 再度この issue を扱う場合は、最小差分パッチの延長ではなく、small resolution 専用のレイアウト分岐や CSS 設計を前提に再検討する
 
 #### 開発者向けメモ
 
-- `adjustPlaybackControlsForPanel` の現在の挙動は、大きめ解像度では問題ない範囲なので、このレンジを壊さないことを優先する。
-- small resolution を再調整する場合は、Apple TV+ 側 DOM と flex / grid 制約を整理し直してから着手した方がよい。
-- 調査時は `safeAreaLeft/right/width` と、`header` / `footer` / `progress` / `unified` の rect ログを必ずセットで残すこと。
+- `adjustPlaybackControlsForPanel` の現在の挙動は、大きめ解像度では問題ない範囲なので、このレンジを壊さないことを優先する
+- small resolution を再調整する場合は、Apple TV+ 側 DOM と flex / grid 制約を整理し直してから着手した方がよい
+- 調査時は `safeAreaLeft/right/width` と、`header` / `footer` / `progress` / `unified` の rect ログを必ずセットで残すこと
 
 #### TODO: small resolution 再検討時
 
-- small resolution 専用の layout branch を切るか判断する。
-- footer 子要素の shrink 条件を CSS レベルで再設計する。
-- `auto-subs-note` の抑制を恒久仕様にするか再評価する。
+- small resolution 専用の layout branch を切るか判断する
+- footer 子要素の shrink 条件を CSS レベルで再設計する
+- `auto-subs-note` の抑制を恒久仕様にするか再評価する
 
 ---
 
 ## 7. 今後の優先順位
 
-1. #17: `content.js` 側で current ブロックの視覚強調と中央付近アンカーを整理する
+1. #17: `content.js` 側で current ブロックの表示モデルを、**左側マーク欄 + 下端しきい値スクロール方式**へ整理する（完了）
 2. Phase D: binder / sidebar の責務分離
 3. Phase E: layout / observer / bootstrap の最終整理
 4. #10: 単語ポップアップ UI 改修と AI タブ拡張、dictionaryapi.dev ハンドラ実装
 
-### #17 の対象 / 非対象（着手前）
+### #17 の対象 / 非対象（完了メモ）
 
 - 対象:
-  - 右字幕パネル内の current ブロック（`▶ 再生中 [⏵]`）の位置制御
-  - current ブロックの視覚的強調
+  - 右字幕パネル内の current 表示モデル整理
+  - 左側固定幅マーク欄の導入
+  - 字幕本文を変化させずに current を判別できる構造への整理
+  - 通常時はリスト固定、下端しきい値到達時のみ最小スクロールする方式への整理
   - 固定ヘッダー / 固定 debug ログセクション / 字幕スクロール領域の3層構造を維持したまま、current を見失いにくくすること
 - 非対象:
   - current セクション内へのタイトル・エピソード・`primaryLang` / `secondaryLang` / selected track label の追加表示
@@ -362,6 +373,7 @@ options.js     ← 設定の読込・保存・状態確認
   - 既存 helper / bridge / logger / debugPanel を再利用する
   - current / history / future のテキストは選択・コピー可能な DOM のまま維持する
   - 新規 timer / observer / listener は追加しない
+  - 可能な限り `renderPanel()` 周辺に処理を寄せ、重複分岐を増やさない
 
 ### 完了済み（本バッチまで）
 

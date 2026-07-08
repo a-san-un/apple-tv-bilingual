@@ -176,7 +176,7 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - 右字幕の同期が壊れない
 - secondary track の切替と追従が維持される
 - パネル表示位置や表示更新に退行がない
-- current 行のスクロール位置（先頭固定ではなくパネル中央付近）と、sync_interval 時の current 再評価タイミングの改善はこのフェーズの後続課題として扱う
+- current 行のスクロール位置は、先頭固定ではなく下端しきい値超過時のみ最小スクロールする実装として #17 で完了した
 - #4 の観測結果を、binder と sidebar UI の責務分離および current アンカー戦略見直しの材料として活用する
 
 ---
@@ -224,16 +224,16 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - ロードマップは Phase A〜E で確定済み
 - Phase A（#12）/ Phase B（#13）/ 設定ライフサイクル再整理（#14）/ ログカテゴリ整理（#8）は完了済み
 - Phase C（#16）は完了（settings-bridge.js / debug-panel.js の API 契約確定と content.js 入口委譲を反映済み）
-- #17（current ブロックの視覚強調と中央付近アンカー）を次優先として進める
+- #17（current 表示モデル整理と最小スクロール）は完了済み。次は #18 を並行調査、Phase D / E はその後の整理として残す
 
 ---
 
-## #17 着手前メモ（current ブロック改善）
+## #17 完了メモ（current 表示モデル）
 
-- 関連 issue: [#17](../../issues/17) `[P1] content.js の current ブロックを強調し、パネル内で中央付近に保つ`
+- 関連 issue: [#17](../../issues/17) `[P1] content.js の current 表示モデルを整理し、マーク移動と最小スクロールへ移行する`（完了）
 - 扱う範囲:
-  - current ブロック（`▶ 再生中 [⏵]`）の位置制御
-  - current ブロックの視覚的強調
+  - current 行の左側固定幅マーク欄による表示
+  - current ブロックの視覚的強調は、本文ではなくマーク欄へ寄せる
   - 固定ヘッダー / 固定 debug ログセクション / 字幕スクロール領域の3層構造を維持したまま、current を見失いにくくすること
 - 前提 API: settings 状態は `window.ATVB.settingsBridge`、Debug UI / log 導線は `window.ATVB.debugPanel` / `window.ATVB.logger` を再利用する。
 - 導線制約: settings 導線と debug 導線は新設せず、既存 bridge / panel / logger の接続を維持する。
@@ -250,7 +250,7 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - 実装方針:
   - 既存 helper / bridge / logger / debugPanel を再利用する
   - 新規 timer / observer / listener は追加しない
-  - current ブロック改善の中で重複コードを増やさない
+  - current 表示モデル整理の中で重複コードを増やさない
 
 ---
 
