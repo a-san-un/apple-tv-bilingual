@@ -222,8 +222,8 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 
 - ロードマップは Phase A〜E で確定済み
 - Phase A（#12）/ Phase B（#13）/ 設定ライフサイクル再整理（#14）/ ログカテゴリ整理（#8）は完了済み
-- Phase C（#16）は着手済み（Session 1: settings-bridge.js / debug-panel.js の API スケルトン追加）
-- #9（current 表示強化）は、Phase C で責務境界を確定した後に進める
+- Phase C（#16）は完了（settings-bridge.js / debug-panel.js の API 契約確定と content.js 入口委譲を反映済み）
+- #9（current 表示強化）を次優先として進める
 
 ---
 

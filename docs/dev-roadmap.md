@@ -33,7 +33,7 @@
 | [#12](../../issues/12) | content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す                 | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
 | [#13](../../issues/13) | content.js Phase B: subtitle-track-resolver.js を切り出す                          | P1     | Phase 3    | 完了     | `p1` `enhancement` `area:content`                    |
 | [#14](../../issues/14) | 設定変更時と動画初期化時を基準に字幕設定を反映し、ページ離脱時リセット依存を減らす | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
-| [#16](../../issues/16) | Phase C: settings-bridge.js / debug-panel.js を切り出す                            | P1     | Phase C    | 着手中   | `p1` `enhancement` `area:content`                    |
+| [#16](../../issues/16) | Phase C: settings-bridge.js / debug-panel.js を切り出す                            | P1     | Phase C    | **完了** | `p1` `enhancement` `area:content`                    |
 
 ---
 
@@ -84,7 +84,7 @@
 - [x] [#12] content.js の Phase A 分割（WebVTT 正規化と Debug logger の切り出し）
 - [x] [#13] content.js の Phase B 分割（subtitle-track-resolver の切り出し）
 - [x] [#14] 設定ライフサイクル再整理（設定変更時 / 動画初期化時を主トリガー化）
-- [ ] [#16] Phase C: settings-bridge / debug-panel の責務分離（着手済み: API スケルトン追加と content.js 入口委譲）
+- [x] [#16] Phase C: settings-bridge / debug-panel の責務分離（完了: API 契約確定と content.js 入口委譲の本置換）
 
 ---
 
@@ -187,7 +187,6 @@
    - content.js の Phase A 分割（#12）
 
 4. 後続タスク
-   - Phase C: settings-bridge / debug-panel の責務分離（#16）
    - `content.js` の current 表示強化（#9）
    - 単語ポップアップ UI 改修と AI タブ拡張（#10）
 
@@ -195,9 +194,8 @@
 
 ## 次の優先タスク（次バッチ）
 
-Phase 1〜3 の主要項目（#3/#4/#5/#6/#7/#8/#12/#13/#14）完了後、次の順で進める。
+Phase 1〜3 の主要項目（#3/#4/#5/#6/#7/#8/#12/#13/#14/#16）完了後、次の順で進める。
 
-- Phase C（#16）: settings-bridge / debug-panel の責務分離
 - #9: `content.js` の current 表示強化
 - Phase D: binder / sidebar の責務分離
 - Phase E: layout / observer / bootstrap の最終整理
