@@ -88,6 +88,7 @@
     lastAfterRenderSecondarySnapshotSignature: "",
     lastSecondarySyncContext: "",
     lastPrimaryRecoveryAttemptAt: 0,
+    lastObservedVideoTime: null,
     lastPrimaryText: "",
     panelVisible: true,
     ejdictMap: null,
@@ -951,6 +952,7 @@
         state.video = found.video;
         state.dialogEl = found.dialog;
         state.lastVideoSrcKey = nextVideoSrcKey;
+        state.lastObservedVideoTime = null;
         reloadSettingsAndReinitialize("video_changed");
       } else if (found && state.video) {
         const switched = syncHistoryContextWithPlayback("content_key_changed");
@@ -958,6 +960,20 @@
           renderCurrentSnapshot();
           renderPanel();
         }
+      }
+
+      const currentVideoTime = Number(state.video?.currentTime ?? 0);
+      const previousObservedTime = Number(state.lastObservedVideoTime);
+      const largeSeekDetected =
+        Number.isFinite(previousObservedTime) &&
+        Number.isFinite(currentVideoTime) &&
+        Math.abs(currentVideoTime - previousObservedTime) > 6;
+      state.lastObservedVideoTime = Number.isFinite(currentVideoTime)
+        ? currentVideoTime
+        : null;
+
+      if (largeSeekDetected) {
+        applyCurrentStateToPanel("sync_interval_large_seek_resync");
       }
 
       const effectiveSecondaryLanguage =
@@ -2175,17 +2191,25 @@
           padding: 10px 14px; background: #111;
           border-bottom: 1px solid #333; flex-shrink: 0;
         }
+        .panel-header-actions {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
         #panel-header span {
           font-size: 12px; color: #888; font-weight: 600;
           letter-spacing: 0.05em; text-transform: uppercase;
         }
+        #settings-btn,
         #close-btn {
           background: none; border: 1px solid #444; color: #aaa;
           cursor: pointer; border-radius: 4px; padding: 2px 8px; font-size: 11px;
         }
+        #settings-btn { padding: 2px 7px; }
+        #settings-btn:hover,
         #close-btn:hover { background: #333; color: #fff; }
         #panel-scroll {
-          flex: 1; overflow-y: auto; padding: 12px 14px; scroll-behavior: smooth;
+          flex: 1; overflow-y: auto; padding: 12px 14px; scroll-behavior: auto;
         }
         #panel-scroll::-webkit-scrollbar { width: 4px; }
         #panel-scroll::-webkit-scrollbar-track { background: #222; }
@@ -2194,22 +2218,37 @@
           margin-bottom: 12px; padding-bottom: 12px;
           border-bottom: 1px solid #2a2a2a; cursor: pointer;
         }
-        .subtitle-block:hover { background: rgba(255,255,255,0.04); border-radius: 6px; padding: 4px 6px; }
-        .subtitle-block.current {
-          background: #2a2a2a; border-radius: 6px; padding: 8px;
-          border-left: 2px solid #ffe566; border-bottom: none; margin-bottom: 12px;
+        .subtitle-row {
+          display: grid;
+          grid-template-columns: 30px minmax(0, 1fr);
+          column-gap: 8px;
+          align-items: stretch;
+        }
+        .subtitle-mark {
+          width: 30px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .subtitle-mark svg {
+          width: 26px;
+          height: 26px;
+          display: block;
+          margin: 0;
+          stroke: #e8edf4;
+          stroke-width: 2.2;
+          fill: none;
+          opacity: 0.96;
+        }
+        .subtitle-mark svg .play-core {
+          fill: #e8edf4;
+          stroke: none;
         }
         .subtitle-time {
-          font-size: 10px; color: #555; margin-bottom: 4px; font-variant-numeric: tabular-nums;
+          font-size: 10px; color: #777; margin-bottom: 4px; font-variant-numeric: tabular-nums;
         }
-        .subtitle-block.current .subtitle-time { color: #ffe566; }
-        .subtitle-primary { color: #aaa; font-size: 12px; line-height: 1.5; margin-bottom: 2px; }
-        .subtitle-block.current .subtitle-primary { color: #fff; font-size: 14px; font-weight: 500; }
-        .subtitle-secondary { color: #666; font-size: 11px; line-height: 1.5; }
-        .subtitle-block.current .subtitle-secondary { color: #ccc; font-size: 13px; }
-        .subtitle-future .subtitle-primary  { color: #555; }
-        .subtitle-future .subtitle-secondary { color: #444; }
-        .subtitle-future .subtitle-time      { color: #3a3a3a; }
+        .subtitle-primary { color: #aaa; font-size: 16px; font-weight: 600; line-height: 1.55; margin-bottom: 4px; }
+        .subtitle-secondary { color: #888; font-size: 15px; font-weight: 550; line-height: 1.55; }
         .debug-section {
           padding: 10px 14px;
           border-bottom: 1px solid #2a2a2a;
@@ -2292,7 +2331,10 @@
       <div id="panel" class="dual-subtitles-panel" data-dual-subtitles-panel>
         <div id="panel-header">
           <span>📋 字幕履歴</span>
-          <button id="close-btn">✕ 閉じる</button>
+          <div class="panel-header-actions">
+            <button id="settings-btn" type="button" title="設定">⚙️</button>
+            <button id="close-btn" type="button">✕ 閉じる</button>
+          </div>
         </div>
         <div id="debug-section" class="debug-section">
           <div class="debug-section__header">
@@ -2324,6 +2366,13 @@
     state.panelShadowRoot
       .getElementById("close-btn")
       .addEventListener("click", () => togglePanel());
+    state.panelShadowRoot
+      .getElementById("settings-btn")
+      .addEventListener("click", () => {
+        try {
+          chrome.runtime.sendMessage({ type: "OPEN_OPTIONS_PAGE" });
+        } catch (_) {}
+      });
 
     ensureSecondarySubtitleElement();
   }
@@ -2851,20 +2900,23 @@
     list.innerHTML = allBlocks
       .map((block) => {
         const isCurrent = block.state === "current";
-        const isFuture = block.state === "future";
-        const cls = isCurrent
-          ? "subtitle-block current"
-          : isFuture
-            ? "subtitle-block subtitle-future"
-            : "subtitle-block";
+        const cls = "subtitle-block";
         const mid = isCurrent ? 'id="current-block"' : "";
+        const mark = isCurrent
+          ? `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" /><polygon class="play-core" points="10,8 17,12 10,16" /></svg>`
+          : "";
         const pText = makeClickableSpans(block.primary, block.primary);
         const sText = makeClickableSpans(block.secondary, block.primary);
         return `
         <div class="${cls}" ${mid} data-time="${block.startTime}">
-          <div class="subtitle-time">${isCurrent ? "▶ " : ""}${formatTime(block.startTime)}</div>
-          <div class="subtitle-primary">${pText}</div>
-          ${sText ? `<div class="subtitle-secondary">${sText}</div>` : ""}
+          <div class="subtitle-row">
+            <div class="subtitle-mark">${mark}</div>
+            <div class="subtitle-content">
+              <div class="subtitle-time">${formatTime(block.startTime)}</div>
+              <div class="subtitle-primary">${pText}</div>
+              ${sText ? `<div class="subtitle-secondary">${sText}</div>` : ""}
+            </div>
+          </div>
         </div>
       `;
       })
@@ -2902,8 +2954,26 @@
     });
 
     const currentBlock = state.panelShadowRoot.getElementById("current-block");
-    if (currentBlock) {
-      currentBlock.scrollIntoView({ behavior: "smooth", block: "start" });
+    const panelScroll = state.panelShadowRoot.getElementById("panel-scroll");
+    if (currentBlock && panelScroll) {
+      const scrollRect = panelScroll.getBoundingClientRect();
+      const currentRect = currentBlock.getBoundingClientRect();
+      const topThresholdY =
+        scrollRect.top + Math.max(32, currentRect.height * 0.8);
+      const bottomThresholdY =
+        scrollRect.bottom - Math.max(48, currentRect.height * 1.5);
+      if (
+        currentRect.top < topThresholdY ||
+        currentRect.bottom > bottomThresholdY
+      ) {
+        const targetTopOffset = Math.max(28, Math.min(72, currentRect.height));
+        const targetTopY = scrollRect.top + targetTopOffset;
+        const scrollBy = currentRect.top - targetTopY;
+        panelScroll.scrollTo({
+          top: Math.max(0, panelScroll.scrollTop + scrollBy),
+          behavior: "smooth",
+        });
+      }
     }
   }
 
@@ -3485,6 +3555,7 @@
       saveHistoryForContentKey(state.currentContentKey, []);
     }
     state.lastPrimaryText = "";
+    state.lastObservedVideoTime = null;
     if (options.keepPanelVisible !== true) state.panelVisible = true;
   }
 

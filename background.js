@@ -289,6 +289,24 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "OPEN_OPTIONS_PAGE") {
+    (async () => {
+      try {
+        await chrome.runtime.openOptionsPage();
+        await logBackground("options page opened", {
+          reason: msg.reason || "settings_button",
+        });
+        sendResponse({ ok: true });
+      } catch (error) {
+        await logBackground("options page open failed", {
+          error: String(error),
+        });
+        sendResponse({ ok: false, error: String(error) });
+      }
+    })();
+    return true;
+  }
+
   // ---------- Unified settings dispatch ----------
   if (msg.type === "APPLY_SETTINGS_TO_APPLE_TV") {
     (async () => {
