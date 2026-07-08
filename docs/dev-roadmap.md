@@ -28,7 +28,7 @@
 | [#6](../../issues/6)   | popup / options の字幕言語一覧を動画状態から分離して固定化する                     | P0     | Phase 1    | **完了** | `p0` `bug` `enhancement` `area:popup` `area:content` |
 | [#7](../../issues/7)   | secondaryLang の空値保存とブラウザ言語 fallback の挙動を統一する                   | P0     | Phase 1    | 完了     | `p0` `bug` `enhancement` `area:popup` `area:content` |
 | [#8](../../issues/8)   | Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する                           | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:options` `area:content`     |
-| [#9](../../issues/9)   | content.js の current 表示強化（タイトル・トラック情報の常時表示）                 | P1     | 後続タスク | 未完了   | GitHub issue の実内容に合わせて整理                  |
+| [#17](../../issues/17) | content.js の current 表示強化（タイトル・トラック情報の常時表示）                | P1     | 次タスク   | 未着手   | `p1` `enhancement` `area:content`                    |
 | [#10](../../issues/10) | 単語ポップアップ UI 刷新・AI タブ拡張と dictionaryapi.dev ハンドラ実装             | P2     | 後続タスク | 未完了   | GitHub issue の実内容に合わせて整理                  |
 | [#12](../../issues/12) | content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す                 | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
 | [#13](../../issues/13) | content.js Phase B: subtitle-track-resolver.js を切り出す                          | P1     | Phase 3    | 完了     | `p1` `enhancement` `area:content`                    |
@@ -96,7 +96,7 @@
 
 - ATV DEBUG の独立表示を廃止し、右字幕パネル下部の折り畳みセクションへ統合。
 - Debug 統合は完了。
-- current 行の再評価タイミングや中央配置の改善は、Issue #4 の完了範囲に含めず、`content.js` 分割 / current 表示強化（#9）側で別途扱う。
+- current 行の再評価タイミングや中央配置の改善は、Issue #4 の完了範囲に含めず、`content.js` 分割 / current 表示強化（#17）側で別途扱う。
 
 **#4 観測済み追記（Step 14 切り分け結果）**
 
@@ -187,7 +187,7 @@
    - content.js の Phase A 分割（#12）
 
 4. 後続タスク
-   - `content.js` の current 表示強化（#9）
+   - `content.js` の current 表示強化（#17）
    - 単語ポップアップ UI 改修と AI タブ拡張（#10）
 
 ---
@@ -196,12 +196,19 @@
 
 Phase 1〜3 の主要項目（#3/#4/#5/#6/#7/#8/#12/#13/#14/#16）完了後、次の順で進める。
 
-- #9: `content.js` の current 表示強化
+- #17: `content.js` の current 表示強化
 - Phase D: binder / sidebar の責務分離
 - Phase E: layout / observer / bootstrap の最終整理
 - 単語ポップアップ UI 改修（辞書 / AI タブ拡張）（#10）
 - AI プロバイダー連携（説明する / 例 / 文法タブ）
 - `background.js` の `dictionaryapi.dev` ハンドラ実装
+
+### #17 着手前メモ（対象 / 非対象）
+
+- 対象: 右字幕パネルの current セクションで、タイトル / エピソード情報 / `primaryLang` / `secondaryLang` / selected track label（必要に応じて track detail）を常時表示する。
+- 前提 API: settings 状態は `window.ATVB.settingsBridge`、Debug UI / log 導線は `window.ATVB.debugPanel` / `window.ATVB.logger` を再利用する。
+- 非対象: `content.js` の current 表示強化本体以外（binder / sidebar / observer / bootstrap 分離、settings-bridge.js / debug-panel.js API 変更、resolver / fallback 仕様変更）は今回のスコープに含めない。
+- 重複回避方針: 既存 helper / bridge / logger / debugPanel を再利用し、current 表示強化の中で重複コードを増やさない。
 
 ---
 

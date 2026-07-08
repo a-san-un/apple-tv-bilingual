@@ -1,6 +1,6 @@
-# Apple TV+ Bilingual Subtitles phase-2 設計まとめ
+# Apple TV+ Bilingual Subtitles phase-3 設計まとめ
 
-この文書は、Apple TV+ Bilingual Subtitles phase-2（v2.6.3）の現状コードで確認できたこと、合意済み仕様、今後の整理方針をまとめた設計メモです。
+この文書は、Apple TV+ Bilingual Subtitles phase-3（v2.6.3）の現状コードで確認できたこと、合意済み仕様、今後の整理方針をまとめた設計メモです。
 
 ---
 
@@ -182,6 +182,8 @@ content 初期化
   - 1 行目: primary
   - 2 行目: secondary
 - current 行は視覚的に強調する
+- 次タスク（#17）では、current セクション内にタイトル / エピソード情報 / `primaryLang` / `secondaryLang` / selected track label（必要に応じて track detail）を常時表示する。
+- #17 では settings / debug の新導線は追加せず、`window.ATVB.settingsBridge` と `window.ATVB.debugPanel` / `window.ATVB.logger` を再利用する。
 - 履歴ブロックをクリックしてシークできる現機能は維持する
 
 ```text
@@ -328,10 +330,16 @@ options.js     ← 設定の読込・保存・状態確認
 
 ## 7. 今後の優先順位
 
-1. #9: `content.js` 側で current 表示強化（タイトル・トラック情報の常時表示）
+1. #17: `content.js` 側で current 表示強化（タイトル・トラック情報の常時表示）
 2. Phase D: binder / sidebar の責務分離
 3. Phase E: layout / observer / bootstrap の最終整理
 4. #10: 単語ポップアップ UI 改修と AI タブ拡張、dictionaryapi.dev ハンドラ実装
+
+### #17 の対象 / 非対象（着手前）
+
+- 対象: 右字幕パネル current セクションの常時表示情報整理（タイトル、エピソード情報、`primaryLang` / `secondaryLang`、selected track label / track detail）。
+- 非対象: binder / sidebar / observer / bootstrap 分離、`settings-bridge.js` / `debug-panel.js` API 変更、resolver / fallback 仕様変更。
+- 重複回避方針: 既存 helper / bridge / logger / debugPanel を再利用し、current 表示強化の中で重複コードを増やさない。
 
 ### 完了済み（本バッチまで）
 

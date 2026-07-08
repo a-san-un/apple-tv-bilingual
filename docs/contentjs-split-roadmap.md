@@ -27,7 +27,7 @@
 - `content.js` の肥大化を安全に減らす
 - 既存ロジックを壊さずに最初の分離を行う
 - popup / options / background / content から同じログ基盤を使える状態を先に作る
-- 後続の #8（ログカテゴリ整理）と #9（current 表示強化）の土台を整える
+- 後続の #8（ログカテゴリ整理）と #17（current 表示強化）の土台を整える
 
 ### ルール
 
@@ -136,7 +136,7 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - ATV DEBUG の独立表示は #4 で廃止し、右字幕パネル下部の折り畳み Debug セクションへ統合済みである
 - Debug UI API は統合済み UI を前提に、logger / resolver / binder と疎結合で接続できる
 
-### #9 へ渡す read 契約（Phase C 仕上げ）
+### #17 へ渡す read 契約（Phase C 仕上げ）
 
 - settings 状態の取得は `window.ATVB.settingsBridge` を唯一の入口とする。
   - `getCurrentSettings()` から `requestedSettings` / `effectiveSettings` / `requestedSecondaryLang` / `resolvedSecondaryLanguage` を取得する。
@@ -148,7 +148,7 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
   - タイトル・エピソード情報（Apple TV+ DOM 依存）
   - current cue / history / future の表示用データ
   - track detail（selected track language / mode / cues など）
-- #9 では settings 導線と debug 導線を増やさない。
+- #17 では settings 導線と debug 導線を増やさない。
   - 設定は settingsBridge、Debug UI は debugPanel/logger を再利用する。
 
 ---
@@ -223,11 +223,22 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - ロードマップは Phase A〜E で確定済み
 - Phase A（#12）/ Phase B（#13）/ 設定ライフサイクル再整理（#14）/ ログカテゴリ整理（#8）は完了済み
 - Phase C（#16）は完了（settings-bridge.js / debug-panel.js の API 契約確定と content.js 入口委譲を反映済み）
-- #9（current 表示強化）を次優先として進める
+- #17（current 表示強化）を次優先として進める
 
 ---
 
-## Phase A 着手前の issue 化方針
+## #17 着手前メモ（current 表示強化）
+
+- 関連 issue: [#17](../../issues/17) `[P1] content.js の current 表示を強化し、タイトル・トラック情報を字幕パネル内に常時表示する`
+- 扱う範囲: current セクションの常時表示情報（タイトル / エピソード情報 / `primaryLang` / `secondaryLang` / selected track label、必要に応じて track detail）を整理する。
+- 前提 API: settings 状態は `window.ATVB.settingsBridge`、Debug UI / log 導線は `window.ATVB.debugPanel` / `window.ATVB.logger` を再利用する。
+- 導線制約: settings 導線と debug 導線は新設せず、既存 bridge / panel / logger の接続を維持する。
+- 非対象: binder / sidebar / observer / bootstrap の分離、`settings-bridge.js` / `debug-panel.js` API 変更、resolver / fallback 仕様変更はこの issue では扱わない。
+- 実装方針: 既存 helper / bridge / logger / debugPanel を再利用し、current 表示強化の中で重複コードを増やさない。
+
+---
+
+## 履歴メモ: Phase A 着手前の issue 化方針（完了済み）
 
 - Phase A は `content.js` 分割の最初の実装単位として、着手前に専用 issue を作成してから進める。
 - issue の目的は、`vtt-normalizer.js` / `debug-logger.js` 切り出しの対象範囲・非対象範囲・確認項目を固定し、Phase B 以降へ責務を持ち越さないようにすること。
