@@ -34,6 +34,7 @@
 | [#13](../../issues/13) | content.js Phase B: subtitle-track-resolver.js を切り出す                          | P1     | Phase 3    | 完了     | `p1` `enhancement` `area:content`                    |
 | [#14](../../issues/14) | 設定変更時と動画初期化時を基準に字幕設定を反映し、ページ離脱時リセット依存を減らす | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
 | [#16](../../issues/16) | Phase C: settings-bridge.js / debug-panel.js を切り出す                            | P1     | Phase C    | **完了** | `p1` `enhancement` `area:content`                    |
+| [#18](../../issues/18) | primaryLang を英語以外にした場合に主字幕が表示されない問題を切り分ける             | P1     | 並行調査   | 未着手   | `p1` `bug` `area:content`                            |
 
 ---
 
