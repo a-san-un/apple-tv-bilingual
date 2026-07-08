@@ -1,6 +1,6 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - debug-logger.js
-// version: 2.6.2
+// version: 2.6.3
 // 役割: Debug ログの整形・保存・通知を担当する。
 // Phase A: content.js から logger 責務を切り出して window.ATVB.logger で公開する。
 // =============================================================

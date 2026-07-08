@@ -1,6 +1,6 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - debug-panel.js
-// version: 2.6.2
+// version: 2.6.3
 // 役割: 右字幕パネル下部の Debug UI 入口を提供する。
 // Phase C: mount/update/clear/unmount の API スケルトンのみを固定する。
 // =============================================================

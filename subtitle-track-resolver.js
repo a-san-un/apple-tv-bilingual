@@ -1,6 +1,6 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - subtitle-track-resolver.js
-// version: 2.6.2
+// version: 2.6.3
 // 役割: 字幕トラック選定（resolver）責務を担当する。
 // Phase B: content.js から resolver 関連関数を切り出して window.ATVB.resolver で公開する。
 // =============================================================

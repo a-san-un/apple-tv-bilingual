@@ -1,6 +1,6 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - content.js
-// version: 2.6.2
+// version: 2.6.3
 // Issue #4: Debug 配置修正と再生ページ限定 build、初回字幕回復導線を最小差分で整理
 // 既存の起動導線は維持し、layout/observer/retry/polling は変更しない
 // Phase A: VTT 正規化と logger を外部モジュールへ分離し、ここでは橋渡しを担当する。
