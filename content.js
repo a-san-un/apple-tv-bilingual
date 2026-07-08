@@ -271,6 +271,59 @@
     return result;
   }
 
+  function loadSettingsSnapshot(reason = "unknown") {
+    const loadFromStorage = () =>
+      new Promise((resolve, reject) => {
+        chrome.storage.sync.get(DEFAULT_SETTINGS, (rawSettings = {}) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+
+          const mergedRequested = { ...DEFAULT_SETTINGS, ...rawSettings };
+          const resolvedSettings = applySecondaryLangFallback(mergedRequested);
+          resolve({
+            requestedSettings: mergedRequested,
+            effectiveSettings: resolvedSettings,
+            requestedSecondaryLang: rawSettings.secondaryLang || "",
+          });
+        });
+      });
+
+    const settingsBridge = window.ATVB?.settingsBridge;
+    if (!settingsBridge?.loadSettings) {
+      return loadFromStorage();
+    }
+
+    return settingsBridge
+      .loadSettings({
+        defaults: DEFAULT_SETTINGS,
+        applyFallback: applySecondaryLangFallback,
+      })
+      .then(() => {
+        const snapshot = settingsBridge.getCurrentSettings?.() || {};
+        const requestedSettings = {
+          ...DEFAULT_SETTINGS,
+          ...(snapshot.requestedSettings || {}),
+        };
+        const effectiveSettings =
+          snapshot.effectiveSettings || snapshot.settings || requestedSettings;
+        return {
+          requestedSettings,
+          effectiveSettings: { ...effectiveSettings },
+          requestedSecondaryLang:
+            snapshot.requestedSecondaryLang ?? requestedSettings.secondaryLang ?? "",
+        };
+      })
+      .catch((error) => {
+        logContentError("settings bridge load failed", {
+          reason,
+          error: String(error),
+        });
+        return loadFromStorage();
+      });
+  }
+
   (async function loadEJDict() {
     try {
       const url = chrome.runtime.getURL("dict/ejdict.json");
@@ -3097,37 +3150,18 @@
       }
     };
 
-    const loadSettingsFallback = () => {
-      chrome.storage.sync.get(DEFAULT_SETTINGS, (rawSettings) => {
-        state.requestedSecondaryLang = rawSettings.secondaryLang || "";
-        state.contentSettings = applySecondaryLangFallback(rawSettings);
+    loadSettingsSnapshot(reason)
+      .then((snapshot) => {
+        state.requestedSecondaryLang = snapshot.requestedSecondaryLang || "";
+        state.contentSettings = { ...snapshot.effectiveSettings };
         proceedWithReinitialize();
-      });
-    };
-
-    const settingsBridge = window.ATVB?.settingsBridge;
-    if (settingsBridge?.loadSettings) {
-      settingsBridge
-        .loadSettings({
-          defaults: DEFAULT_SETTINGS,
-          applyFallback: applySecondaryLangFallback,
-          onLoaded: (resolvedSettings, rawSettings) => {
-            state.requestedSecondaryLang = rawSettings?.secondaryLang || "";
-            state.contentSettings = { ...resolvedSettings };
-            proceedWithReinitialize();
-          },
-        })
-        .catch((error) => {
-          logContentError("settings bridge load failed", {
-            reason,
-            error: String(error),
-          });
-          loadSettingsFallback();
+      })
+      .catch((error) => {
+        logContentError("settings load failed", {
+          reason,
+          error: String(error),
         });
-      return;
-    }
-
-    loadSettingsFallback();
+      });
   }
 
   function runInitialCueRecoveryRender(reason = "unknown") {
@@ -3439,10 +3473,10 @@
   }
 
   function loadSettingsFromSync() {
-    const loadSettingsFallback = () => {
-      chrome.storage.sync.get(DEFAULT_SETTINGS, (rawSettings) => {
-        state.requestedSecondaryLang = rawSettings.secondaryLang || "";
-        state.contentSettings = applySecondaryLangFallback(rawSettings);
+    loadSettingsSnapshot("initial_load")
+      .then((snapshot) => {
+        state.requestedSecondaryLang = snapshot.requestedSecondaryLang || "";
+        state.contentSettings = { ...snapshot.effectiveSettings };
         const effectiveSecondaryLanguage =
           state.requestedSecondaryLang || state.contentSettings.secondaryLang;
         if (state.video && effectiveSecondaryLanguage) {
@@ -3458,47 +3492,13 @@
           requestedSecondaryLang: state.requestedSecondaryLang,
         });
         startBilingual();
-      });
-    };
-
-    const settingsBridge = window.ATVB?.settingsBridge;
-    if (settingsBridge?.loadSettings) {
-      settingsBridge
-        .loadSettings({
-          defaults: DEFAULT_SETTINGS,
-          applyFallback: applySecondaryLangFallback,
-          onLoaded: (resolvedSettings, rawSettings) => {
-            state.requestedSecondaryLang = rawSettings?.secondaryLang || "";
-            state.contentSettings = { ...resolvedSettings };
-            const effectiveSecondaryLanguage =
-              state.requestedSecondaryLang ||
-              state.contentSettings.secondaryLang;
-            if (state.video && effectiveSecondaryLanguage) {
-              syncSecondarySubtitleTrack(
-                state.video,
-                effectiveSecondaryLanguage,
-                renderSecondarySubtitle,
-              );
-              state.secondaryTrack = secondaryTrackBound;
-            }
-            logContentSettings("Loaded settings from sync", {
-              ...state.contentSettings,
-              requestedSecondaryLang: state.requestedSecondaryLang,
-            });
-            startBilingual();
-          },
-        })
-        .catch((error) => {
-          logContentError("settings bridge load failed", {
-            reason: "initial_load",
-            error: String(error),
-          });
-          loadSettingsFallback();
+      })
+      .catch((error) => {
+        logContentError("settings load failed", {
+          reason: "initial_load",
+          error: String(error),
         });
-      return;
-    }
-
-    loadSettingsFallback();
+      });
   }
 
   function restartBilingual(nextSettings = null, reason = "unknown") {
@@ -3594,7 +3594,7 @@
         state.secondaryTrack = secondaryTrackBound;
       }
 
-      restartBilingual(updated, "SETTINGS_CHANGED");
+      restartBilingual(next, "SETTINGS_CHANGED");
 
       const appliedRequestedSecondaryLang = state.requestedSecondaryLang;
       const appliedResolvedSecondaryLanguage = resolvedSecondaryLanguage;

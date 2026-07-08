@@ -10,7 +10,12 @@
   window.ATVB = window.ATVB || {};
 
   const listeners = new Set();
-  let currentSettings = null;
+  let bridgeState = {
+    requestedSettings: {},
+    effectiveSettings: {},
+    requestedSecondaryLang: "",
+    resolvedSecondaryLanguage: "",
+  };
 
   function cloneSettings(settings) {
     if (!settings || typeof settings !== "object") return {};
@@ -23,6 +28,18 @@
     return cloneSettings(resolved);
   }
 
+  function setBridgeState(requestedSettings, effectiveSettings) {
+    const nextRequested = cloneSettings(requestedSettings);
+    const nextEffective = cloneSettings(effectiveSettings);
+    bridgeState = {
+      requestedSettings: nextRequested,
+      effectiveSettings: nextEffective,
+      requestedSecondaryLang: nextRequested.secondaryLang ?? "",
+      resolvedSecondaryLanguage: nextEffective.secondaryLang ?? "",
+    };
+    return getCurrentSettings();
+  }
+
   function notifySettingsChanged(payload) {
     for (const listener of listeners) {
       try {
@@ -32,7 +49,14 @@
   }
 
   function getCurrentSettings() {
-    return cloneSettings(currentSettings);
+    return {
+      requestedSettings: cloneSettings(bridgeState.requestedSettings),
+      effectiveSettings: cloneSettings(bridgeState.effectiveSettings),
+      requestedSecondaryLang: bridgeState.requestedSecondaryLang || "",
+      resolvedSecondaryLanguage: bridgeState.resolvedSecondaryLanguage || "",
+      // 既存呼び出しとの互換のため、effective settings を settings にも積む。
+      settings: cloneSettings(bridgeState.effectiveSettings),
+    };
   }
 
   function loadSettings(options = {}) {
@@ -52,13 +76,17 @@
 
         const merged = { ...defaults, ...cloneSettings(rawSettings) };
         const resolved = applyFallbackIfNeeded(merged, applyFallback);
-        currentSettings = cloneSettings(resolved);
+        const snapshot = setBridgeState(merged, resolved);
 
         if (onLoaded) {
-          onLoaded(cloneSettings(currentSettings), cloneSettings(rawSettings));
+          onLoaded(
+            cloneSettings(snapshot.effectiveSettings),
+            cloneSettings(rawSettings),
+            snapshot,
+          );
         }
 
-        resolve(cloneSettings(currentSettings));
+        resolve(cloneSettings(snapshot.effectiveSettings));
       });
     });
   }
@@ -83,19 +111,19 @@
       message.settings && typeof message.settings === "object"
         ? cloneSettings(message.settings)
         : {};
-    const requestedSecondaryLang = incoming.secondaryLang ?? "";
-    const base = currentSettings ? cloneSettings(currentSettings) : {};
-    const merged = { ...base, ...incoming };
+    const baseRequested = cloneSettings(bridgeState.requestedSettings);
+    const merged = { ...baseRequested, ...incoming };
     const resolved = applyFallbackIfNeeded(merged, options.applyFallback);
-
-    currentSettings = cloneSettings(resolved);
+    const snapshot = setBridgeState(merged, resolved);
 
     const payload = {
       handled: true,
       reason: message.reason || "unknown",
-      settings: cloneSettings(currentSettings),
-      requestedSecondaryLang,
-      resolvedSecondaryLanguage: currentSettings.secondaryLang || "",
+      settings: cloneSettings(snapshot.effectiveSettings),
+      requestedSettings: cloneSettings(snapshot.requestedSettings),
+      effectiveSettings: cloneSettings(snapshot.effectiveSettings),
+      requestedSecondaryLang: snapshot.requestedSecondaryLang,
+      resolvedSecondaryLanguage: snapshot.resolvedSecondaryLanguage,
     };
 
     notifySettingsChanged(payload);
