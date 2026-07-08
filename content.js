@@ -312,7 +312,9 @@
           requestedSettings,
           effectiveSettings: { ...effectiveSettings },
           requestedSecondaryLang:
-            snapshot.requestedSecondaryLang ?? requestedSettings.secondaryLang ?? "",
+            snapshot.requestedSecondaryLang ??
+            requestedSettings.secondaryLang ??
+            "",
         };
       })
       .catch((error) => {
@@ -1458,9 +1460,9 @@
 
   function getPlaybackPanelLayoutAnchor() {
     return (
+      document.querySelector(PLAYBACK_CONTROLS_LAYOUT.panelSelector) ||
       document.querySelector(".dual-subtitles-secondary") ||
-      document.querySelector("[data-secondary-subtitle]") ||
-      document.querySelector(PLAYBACK_CONTROLS_LAYOUT.panelSelector)
+      document.querySelector("[data-secondary-subtitle]")
     );
   }
 
