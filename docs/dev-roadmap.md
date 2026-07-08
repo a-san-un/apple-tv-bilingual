@@ -28,7 +28,7 @@
 | [#6](../../issues/6)   | popup / options の字幕言語一覧を動画状態から分離して固定化する                     | P0     | Phase 1    | **完了** | `p0` `bug` `enhancement` `area:popup` `area:content` |
 | [#7](../../issues/7)   | secondaryLang の空値保存とブラウザ言語 fallback の挙動を統一する                   | P0     | Phase 1    | 完了     | `p0` `bug` `enhancement` `area:popup` `area:content` |
 | [#8](../../issues/8)   | Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する                           | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:options` `area:content`     |
-| [#17](../../issues/17) | content.js の current 表示強化（タイトル・トラック情報の常時表示）                | P1     | 次タスク   | 未着手   | `p1` `enhancement` `area:content`                    |
+| [#17](../../issues/17) | content.js の current 表示強化（タイトル・トラック情報の常時表示）                 | P1     | 次タスク   | 未着手   | `p1` `enhancement` `area:content`                    |
 | [#10](../../issues/10) | 単語ポップアップ UI 刷新・AI タブ拡張と dictionaryapi.dev ハンドラ実装             | P2     | 後続タスク | 未完了   | GitHub issue の実内容に合わせて整理                  |
 | [#12](../../issues/12) | content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す                 | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
 | [#13](../../issues/13) | content.js Phase B: subtitle-track-resolver.js を切り出す                          | P1     | Phase 3    | 完了     | `p1` `enhancement` `area:content`                    |
