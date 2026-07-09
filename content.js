@@ -2178,7 +2178,9 @@
 
   // [UI shell: panel/debug]
 
-  function buildPanelDebugShellHTML() {
+  // [UI shell: debug] パネル内 debug セクションの HTML 骨格を返す。
+// wiring・mount は行わない。buildPanelShellHTML から呼ばれる。
+function buildPanelDebugShellHTML() {
     return `
       <div id="debug-section" class="debug-section">
         <div class="debug-section__header">
@@ -2203,7 +2205,9 @@
     `;
   }
 
-  function buildPanelShellHTML() {
+  // [UI shell: panel] パネル全体の HTML 骨格（CSS link・header・debug shell・scroll area）を返す。
+// DOM への挿入・wiring・mount は createRightPanel / wirePanelHeaderActions が担う。
+function buildPanelShellHTML() {
     const panelCssUrl = chrome.runtime.getURL("panel.css");
     return `
       <link rel="stylesheet" href="${panelCssUrl}">
@@ -2498,7 +2502,9 @@
     wireSubtitlePopupUiEvents();
   }
 
-  function createDebugPanel() {
+  // [debug mount] debug panel モジュールを panelShadowRoot にマウントする。
+// HTML shell は buildPanelDebugShellHTML が担い、ここでは外部 debugPanel.mount の呼び出しのみを行う。
+function createDebugPanel() {
     if (!state.panelShadowRoot) return;
     state.debugPanelRoot = state.panelShadowRoot;
     const debugPanel = window.ATVB?.debugPanel;
