@@ -780,6 +780,7 @@
     document.head.appendChild(style);
   }
 
+  // [render: panel shell apply]
   function renderSecondarySubtitle(text, track) {
     let el = ensureSecondarySubtitleElement();
     if (!el) return;
@@ -2750,7 +2751,7 @@
       .join("<br>");
   }
 
-  // [render]
+  // [render: panel list apply]
   function renderPanel() {
     if (!state.panelShadowRoot) return;
     const list = state.panelShadowRoot.getElementById("subtitle-list");
@@ -2972,6 +2973,7 @@
     state.overlayRoot.innerHTML = buildOverlayShellHTML();
   }
 
+  // [render: overlay shell apply]
   function updateOverlay(primaryText, secondaryText) {
     const root = state.overlayRoot;
     if (!root) return;
@@ -3156,6 +3158,7 @@
     return false;
   }
 
+  // [render: panel shell state sync]
   function applyCurrentStateToPanel(reason = "unknown") {
     renderCurrentSnapshot();
     renderPanel();
