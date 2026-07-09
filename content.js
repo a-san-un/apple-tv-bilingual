@@ -1902,6 +1902,7 @@
     }
   }
 
+  // [observer/layout]
   function stopPlaybackControlLayoutObservers() {
     if (state.playbackControlsMutationObserver) {
       state.playbackControlsMutationObserver.disconnect();
@@ -2174,7 +2175,7 @@
     state.overlayRoot = null;
   }
 
-  // [UI shell] panel / debug
+  // [UI shell: panel/debug]
 
   function buildPanelDebugShellHTML() {
     return `
@@ -2223,25 +2224,24 @@
   }
 
   function wirePanelHeaderActions() {
-    if (!state.panelShadowRoot) return;
+    const root = state.panelShadowRoot;
+    if (!root) return;
 
-    state.panelShadowRoot
+    root
       .getElementById("close-btn")
-      .addEventListener("click", () => togglePanel());
-    state.panelShadowRoot
-      .getElementById("settings-btn")
-      .addEventListener("click", () => {
-        try {
-          chrome.runtime.sendMessage({ type: "OPEN_OPTIONS_PAGE" });
-        } catch (_) {}
-      });
+      ?.addEventListener("click", () => togglePanel());
+    root.getElementById("settings-btn")?.addEventListener("click", () => {
+      try {
+        chrome.runtime.sendMessage({ type: "OPEN_OPTIONS_PAGE" });
+      } catch (_) {}
+    });
   }
 
   function createRightPanel() {
-    if (getTarget().querySelector("#atv-panel-host")) {
-      state.panelShadowRoot =
-        getTarget().querySelector("#atv-panel-host")?.shadowRoot ||
-        state.panelShadowRoot;
+    const target = getTarget();
+    const existingHost = target.querySelector("#atv-panel-host");
+    if (existingHost) {
+      state.panelShadowRoot = existingHost.shadowRoot || state.panelShadowRoot;
       ensureSecondarySubtitleElement();
       return;
     }
@@ -2258,7 +2258,7 @@
       "pointer-events:auto",
       "box-sizing:border-box",
     ].join(";");
-    getTarget().appendChild(host);
+    target.appendChild(host);
 
     ensurePanelSlotLayerStyle();
 
@@ -2301,7 +2301,7 @@
     getTarget().appendChild(btn);
   }
 
-  // [UI shell] overlay / popup
+  // [UI shell: subtitle popup]
 
   function buildPopupShellHTML() {
     return `
@@ -2423,56 +2423,39 @@
     `;
   }
 
-  function createPopupHost() {
-    if (getTarget().querySelector("#atv-popup-host")) {
-      state.popupShadowRoot =
-        getTarget().querySelector("#atv-popup-host")?.shadowRoot ||
-        state.popupShadowRoot;
-      return;
-    }
+  function wireSubtitlePopupUiEvents() {
+    const root = state.popupShadowRoot;
+    if (!root) return;
 
-    const host = document.createElement("div");
-    host.id = "atv-popup-host";
-    host.style.cssText =
-      "position:fixed;top:0;left:0;width:0;height:0;z-index:999999;pointer-events:none;";
-    getTarget().appendChild(host);
+    const popup = root.getElementById("popup");
+    if (!popup) return;
 
-    state.popupShadowRoot = host.attachShadow({ mode: "open" });
-    state.popupShadowRoot.innerHTML = buildPopupShellHTML();
+    root.getElementById("popup-close")?.addEventListener("click", () => {
+      popup.style.display = "none";
+    });
 
-    const popup = state.popupShadowRoot.getElementById("popup");
-
-    // popup 内の UI 操作 listener 登録
-    state.popupShadowRoot
-      .getElementById("popup-close")
-      .addEventListener("click", () => {
-        popup.style.display = "none";
-      });
-
-    state.popupShadowRoot.querySelectorAll(".popup-tab").forEach((btn) => {
+    root.querySelectorAll(".popup-tab").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        state.popupShadowRoot
+        root
           .querySelectorAll(".popup-tab")
           .forEach((b) => b.classList.remove("active"));
-        state.popupShadowRoot
+        root
           .querySelectorAll(".popup-pane")
           .forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
-        state.popupShadowRoot
-          .getElementById("pane-" + btn.dataset.tab)
-          .classList.add("active");
+        root.getElementById("pane-" + btn.dataset.tab)?.classList.add("active");
       });
     });
 
-    // popup 外クリックで閉じるための document listener 登録
+    // subtitle popup 外クリックで閉じるための document listener 登録
     state.popupDocClickHandler = () => {
       popup.style.display = "none";
     };
     document.addEventListener("click", state.popupDocClickHandler);
 
-    // popup 内の動的単語リンククリックを拾う listener 登録
-    state.popupShadowRoot.addEventListener("click", (e) => {
+    // subtitle popup 内の動的単語リンククリックを拾う listener 登録
+    root.addEventListener("click", (e) => {
       if (e.target.classList.contains("atv-word-link")) {
         e.stopPropagation();
         const word = e.target.textContent.trim();
@@ -2482,6 +2465,26 @@
         }
       }
     });
+  }
+
+  function createPopupHost() {
+    const target = getTarget();
+    const existingHost = target.querySelector("#atv-popup-host");
+    if (existingHost) {
+      state.popupShadowRoot = existingHost.shadowRoot || state.popupShadowRoot;
+      return;
+    }
+
+    const host = document.createElement("div");
+    host.id = "atv-popup-host";
+    host.style.cssText =
+      "position:fixed;top:0;left:0;width:0;height:0;z-index:999999;pointer-events:none;";
+    target.appendChild(host);
+
+    state.popupShadowRoot = host.attachShadow({ mode: "open" });
+    state.popupShadowRoot.innerHTML = buildPopupShellHTML();
+
+    wireSubtitlePopupUiEvents();
   }
 
   function createDebugPanel() {
@@ -2747,6 +2750,7 @@
       .join("<br>");
   }
 
+  // [render]
   function renderPanel() {
     if (!state.panelShadowRoot) return;
     const list = state.panelShadowRoot.getElementById("subtitle-list");
@@ -2917,6 +2921,8 @@
     }
   }
 
+  // [UI shell: overlay/panel anchor]
+
   function buildOverlayShellHTML() {
     return `
       <style>
@@ -2942,10 +2948,10 @@
   }
 
   function createOverlay() {
-    if (getTarget().querySelector("#atv-overlay-host")) {
-      state.overlayRoot =
-        getTarget().querySelector("#atv-overlay-host")?.shadowRoot ||
-        state.overlayRoot;
+    const target = getTarget();
+    const existingHost = target.querySelector("#atv-overlay-host");
+    if (existingHost) {
+      state.overlayRoot = existingHost.shadowRoot || state.overlayRoot;
       return;
     }
 
@@ -2960,7 +2966,7 @@
       "pointer-events:none",
       "text-align:center",
     ].join(";");
-    getTarget().appendChild(host);
+    target.appendChild(host);
 
     state.overlayRoot = host.attachShadow({ mode: "open" });
     state.overlayRoot.innerHTML = buildOverlayShellHTML();
@@ -3441,7 +3447,7 @@
     });
   }
 
-  // [binder / cue logic]
+  // [binder/cue logic]
 
   function onCueChange() {
     const currentTime = state.video?.currentTime ?? 0;
@@ -3550,6 +3556,8 @@
       "bindTracks",
     );
   }
+
+  // [bootstrap]
 
   function buildUi() {
     createOverlay();
