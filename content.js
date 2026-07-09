@@ -5,6 +5,8 @@
 // 既存の起動導線は維持し、layout/observer/retry/polling は変更しない
 // Phase A: VTT 正規化と logger を外部モジュールへ分離し、ここでは橋渡しを担当する。
 // =============================================================
+// Phase D/#19: current 行の primary 非対称を最小差分で補正する。
+// secondary cue の短いギャップ時のみ panel primary を一時補完する。
 //
 (function () {
   "use strict";
@@ -34,6 +36,7 @@
   ];
   const TRACK_RESOLVE_RETRY_DELAYS_MS = [120, 260, 420, 680];
   const SECONDARY_SUBTITLE_GRACE_MS = 1200;
+  const PANEL_PRIMARY_GRACE_MS = 600;
   const SUBTITLE_HISTORY_MAX_PER_CONTENT = 500;
   const PLAYBACK_CONTROLS_LAYOUT = {
     headerSelector: ".video-player__header",
@@ -648,6 +651,7 @@
         );
       }
       renderSecondarySubtitle(getCurrentCueText(track), track);
+      renderPanel();
     };
 
     track.addEventListener("cuechange", onSecondaryCueChange);
@@ -2726,10 +2730,21 @@
     const curSecondaryCue = findCueAt(state.secondaryTrack, currentTime);
     if (curPrimaryCue || curSecondaryCue) {
       const currentCue = curPrimaryCue || curSecondaryCue;
+      let currentPrimaryText = curPrimaryCue ? cleanCueText(curPrimaryCue) : "";
+      if (!currentPrimaryText && curSecondaryCue && state.lastPrimaryText) {
+        const elapsedSincePrimarySnapshot = Date.now() - state.lastPrimarySnapshotAt;
+        // Grace 内だけ直近 primary テキストを使い、secondary 先行で空になる瞬間を吸収する。
+        if (
+          state.lastPrimarySnapshotAt > 0 &&
+          elapsedSincePrimarySnapshot <= PANEL_PRIMARY_GRACE_MS
+        ) {
+          currentPrimaryText = state.lastPrimaryText;
+        }
+      }
       allBlocks.push({
         startTime: currentCue.startTime,
         endTime: currentCue.endTime,
-        primary: curPrimaryCue ? cleanCueText(curPrimaryCue) : "",
+        primary: currentPrimaryText,
         secondary: cleanCueText(curSecondaryCue),
         state: "current",
       });
@@ -2761,7 +2776,7 @@
           }
         : null,
     };
-    if (currentSubtitleBlock?.primary) {
+    if (curPrimaryCue && currentSubtitleBlock?.primary) {
       state.lastPrimarySnapshotAt = Date.now();
     }
 
