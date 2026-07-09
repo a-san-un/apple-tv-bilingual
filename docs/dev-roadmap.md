@@ -32,7 +32,7 @@
 | [#8](../../issues/8)   | Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する                           | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:options` `area:content`     |
 | [#17](../../issues/17) | content.js の current 表示モデルを整理し、マーク移動と最小スクロールへ移行する     | P1     | 完了       | **完了** | `p1` `enhancement` `area:ui` `area:content`          |
 | [#18](../../issues/18) | primaryLang を英語以外にした場合に主字幕が表示されない問題を切り分ける             | P1     | Phase 3    | **完了** | `p1` `bug` `area:content`                            |
-| [#19](../../issues/19) | Phase D: binder/sidebar 側で primary cue が UI に反映されない非対称を解消する      | P1     | Phase D    | 未完了   | `p1` `area:content` `area:ui`                        |
+| [#19](../../issues/19) | Phase D: binder/sidebar 側で primary cue が UI に反映されない非対称を解消する      | P1     | Phase D    | **完了** | `p1` `area:content` `area:ui`                        |
 | [#10](../../issues/10) | 単語ポップアップ UI 刷新・AI タブ拡張と dictionaryapi.dev ハンドラ実装             | P2     | 後続タスク | 未完了   | GitHub issue の実内容に合わせて整理                  |
 | [#12](../../issues/12) | content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す                 | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
 | [#13](../../issues/13) | content.js Phase B: subtitle-track-resolver.js を切り出す                          | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
@@ -98,6 +98,14 @@
 - Debug ログ上では `primaryCueTextLength > 0` / `snapshotPrimaryTextLength > 0` を確認でき、primary cue / text / snapshot までは live で取得できている
 - 一方で、右字幕パネルの primary 行には未表示のケースが残り、残課題は binder / sidebar / renderPanel 側の UI 層にあると切り分けた
 - この残課題は Phase D の [#19](../../issues/19) へ移管し、Phase 3 の #18 は close 済み
+
+**#19 完了メモ（Phase D）**
+
+- `primaryTrack.mode` を `hidden` から `showing` へ変更し、non-en primary（zh/ko/fr/de/es）でも cue 可用性を確保
+- `findCueAt` の `track.cues` 参照を保護し、mode 遷移時でも安全に cue 探索できるよう堅牢化
+- `primary=state.primaryTrack` / `secondary=state.secondaryTrack` の責務分離を維持したまま、current 行の primary 非対称を解消
+- panel 周辺は `panel.css` 外だし + `buildPanelShellHTML` / `buildPanelDebugShellHTML` 分離で整理し、`createRightPanel` の責務を縮小
+- resolver / `secondaryLang` fallback / #17 の current 行モデル（左マーク欄 + threshold-scroll）は未変更
 
 ---
 
@@ -209,13 +217,13 @@
 
 Phase 1〜3 の主要項目（#3 / #4 / #5 / #6 / #7 / #8 / #12 / #13 / #14 / #16 / #17 / #18）完了後の整理は完了済みとして扱う。
 
-- #19: Phase D として binder / sidebar 側で primary cue が UI に反映されない非対称を解消する
+- #19（Phase D）は完了。残課題は Phase E（layout / observer / bootstrap の最終整理）へ移行
 - Phase E: layout / observer / bootstrap の最終整理
 - 単語ポップアップ UI 改修（辞書 / AI タブ拡張）（#10）
 - AI プロバイダー連携（説明する / 例 / 文法タブ）
 - `background.js` の `dictionaryapi.dev` ハンドラ実装
 
-補足: #17 は current の表示モデル整理として完了済み。#18 は resolver / content.js の signal レイヤーまでの切り分けを完了して close 済みで、残る primary UI 表示問題は Phase D の #19 で扱う。layout / observer / bootstrap の責務整理は Phase E で別途扱う。
+補足: #17 は current の表示モデル整理として完了済み。#18 は resolver / content.js の signal レイヤーまでの切り分けを完了して close 済み。primary UI 表示問題は Phase D の #19 で解消済みで、layout / observer / bootstrap の責務整理は Phase E で別途扱う。
 
 ### #17 完了メモ（対象 / 非対象）
 
@@ -245,7 +253,7 @@ Phase 1〜3 の主要項目（#3 / #4 / #5 / #6 / #7 / #8 / #12 / #13 / #14 / #1
   - 可能な限り `renderPanel()` 周辺に処理を寄せ、重複分岐を増やさない
 - 旧 Issue #9 の current 表示強化の設計定義は #17 へ引き継ぎ済みで、#9 は close 済み
 - ドイツ語主字幕同期の問題は #17 では直接扱わず、別 Issue で扱う予定とする
-- #18 を次の並行調査対象として扱い、Phase D / E はその後の責務分離・最終整理として残す
+- #18 は切り分け完了済み。Phase D（#19）も完了し、残りは Phase E の責務分離・最終整理とする
 
 ---
 

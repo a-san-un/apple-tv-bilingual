@@ -198,6 +198,14 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - それでも UI の primary 行が空になるケースが残ったため、問題は resolver より binder / sidebar / renderPanel 側にあると整理済み
 - Phase D では、current / history / future の組み立てと last render snapshot の扱いが、primary / secondary の双方に対して対称かを重点確認する
 
+### Phase D 完了メモ（2026-07-09）
+
+- `primaryTrack.mode` を `hidden` から `showing` へ変更し、non-en primary（zh/ko/fr/de/es）での cue 可用性を改善
+- `findCueAt` の `track.cues` 参照を保護し、mode 遷移時の cue 探索を堅牢化
+- current 行では `primary=state.primaryTrack` / `secondary=state.secondaryTrack` の責務分離を維持したまま primary 非対称を解消
+- panel 周辺は `panel.css` 外だし + `buildPanelShellHTML` / `buildPanelDebugShellHTML` 分離で整理し、`createRightPanel` の責務を縮小
+- resolver 仕様 / `secondaryLang` fallback / #17 の current 行モデル（左マーク欄 + threshold-scroll）は変更していない
+
 ---
 
 ## Phase E: layout / observer / bootstrap の最終整理
@@ -234,7 +242,7 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 3. Phase C は settings bridge と Debug UI API まで
 4. #17 で current ブロック改善を行う
 5. #18 で primaryLang 非英語時の主字幕問題を Phase 3 範囲で切り分ける
-6. Phase D（#19）で binder / sidebar を整理し、primary UI 非対称を解消する
+6. Phase D（#19）で binder / sidebar を整理し、primary UI 非対称を解消した
 7. Phase E で layout / observer / bootstrap を最終整理
 
 ---
@@ -246,7 +254,7 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - Phase C（#16）は完了（settings-bridge.js / debug-panel.js の API 契約確定と content.js 入口委譲を反映済み）
 - #17（current 表示モデル整理と最小スクロール）は完了済み [page:3]
 - #18（primaryLang 非英語時の主字幕表示問題の切り分け）は Phase 3 範囲で完了・close 済み [page:4]
-- 次の主対象は Phase D の #19（binder / sidebar 側で primary cue が UI に反映されない非対称の解消） [page:5]
+- Phase D の #19（binder / sidebar 側で primary cue が UI に反映されない非対称の解消）は完了済み [page:5]
 - Phase E はその後の layout / observer / bootstrap の最終整理として残す
 
 ---

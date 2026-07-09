@@ -252,11 +252,20 @@ content 初期化
 └────────────────────────────────────────────┘
 ```
 
-### 3.2 Phase D で扱う UI 層の残課題（#19）
+### 3.2 Phase D の実装結果（#19）
 
-Issue #19 では、Phase 3 の #18 で残った **binder / sidebar / renderPanel 側の非対称** を扱う。
+Issue #19 では、Phase 3 の #18 で残った **binder / sidebar / renderPanel 側の非対称** を扱い、Phase D として解消した。
 
-#### 現状の認識
+#### 実装で確定したこと
+
+- primary track は `showing` で運用し、non-en primary（zh/ko/fr/de/es）でも cue 可用性を確保する
+- `video::cue` 非表示（`overlay.css`）を維持し、ネイティブ字幕の二重表示を防ぐ
+- `primary = state.primaryTrack` / `secondary = state.secondaryTrack` の責務分離を維持する
+- `findCueAt` の `track.cues` 参照を保護し、mode 遷移時の cue 探索を堅牢化する
+- panel shell は `panel.css` 外だしと `buildPanelShellHTML` / `buildPanelDebugShellHTML` 分離で整理済み
+- resolver の言語一致仕様 / `secondaryLang` fallback / #17 の current 行モデル（左マーク欄 + threshold-scroll）は変更しない
+
+#### Phase D で確認済みの認識
 
 - primary track / cue / text / snapshot は Debug ログ上で live に存在している [page:2]
 - それにもかかわらず、右パネルでは primary 行が空のままになるケースがある [page:2]
