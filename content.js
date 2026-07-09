@@ -2726,13 +2726,21 @@
       if (h.endTime <= currentTime) allBlocks.push({ ...h, state: "past" });
     });
 
+    // primary は state.primaryTrack、secondary は state.secondaryTrack の cue だけを使う。
     const curPrimaryCue = getCurrentCue(state.primaryTrack, currentTime);
     const curSecondaryCue = findCueAt(state.secondaryTrack, currentTime);
     if (curPrimaryCue || curSecondaryCue) {
       const currentCue = curPrimaryCue || curSecondaryCue;
       let currentPrimaryText = curPrimaryCue ? cleanCueText(curPrimaryCue) : "";
-      if (!currentPrimaryText && curSecondaryCue && state.lastPrimaryText) {
-        const elapsedSincePrimarySnapshot = Date.now() - state.lastPrimarySnapshotAt;
+      // grace 補完は requested primary track がある時だけ許可し、track が無い時は補完しない。
+      if (
+        !currentPrimaryText &&
+        state.primaryTrack &&
+        curSecondaryCue &&
+        state.lastPrimaryText
+      ) {
+        const elapsedSincePrimarySnapshot =
+          Date.now() - state.lastPrimarySnapshotAt;
         // Grace 内だけ直近 primary テキストを使い、secondary 先行で空になる瞬間を吸収する。
         if (
           state.lastPrimarySnapshotAt > 0 &&
