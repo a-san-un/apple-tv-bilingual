@@ -21,6 +21,7 @@
   };
 
   const DEBUG_SECONDARY_SUBS = false;
+  const DEBUG_PANEL_PROBE = false;
   const LOG_CATEGORIES = Object.freeze({
     SETTINGS: "settings",
     SUBTITLE: "subtitle",
@@ -351,9 +352,17 @@
   }
 
   function findCueAt(track, time) {
-    if (!track || !track.cues) return null;
-    for (let i = 0; i < track.cues.length; i++) {
-      const c = track.cues[i];
+    if (!track) return null;
+    let cues = null;
+    // mode 遷移中は cues アクセスが例外/ null になり得るので保護する。
+    try {
+      cues = track.cues;
+    } catch (_) {
+      cues = null;
+    }
+    if (!cues) return null;
+    for (let i = 0; i < cues.length; i++) {
+      const c = cues[i];
       if (c.startTime <= time + 0.1 && time < c.endTime + 0.1) return c;
     }
     return null;
@@ -2749,11 +2758,26 @@
           currentPrimaryText = state.lastPrimaryText;
         }
       }
+      const currentSecondaryText = cleanCueText(curSecondaryCue);
+      if (DEBUG_PANEL_PROBE) {
+        logContent("panel render current block probe", {
+          currentTime,
+          settingsPrimaryLang: state.contentSettings.primaryLang,
+          primaryTrackLanguage: state.primaryTrack?.language,
+          primaryTrackLabel: state.primaryTrack?.label,
+          secondaryTrackLanguage: state.secondaryTrack?.language,
+          secondaryTrackLabel: state.secondaryTrack?.label,
+          curPrimaryCueText: cleanCueText(curPrimaryCue).slice(0, 40),
+          curSecondaryCueText: currentSecondaryText.slice(0, 40),
+          resolvedPrimary: currentPrimaryText.slice(0, 40),
+          currentBlockSecondary: currentSecondaryText.slice(0, 40),
+        });
+      }
       allBlocks.push({
         startTime: currentCue.startTime,
         endTime: currentCue.endTime,
         primary: currentPrimaryText,
-        secondary: cleanCueText(curSecondaryCue),
+        secondary: currentSecondaryText,
         state: "current",
       });
     }
@@ -3034,7 +3058,9 @@
     state.primaryTrack = pickBestSubtitleTrack(tracks, primaryLang);
     if (state.primaryTrack) {
       try {
-        state.primaryTrack.mode = "hidden";
+        // 非英語 primary track の cue 可用性を上げるため secondary と同じ showing にする。
+        // ネイティブ字幕表示は overlay.css の video::cue 非表示で抑止済み。
+        state.primaryTrack.mode = "showing";
         state.primaryTrack.addEventListener("cuechange", onCueChange);
         primaryListenerBound = true;
       } catch (_) {
@@ -3392,6 +3418,15 @@
     const pText = cleanCueText(pCue);
     const sCue = getCurrentCue(state.secondaryTrack, currentTime);
     const sText = cleanCueText(sCue);
+
+    if (DEBUG_PANEL_PROBE) {
+      logContent("cuechange track probe", {
+        primaryTrackLanguage: state.primaryTrack?.language,
+        secondaryTrackLanguage: state.secondaryTrack?.language,
+        pText: pText.slice(0, 40),
+        sText: sText.slice(0, 40),
+      });
+    }
 
     updateOverlay(pText, sText);
 
