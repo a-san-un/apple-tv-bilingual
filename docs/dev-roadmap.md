@@ -24,24 +24,24 @@
 
 ## Issue 一覧
 
-| #                      | タイトル                                                                           | 優先度 | フェーズ   | 状態     | ラベル                                                     |
-| ---------------------- | ---------------------------------------------------------------------------------- | ------ | ---------- | -------- | ---------------------------------------------------------- |
-| [#3](../../issues/3)   | 字幕パネル表示時に動画操作レイヤーが右パネルに隠れないよう調整する                 | P0     | Phase 1    | **完了** | `p0` `bug` `enhancement` `area:ui`                         |
-| [#4](../../issues/4)   | ATV DEBUG を独立表示から右字幕パネル下部の折り畳みセクションへ統合する             | P1     | Phase 2    | **完了** | `p1` `enhancement` `area:ui` `area:content`                |
-| [#5](../../issues/5)   | options の「デバッグログ（開発者向け）」セクションを折り畳み既定にする             | P1     | Phase 2    | **完了** | `p1` `enhancement` `area:options`                          |
-| [#6](../../issues/6)   | popup / options の字幕言語一覧を動画状態から分離して固定化する                     | P0     | Phase 1    | **完了** | `p0` `bug` `enhancement` `area:popup` `area:content`       |
-| [#7](../../issues/7)   | secondaryLang の空値保存とブラウザ言語 fallback の挙動を統一する                   | P0     | Phase 1    | **完了** | `p0` `bug` `enhancement` `area:popup` `area:content`       |
-| [#8](../../issues/8)   | Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する                           | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:options` `area:content`           |
-| [#10](../../issues/10) | 単語ポップアップ UI 刷新・AI タブ拡張と `dictionaryapi.dev` ハンドラ実装           | P2     | 後続タスク | 未完了   | `enhancement` `area:content` `area:popup` `p2`             |
-| [#12](../../issues/12) | content.js Phase A: `vtt-normalizer.js` / `debug-logger.js` を切り出す             | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                          |
-| [#13](../../issues/13) | content.js Phase B: `subtitle-track-resolver.js` を切り出す                        | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                          |
-| [#14](../../issues/14) | 設定変更時と動画初期化時を基準に字幕設定を反映し、ページ離脱時リセット依存を減らす | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                          |
-| [#16](../../issues/16) | Phase C: `settings-bridge.js` / `debug-panel.js` を切り出す                        | P1     | Phase C    | **完了** | `p1` `enhancement` `area:content`                          |
-| [#17](../../issues/17) | `content.js` の current 表示モデルを整理し、マーク移動と最小スクロールへ移行する   | P1     | 完了       | **完了** | `p1` `enhancement` `area:ui` `area:content`                |
-| [#18](../../issues/18) | primaryLang を英語以外にした場合に主字幕が表示されない問題を切り分ける             | P1     | Phase 3    | **完了** | `p1` `bug` `area:content`                                  |
-| [#19](../../issues/19) | Phase D: binder/sidebar 側で primary cue が UI に反映されない非対称を解消する      | P1     | Phase D    | **完了** | `p1` `area:content` `area:ui`                              |
+| #                      | タイトル                                                                           | 優先度 | フェーズ   | 状態                   | ラベル                                                     |
+| ---------------------- | ---------------------------------------------------------------------------------- | ------ | ---------- | ---------------------- | ---------------------------------------------------------- |
+| [#3](../../issues/3)   | 字幕パネル表示時に動画操作レイヤーが右パネルに隠れないよう調整する                 | P0     | Phase 1    | **完了**               | `p0` `bug` `enhancement` `area:ui`                         |
+| [#4](../../issues/4)   | ATV DEBUG を独立表示から右字幕パネル下部の折り畳みセクションへ統合する             | P1     | Phase 2    | **完了**               | `p1` `enhancement` `area:ui` `area:content`                |
+| [#5](../../issues/5)   | options の「デバッグログ（開発者向け）」セクションを折り畳み既定にする             | P1     | Phase 2    | **完了**               | `p1` `enhancement` `area:options`                          |
+| [#6](../../issues/6)   | popup / options の字幕言語一覧を動画状態から分離して固定化する                     | P0     | Phase 1    | **完了**               | `p0` `bug` `enhancement` `area:popup` `area:content`       |
+| [#7](../../issues/7)   | secondaryLang の空値保存とブラウザ言語 fallback の挙動を統一する                   | P0     | Phase 1    | **完了**               | `p0` `bug` `enhancement` `area:popup` `area:content`       |
+| [#8](../../issues/8)   | Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する                           | P1     | Phase 3    | **完了**               | `p1` `enhancement` `area:options` `area:content`           |
+| [#10](../../issues/10) | 単語ポップアップ UI 刷新・AI タブ拡張と `dictionaryapi.dev` ハンドラ実装           | P2     | 後続タスク | 未完了                 | `enhancement` `area:content` `area:popup` `p2`             |
+| [#12](../../issues/12) | content.js Phase A: `vtt-normalizer.js` / `debug-logger.js` を切り出す             | P1     | Phase 3    | **完了**               | `p1` `enhancement` `area:content`                          |
+| [#13](../../issues/13) | content.js Phase B: `subtitle-track-resolver.js` を切り出す                        | P1     | Phase 3    | **完了**               | `p1` `enhancement` `area:content`                          |
+| [#14](../../issues/14) | 設定変更時と動画初期化時を基準に字幕設定を反映し、ページ離脱時リセット依存を減らす | P1     | Phase 3    | **完了**               | `p1` `enhancement` `area:content`                          |
+| [#16](../../issues/16) | Phase C: `settings-bridge.js` / `debug-panel.js` を切り出す                        | P1     | Phase C    | **完了**               | `p1` `enhancement` `area:content`                          |
+| [#17](../../issues/17) | `content.js` の current 表示モデルを整理し、マーク移動と最小スクロールへ移行する   | P1     | 完了       | **完了**               | `p1` `enhancement` `area:ui` `area:content`                |
+| [#18](../../issues/18) | primaryLang を英語以外にした場合に主字幕が表示されない問題を切り分ける             | P1     | Phase 3    | **完了**               | `p1` `bug` `area:content`                                  |
+| [#19](../../issues/19) | Phase D: binder/sidebar 側で primary cue が UI に反映されない非対称を解消する      | P1     | Phase D    | **完了**               | `p1` `area:content` `area:ui`                              |
 | [#20](../../issues/20) | Phase E (1): `content.js` panel / overlay セクションの責務分離                     | P1     | Phase E    | 進行中（入口整理完了） | `enhancement` `p1` `area:ui` `area:content` `area:options` |
-| [#21](../../issues/21) | Phase E (2): `content.js` binder / cue ロジックの整理と分割準備                    | P1     | Phase E    | 未着手   | `enhancement` `p1` `area:content` `area:options`           |
+| [#21](../../issues/21) | Phase E (2): `content.js` binder / cue ロジックの整理と分割準備                    | P1     | Phase E    | 未着手                 | `enhancement` `p1` `area:content` `area:options`           |
 
 ---
 
