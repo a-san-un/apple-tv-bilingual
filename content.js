@@ -2948,6 +2948,31 @@
     `;
   }
 
+  function wireOverlayUiEvents() {
+    const root = state.overlayRoot;
+    if (!root) return;
+
+    root.addEventListener("click", (e) => {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+
+      const wordEl = target.closest(".atv-word");
+      if (!wordEl) return;
+
+      e.stopPropagation();
+
+      const word = wordEl.dataset.word || "";
+      if (!word) return;
+
+      const sentence = wordEl.dataset.sentence || "";
+      showPopup(
+        word,
+        decodeURIComponent(sentence),
+        wordEl.getBoundingClientRect(),
+      );
+    });
+  }
+
   function createOverlay() {
     const target = getTarget();
     const existingHost = target.querySelector("#atv-overlay-host");
@@ -2971,6 +2996,8 @@
 
     state.overlayRoot = host.attachShadow({ mode: "open" });
     state.overlayRoot.innerHTML = buildOverlayShellHTML();
+
+    wireOverlayUiEvents();
   }
 
   // [render: overlay shell apply]
@@ -2999,17 +3026,6 @@
       .join(" ");
 
     s.textContent = secondaryText || "";
-
-    p.querySelectorAll(".atv-word").forEach((span) => {
-      span.addEventListener("click", (e) => {
-        e.stopPropagation();
-        showPopup(
-          span.dataset.word,
-          decodeURIComponent(span.dataset.sentence),
-          span.getBoundingClientRect(),
-        );
-      });
-    });
   }
 
   function togglePanel(force) {
