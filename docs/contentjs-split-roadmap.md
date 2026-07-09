@@ -90,7 +90,7 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 ### 目的
 
 - 字幕トラック選定の純ロジックを `content.js` から外へ出す
-- binder や DOM更新と切り離して責務を明確化する
+- binder や DOM 更新と切り離して責務を明確化する
 
 ### ルール
 
@@ -162,7 +162,13 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 
 ### 目的
 
-- resolver と分けて、トラック同期・イベント登録・右字幕UIを整理する
+- resolver と分けて、トラック同期・イベント登録・右字幕 UI を整理する
+- primary / secondary の描画非対称を UI 層で解消する
+- primary cue が live で存在する場合に、binder / sidebar / renderPanel がそれを一貫して描画できるようにする
+
+### 関連 issue
+
+- [#19](../../issues/19) Phase D: binder/sidebar 側で primary cue が UI に反映されない非対称を解消する
 
 ### ルール
 
@@ -170,6 +176,10 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - `cuechange`、state 更新、UI トリガーはこの層へ寄せる
 - sidebar は DOM 生成・更新責務をまとめる
 - Apple TV+ DOM 構造依存が強いので慎重に進める
+- resolver の仕様はこのフェーズでは変えない
+- secondaryLang fallback の仕様はこのフェーズでは変えない
+- #17 で確定した current 行モデル（左マーク欄 + threshold-scroll）は変更しない
+- Phase 3 の #18 で確認した「resolver / signal レイヤーでは primary cue が取得できている」前提で、UI 層の非対称解消に集中する
 
 ### 確認項目
 
@@ -177,7 +187,16 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - secondary track の切替と追従が維持される
 - パネル表示位置や表示更新に退行がない
 - current 行のスクロール位置は、先頭固定ではなく下端しきい値超過時のみ最小スクロールする実装として #17 で完了した
-- #4 の観測結果を、binder と sidebar UI の責務分離および current アンカー戦略見直しの材料として活用する
+- primaryLang を de / ja / zh / ko / fr / es に設定した場合でも、primary cue が live で存在する間は UI の primary 行に表示される
+- resolver で選ばれた primary track と、binder / sidebar で描画される primary cue の対応関係を追える
+- secondary だけ current が成立し、primary 行が空のまま残る非対称が解消される
+- #4 / #18 の観測結果を、binder と sidebar UI の責務分離および primary 描画条件見直しの材料として活用する
+
+### Phase D 着手メモ
+
+- #18 の切り分けでは、`primaryTrackFound: true`、`primaryActiveCues > 0`、`primaryCueTextLength > 0`、`snapshotPrimaryTextLength > 0` を確認済み
+- それでも UI の primary 行が空になるケースが残ったため、問題は resolver より binder / sidebar / renderPanel 側にあると整理済み
+- Phase D では、current / history / future の組み立てと last render snapshot の扱いが、primary / secondary の双方に対して対称かを重点確認する
 
 ---
 
@@ -214,8 +233,9 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 2. Phase B は resolver だけ切る
 3. Phase C は settings bridge と Debug UI API まで
 4. #17 で current ブロック改善を行う
-5. Phase D で binder / sidebar を整理
-6. Phase E で layout / observer / bootstrap を最終整理
+5. #18 で primaryLang 非英語時の主字幕問題を Phase 3 範囲で切り分ける
+6. Phase D（#19）で binder / sidebar を整理し、primary UI 非対称を解消する
+7. Phase E で layout / observer / bootstrap を最終整理
 
 ---
 
@@ -224,7 +244,10 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - ロードマップは Phase A〜E で確定済み
 - Phase A（#12）/ Phase B（#13）/ 設定ライフサイクル再整理（#14）/ ログカテゴリ整理（#8）は完了済み
 - Phase C（#16）は完了（settings-bridge.js / debug-panel.js の API 契約確定と content.js 入口委譲を反映済み）
-- #17（current 表示モデル整理と最小スクロール）は完了済み。次は #18 を並行調査、Phase D / E はその後の整理として残す
+- #17（current 表示モデル整理と最小スクロール）は完了済み [page:3]
+- #18（primaryLang 非英語時の主字幕表示問題の切り分け）は Phase 3 範囲で完了・close 済み [page:4]
+- 次の主対象は Phase D の #19（binder / sidebar 側で primary cue が UI に反映されない非対称の解消） [page:5]
+- Phase E はその後の layout / observer / bootstrap の最終整理として残す
 
 ---
 
@@ -234,12 +257,12 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - 扱う範囲:
   - current 行の左側固定幅マーク欄による表示
   - current ブロックの視覚的強調は、本文ではなくマーク欄へ寄せる
-  - 固定ヘッダー / 固定 debug ログセクション / 字幕スクロール領域の3層構造を維持したまま、current を見失いにくくすること
-- 前提 API: settings 状態は `window.ATVB.settingsBridge`、Debug UI / log 導線は `window.ATVB.debugPanel` / `window.ATVB.logger` を再利用する。
-- 導線制約: settings 導線と debug 導線は新設せず、既存 bridge / panel / logger の接続を維持する。
+  - 固定ヘッダー / 固定 debug ログセクション / 字幕スクロール領域の 3 層構造を維持したまま、current を見失いにくくすること
+- 前提 API: settings 状態は `window.ATVB.settingsBridge`、Debug UI / log 導線は `window.ATVB.debugPanel` / `window.ATVB.logger` を再利用する
+- 導線制約: settings 導線と debug 導線は新設せず、既存 bridge / panel / logger の接続を維持する
 - UI 制約:
   - ヘッダー（`字幕履歴` / `⚙️` / `閉じる✕`）の構造・位置・文言は維持する
-  - debug ログセクションはヘッダー直下に固定されたままとし、折りたたみ時は1行、展開時は数行のログ本文を表示できる状態を維持する
+  - debug ログセクションはヘッダー直下に固定されたままとし、折りたたみ時は 1 行、展開時は数行のログ本文を表示できる状態を維持する
   - current / history / future のテキストは選択・コピー可能な DOM のまま維持する
   - 字幕全体の強いグレーアウトは行わず、current テキストだけを少し目立たせる
 - 非対象:
@@ -251,6 +274,24 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
   - 既存 helper / bridge / logger / debugPanel を再利用する
   - 新規 timer / observer / listener は追加しない
   - current 表示モデル整理の中で重複コードを増やさない
+
+---
+
+## #18 完了メモ（Phase 3 切り分け）
+
+- 関連 issue: [#18](../../issues/18) `[P1] primaryLang を英語以外にした場合に主字幕が表示されない問題を切り分ける`（完了） [page:4]
+- Phase 3 の範囲では、resolver / primary signal / debug 導線までの切り分けを行った [page:4]
+- `subtitle-track-resolver.js` では、underscore 区切りを hyphen と同等に扱う正規化と、3 文字コードから 2 文字コードへの寄せを追加した [page:4]
+  - `deu -> de`
+  - `jpn -> ja`
+  - `zho` / `chi` -> `zh`
+  - `kor -> ko`
+  - `fra` / `fre` -> `fr`
+  - `spa -> es`
+- その結果、primaryLang = de / ja / zh / ko / fr / es でも resolver 上は `primaryTrackFound: true` になることを確認した [page:4]
+- content.js 側では `primaryActiveCues` / `hasFreshPrimarySnapshot` / `lastPrimarySnapshotAt` を使い、live 優先 + snapshot 鮮度付きの primary signal 判定へ整理した [page:4]
+- Debug ログでは `primaryActiveCues > 0`、`primaryCueTextLength > 0`、`snapshotPrimaryTextLength > 0` を観測でき、primary cue / text / snapshot までは live で取得できていることを確認した [page:4]
+- それでも UI の primary 行が空のケースが残ったため、残課題は binder / sidebar / renderPanel 側の UI 層として整理し、Phase D の #19 へ移管した [page:4][page:5]
 
 ---
 

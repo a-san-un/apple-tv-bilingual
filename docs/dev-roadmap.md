@@ -1,7 +1,7 @@
 # phase-3 実装ロードマップ
 
 > **ブランチ**: `phase-3`  
-> **最終更新**: 2026-07-08  
+> **最終更新**: 2026-07-09  
 > **マージ先**: `main`（`phase-3` 側で機能が安定したタイミングでマージ）
 
 ---
@@ -16,6 +16,7 @@
     という役割分担で解消済み
 - そのため、Phase 1 の「設定 UI 安定化」に関する部分は完了として扱う
 - #17 は完了済み。字幕一覧内の current 行 + 左側マーク欄、下端しきい値超過時のみ短く smooth に戻す方式、大きい seek 後の再同期を現実装として反映済み
+- #18 は Phase 3 の切り分け issue として完了・close 済み。resolver / content.js の signal レイヤーまでを確認し、残課題は Phase D の #19 へ移管済み
 
 ---
 
@@ -30,12 +31,13 @@
 | [#7](../../issues/7)   | secondaryLang の空値保存とブラウザ言語 fallback の挙動を統一する                   | P0     | Phase 1    | **完了** | `p0` `bug` `enhancement` `area:popup` `area:content` |
 | [#8](../../issues/8)   | Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する                           | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:options` `area:content`     |
 | [#17](../../issues/17) | content.js の current 表示モデルを整理し、マーク移動と最小スクロールへ移行する     | P1     | 完了       | **完了** | `p1` `enhancement` `area:ui` `area:content`          |
+| [#18](../../issues/18) | primaryLang を英語以外にした場合に主字幕が表示されない問題を切り分ける             | P1     | Phase 3    | **完了** | `p1` `bug` `area:content`                            |
+| [#19](../../issues/19) | Phase D: binder/sidebar 側で primary cue が UI に反映されない非対称を解消する      | P1     | Phase D    | 未完了   | `p1` `area:content` `area:ui`                        |
 | [#10](../../issues/10) | 単語ポップアップ UI 刷新・AI タブ拡張と dictionaryapi.dev ハンドラ実装             | P2     | 後続タスク | 未完了   | GitHub issue の実内容に合わせて整理                  |
 | [#12](../../issues/12) | content.js Phase A: vtt-normalizer.js / debug-logger.js を切り出す                 | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
 | [#13](../../issues/13) | content.js Phase B: subtitle-track-resolver.js を切り出す                          | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
 | [#14](../../issues/14) | 設定変更時と動画初期化時を基準に字幕設定を反映し、ページ離脱時リセット依存を減らす | P1     | Phase 3    | **完了** | `p1` `enhancement` `area:content`                    |
 | [#16](../../issues/16) | Phase C: settings-bridge.js / debug-panel.js を切り出す                            | P1     | Phase C    | **完了** | `p1` `enhancement` `area:content`                    |
-| [#18](../../issues/18) | primaryLang を英語以外にした場合に主字幕が表示されない問題を切り分ける             | P1     | 並行調査   | 未着手   | `p1` `bug` `area:content`                            |
 
 ---
 
@@ -87,6 +89,15 @@
 - [x] [#13] content.js の Phase B 分割（subtitle-track-resolver の切り出し）
 - [x] [#14] 設定ライフサイクル再整理（設定変更時 / 動画初期化時を主トリガー化）
 - [x] [#16] Phase C: settings-bridge / debug-panel の責務分離（完了: API 契約確定と content.js 入口委譲の本置換）
+
+**#18 完了メモ（Phase 3 での切り分け結果）**
+
+- primaryLang = de / ja / zh / ko / fr / es でも、resolver レイヤーでは `primaryTrackFound: true` になることを確認
+- `subtitle-track-resolver.js` では、underscore 区切りの正規化と主要 3 文字コード（`deu` / `jpn` / `zho` / `chi` / `kor` / `fra` / `fre` / `spa`）の 2 文字コード寄せを追加
+- content.js 側では、`primaryActiveCues` / `hasFreshPrimarySnapshot` / `lastPrimarySnapshotAt` を用いた live 優先 + snapshot 鮮度付きの primary signal 判定に整理
+- Debug ログ上では `primaryCueTextLength > 0` / `snapshotPrimaryTextLength > 0` を確認でき、primary cue / text / snapshot までは live で取得できている
+- 一方で、右字幕パネルの primary 行には未表示のケースが残り、残課題は binder / sidebar / renderPanel 側の UI 層にあると切り分けた
+- この残課題は Phase D の [#19](../../issues/19) へ移管し、Phase 3 の #18 は close 済み
 
 ---
 
@@ -146,7 +157,7 @@
   - `content applied settings to tracks`
 - WebVTT の cue テキストに含まれていた `<c.styledotitalic>` などのタグ断片について、
   - content.js 側で正規化処理を追加
-  - `__atvbDumpTracks()` の `hasTag: false` により、全言語でタグ除去済みであることを確認
+  - 右字幕パネル下部の Debug セクションで `tracks resolved` / `Selected tracks detail` / `primaryTrackFound` / `secondaryTrackFound` を確認し、issue #18 の観測導線で追える状態にした
 
 **関連コミット**
 
@@ -196,16 +207,15 @@
 
 ## 次の優先タスク（次バッチ）
 
-Phase 1〜3 の主要項目（#3 / #4 / #5 / #6 / #7 / #8 / #12 / #13 / #14 / #16）完了後の整理は完了済みとして扱う。
+Phase 1〜3 の主要項目（#3 / #4 / #5 / #6 / #7 / #8 / #12 / #13 / #14 / #16 / #17 / #18）完了後の整理は完了済みとして扱う。
 
-- #17: `content.js` の current 表示モデル整理（完了）
-- Phase D: binder / sidebar の責務分離
+- #19: Phase D として binder / sidebar 側で primary cue が UI に反映されない非対称を解消する
 - Phase E: layout / observer / bootstrap の最終整理
 - 単語ポップアップ UI 改修（辞書 / AI タブ拡張）（#10）
 - AI プロバイダー連携（説明する / 例 / 文法タブ）
 - `background.js` の `dictionaryapi.dev` ハンドラ実装
 
-補足: #17 は current の表示モデル整理として完了済みで、binder / sidebar / layout / observer の責務整理は Phase D / E で別フェーズとして扱う。[cite:1]
+補足: #17 は current の表示モデル整理として完了済み。#18 は resolver / content.js の signal レイヤーまでの切り分けを完了して close 済みで、残る primary UI 表示問題は Phase D の #19 で扱う。layout / observer / bootstrap の責務整理は Phase E で別途扱う。
 
 ### #17 完了メモ（対象 / 非対象）
 
@@ -233,7 +243,7 @@ Phase 1〜3 の主要項目（#3 / #4 / #5 / #6 / #7 / #8 / #12 / #13 / #14 / #1
   - 既存 helper / bridge / logger / debugPanel を再利用し、current 表示モデル整理の中で重複コードを増やさない
   - new timer / observer / listener は追加しない
   - 可能な限り `renderPanel()` 周辺に処理を寄せ、重複分岐を増やさない
-- 旧 Issue #9 の current 表示強化の設計定義は #17 へ引き継ぎ済みで、#9 は close 済み。[cite:1]
+- 旧 Issue #9 の current 表示強化の設計定義は #17 へ引き継ぎ済みで、#9 は close 済み
 - ドイツ語主字幕同期の問題は #17 では直接扱わず、別 Issue で扱う予定とする
 - #18 を次の並行調査対象として扱い、Phase D / E はその後の責務分離・最終整理として残す
 

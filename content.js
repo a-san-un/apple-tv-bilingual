@@ -88,6 +88,7 @@
     lastAfterRenderSecondarySnapshotSignature: "",
     lastSecondarySyncContext: "",
     lastPrimaryRecoveryAttemptAt: 0,
+    lastPrimarySnapshotAt: 0,
     lastObservedVideoTime: null,
     lastPrimaryText: "",
     panelVisible: true,
@@ -991,6 +992,7 @@
       const secondaryActiveCues = getTrackActiveCuesLength(
         state.secondaryTrack,
       );
+      const primaryActiveCues = getTrackActiveCuesLength(state.primaryTrack);
       const secondaryCueText = normalizeSubtitleText(
         getCurrentCueText(state.secondaryTrack),
       );
@@ -1000,10 +1002,16 @@
       const snapshotPrimaryText = normalizeSubtitleText(
         state.lastPanelRenderSnapshot?.currentSubtitleBlock?.primaryText || "",
       );
+      const hasPrimaryLiveSignal =
+        primaryActiveCues > 0 || Boolean(primaryCueText);
+      const now = Date.now();
+      const hasFreshPrimarySnapshot =
+        Boolean(snapshotPrimaryText) &&
+        state.lastPrimarySnapshotAt > 0 &&
+        now - state.lastPrimarySnapshotAt <= 3000;
       const hasSecondarySignal =
         secondaryActiveCues > 0 || Boolean(secondaryCueText);
-      const hasPrimarySignal =
-        Boolean(primaryCueText) || Boolean(snapshotPrimaryText);
+      const hasPrimarySignal = hasPrimaryLiveSignal || hasFreshPrimarySnapshot;
 
       const syncContextSummary = JSON.stringify({
         trackCount: state.video?.textTracks?.length ?? 0,
@@ -1011,8 +1019,10 @@
         secondaryTrackFound: Boolean(state.secondaryTrack),
         secondaryTrackLanguage: state.secondaryTrack?.language || "",
         secondaryActiveCues,
+        primaryActiveCues,
         primaryCueTextLength: primaryCueText.length,
         snapshotPrimaryTextLength: snapshotPrimaryText.length,
+        hasFreshPrimarySnapshot,
       });
       const shouldLogSyncContext =
         previousSecondaryTrack !== state.secondaryTrack ||
@@ -1027,8 +1037,10 @@
           secondaryTrackFound: Boolean(state.secondaryTrack),
           secondaryTrackLanguage: state.secondaryTrack?.language || "",
           secondaryActiveCues,
+          primaryActiveCues,
           primaryCueTextLength: primaryCueText.length,
           snapshotPrimaryTextLength: snapshotPrimaryText.length,
+          hasFreshPrimarySnapshot,
         });
       }
 
@@ -1043,7 +1055,6 @@
         return;
       }
 
-      const now = Date.now();
       if (
         state.lastPrimaryRecoveryAttemptAt &&
         now - state.lastPrimaryRecoveryAttemptAt < 4000
@@ -2857,7 +2868,7 @@
       if (h.endTime <= currentTime) allBlocks.push({ ...h, state: "past" });
     });
 
-    const curPrimaryCue = findCueAt(state.primaryTrack, currentTime);
+    const curPrimaryCue = getCurrentCue(state.primaryTrack, currentTime);
     const curSecondaryCue = findCueAt(state.secondaryTrack, currentTime);
     if (curPrimaryCue || curSecondaryCue) {
       const currentCue = curPrimaryCue || curSecondaryCue;
@@ -2896,6 +2907,9 @@
           }
         : null,
     };
+    if (currentSubtitleBlock?.primary) {
+      state.lastPrimarySnapshotAt = Date.now();
+    }
 
     list.innerHTML = allBlocks
       .map((block) => {
@@ -3246,6 +3260,7 @@
     lastSecondaryText = "";
     lastSecondaryTextAt = 0;
     state.lastPrimaryText = "";
+    state.lastPrimarySnapshotAt = 0;
 
     const panelHost = getTarget().querySelector("#atv-panel-host");
     const secondaryEl = panelHost?.querySelector("[data-secondary-subtitle]");
@@ -3555,6 +3570,7 @@
       saveHistoryForContentKey(state.currentContentKey, []);
     }
     state.lastPrimaryText = "";
+    state.lastPrimarySnapshotAt = 0;
     state.lastObservedVideoTime = null;
     if (options.keepPanelVisible !== true) state.panelVisible = true;
   }
