@@ -2160,185 +2160,10 @@
     state.overlayRoot = null;
   }
 
-  function createRightPanel() {
-    if (getTarget().querySelector("#atv-panel-host")) {
-      state.panelShadowRoot =
-        getTarget().querySelector("#atv-panel-host")?.shadowRoot ||
-        state.panelShadowRoot;
-      ensureSecondarySubtitleElement();
-      return;
-    }
-
-    const host = document.createElement("div");
-    host.id = "atv-panel-host";
-    host.style.cssText = [
-      "position:fixed",
-      "top:0",
-      "right:0",
-      "width:30%",
-      "height:100vh",
-      "z-index:999997",
-      "pointer-events:auto",
-      "box-sizing:border-box",
-    ].join(";");
-    getTarget().appendChild(host);
-
-    ensurePanelSlotLayerStyle();
-
-    state.panelShadowRoot = host.attachShadow({ mode: "open" });
-    state.panelShadowRoot.innerHTML = `
-      <style>
-        :host { display: block; height: 100%; pointer-events: auto; }
-        #panel {
-          width: 100%; height: 100%;
-          background: #1a1a1a; color: #fff;
-          font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
-          font-size: 13px; display: flex; flex-direction: column;
-          overflow: hidden; box-sizing: border-box;
-          pointer-events: auto;
-        }
-        #panel-header {
-          display: flex; justify-content: space-between; align-items: center;
-          padding: 10px 14px; background: #111;
-          border-bottom: 1px solid #333; flex-shrink: 0;
-        }
-        .panel-header-actions {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
-        #panel-header span {
-          font-size: 12px; color: #888; font-weight: 600;
-          letter-spacing: 0.05em; text-transform: uppercase;
-        }
-        #settings-btn,
-        #close-btn {
-          background: none; border: 1px solid #444; color: #aaa;
-          cursor: pointer; border-radius: 4px; padding: 2px 8px; font-size: 11px;
-        }
-        #settings-btn { padding: 2px 7px; }
-        #settings-btn:hover,
-        #close-btn:hover { background: #333; color: #fff; }
-        #panel-scroll {
-          flex: 1; overflow-y: auto; padding: 12px 14px; scroll-behavior: auto;
-        }
-        #panel-scroll::-webkit-scrollbar { width: 4px; }
-        #panel-scroll::-webkit-scrollbar-track { background: #222; }
-        #panel-scroll::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
-        .subtitle-block {
-          margin-bottom: 12px; padding-bottom: 12px;
-          border-bottom: 1px solid #2a2a2a; cursor: pointer;
-        }
-        .subtitle-row {
-          display: grid;
-          grid-template-columns: 30px minmax(0, 1fr);
-          column-gap: 8px;
-          align-items: stretch;
-        }
-        .subtitle-mark {
-          width: 30px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .subtitle-mark svg {
-          width: 26px;
-          height: 26px;
-          display: block;
-          margin: 0;
-          stroke: #e8edf4;
-          stroke-width: 2.2;
-          fill: none;
-          opacity: 0.96;
-        }
-        .subtitle-mark svg .play-core {
-          fill: #e8edf4;
-          stroke: none;
-        }
-        .subtitle-time {
-          font-size: 10px; color: #777; margin-bottom: 4px; font-variant-numeric: tabular-nums;
-        }
-        .subtitle-primary { color: #aaa; font-size: 16px; font-weight: 600; line-height: 1.55; margin-bottom: 4px; }
-        .subtitle-secondary { color: #888; font-size: 15px; font-weight: 550; line-height: 1.55; }
-        .debug-section {
-          padding: 10px 14px;
-          border-bottom: 1px solid #2a2a2a;
-          flex-shrink: 0;
-        }
-        .debug-section__header {
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 8px;
-        }
-        .debug-section__title {
-          color: #9aa0ac;
-          font-size: 11px;
-          line-height: 1.4;
-          letter-spacing: 0.03em;
-        }
-        .debug-toggle-button {
-          min-width: 44px;
-          min-height: 24px;
-          border-radius: 8px;
-          border: 1px solid rgba(255,255,255,0.16);
-          background: #23262d;
-          color: #fff;
-          font-size: 11px;
-          cursor: pointer;
-        }
-        .debug-section__body { margin-top: 10px; }
-        .debug-toolbar {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 8px;
-          margin-bottom: 8px;
-        }
-        .debug-btn {
-          min-height: 24px;
-          border: 1px solid rgba(255,255,255,0.16);
-          border-radius: 8px;
-          background: #23262d;
-          color: #fff;
-          font-size: 11px;
-          cursor: pointer;
-          padding: 0 8px;
-        }
-        .debug-btn:hover,
-        .debug-toggle-button:hover {
-          background: #2d323b;
-        }
-        #debug-log {
-          display: block;
-          width: 100%;
-          min-height: 180px;
-          resize: vertical;
-          border: 1px solid #2a313d;
-          border-radius: 8px;
-          background: #0f1319;
-          color: #d8dee9;
-          padding: 10px;
-          font-size: 11px;
-          line-height: 1.5;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-          box-sizing: border-box;
-        }
-        .dual-subtitles-secondary {
-          color: #cfcfcf;
-          font-size: 12px;
-          line-height: 1.5;
-          margin: 0 0 12px;
-          padding: 8px 10px;
-          background: rgba(255, 255, 255, 0.04);
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 6px;
-        }
-        ::slotted([data-secondary-subtitle]) {
-          display: none;
-        }
-        .atv-word { cursor: pointer; border-radius: 2px; padding: 0 1px; }
-        .atv-word:hover { background: rgba(255,220,80,0.3); }
-      </style>
+  function buildPanelShellHTML() {
+    const panelCssUrl = chrome.runtime.getURL("panel.css");
+    return `
+      <link rel="stylesheet" href="${panelCssUrl}">
       <div id="panel" class="dual-subtitles-panel" data-dual-subtitles-panel>
         <div id="panel-header">
           <span>📋 字幕履歴</span>
@@ -2373,6 +2198,35 @@
         </div>
       </div>
     `;
+  }
+
+  function createRightPanel() {
+    if (getTarget().querySelector("#atv-panel-host")) {
+      state.panelShadowRoot =
+        getTarget().querySelector("#atv-panel-host")?.shadowRoot ||
+        state.panelShadowRoot;
+      ensureSecondarySubtitleElement();
+      return;
+    }
+
+    const host = document.createElement("div");
+    host.id = "atv-panel-host";
+    host.style.cssText = [
+      "position:fixed",
+      "top:0",
+      "right:0",
+      "width:30%",
+      "height:100vh",
+      "z-index:999997",
+      "pointer-events:auto",
+      "box-sizing:border-box",
+    ].join(";");
+    getTarget().appendChild(host);
+
+    ensurePanelSlotLayerStyle();
+
+    state.panelShadowRoot = host.attachShadow({ mode: "open" });
+    state.panelShadowRoot.innerHTML = buildPanelShellHTML();
 
     state.panelShadowRoot
       .getElementById("close-btn")
