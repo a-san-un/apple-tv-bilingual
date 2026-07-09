@@ -2174,6 +2174,31 @@
     state.overlayRoot = null;
   }
 
+  function buildPanelDebugShellHTML() {
+    return `
+      <div id="debug-section" class="debug-section">
+        <div class="debug-section__header">
+          <span class="debug-section__title">デバッグログ（開発者向け）</span>
+          <button
+            id="debugSectionToggle"
+            class="debug-toggle-button"
+            type="button"
+            aria-expanded="false"
+            aria-controls="debugSectionBody"
+          >▶</button>
+        </div>
+        <div id="debugSectionBody" class="debug-section__body" hidden>
+          <div class="debug-toolbar">
+            <button id="debugCopyBtn" class="debug-btn" type="button">Copy</button>
+            <button id="debugDownloadBtn" class="debug-btn" type="button">Download</button>
+            <button id="debugClearBtn" class="debug-btn" type="button">Clear</button>
+          </div>
+          <textarea id="debug-log" readonly></textarea>
+        </div>
+      </div>
+    `;
+  }
+
   function buildPanelShellHTML() {
     const panelCssUrl = chrome.runtime.getURL("panel.css");
     return `
@@ -2186,26 +2211,7 @@
             <button id="close-btn" type="button">✕ 閉じる</button>
           </div>
         </div>
-        <div id="debug-section" class="debug-section">
-          <div class="debug-section__header">
-            <span class="debug-section__title">デバッグログ（開発者向け）</span>
-            <button
-              id="debugSectionToggle"
-              class="debug-toggle-button"
-              type="button"
-              aria-expanded="false"
-              aria-controls="debugSectionBody"
-            >▶</button>
-          </div>
-          <div id="debugSectionBody" class="debug-section__body" hidden>
-            <div class="debug-toolbar">
-              <button id="debugCopyBtn" class="debug-btn" type="button">Copy</button>
-              <button id="debugDownloadBtn" class="debug-btn" type="button">Download</button>
-              <button id="debugClearBtn" class="debug-btn" type="button">Clear</button>
-            </div>
-            <textarea id="debug-log" readonly></textarea>
-          </div>
-        </div>
+        ${buildPanelDebugShellHTML()}
         <div id="panel-scroll">
           <slot name="secondary-subtitle-slot"></slot>
           <div id="subtitle-list"></div>
