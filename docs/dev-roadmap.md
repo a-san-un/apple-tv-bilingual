@@ -24,24 +24,24 @@
 
 ## Issue 一覧
 
-| #                      | タイトル                                                                           | 優先度 | フェーズ   | 状態                   | ラベル                                                     |
-| ---------------------- | ---------------------------------------------------------------------------------- | ------ | ---------- | ---------------------- | ---------------------------------------------------------- |
-| [#3](../../issues/3)   | 字幕パネル表示時に動画操作レイヤーが右パネルに隠れないよう調整する                 | P0     | Phase 1    | **完了**               | `p0` `bug` `enhancement` `area:ui`                         |
-| [#4](../../issues/4)   | ATV DEBUG を独立表示から右字幕パネル下部の折り畳みセクションへ統合する             | P1     | Phase 2    | **完了**               | `p1` `enhancement` `area:ui` `area:content`                |
-| [#5](../../issues/5)   | options の「デバッグログ（開発者向け）」セクションを折り畳み既定にする             | P1     | Phase 2    | **完了**               | `p1` `enhancement` `area:options`                          |
-| [#6](../../issues/6)   | popup / options の字幕言語一覧を動画状態から分離して固定化する                     | P0     | Phase 1    | **完了**               | `p0` `bug` `enhancement` `area:popup` `area:content`       |
-| [#7](../../issues/7)   | secondaryLang の空値保存とブラウザ言語 fallback の挙動を統一する                   | P0     | Phase 1    | **完了**               | `p0` `bug` `enhancement` `area:popup` `area:content`       |
-| [#8](../../issues/8)   | Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する                           | P1     | Phase 3    | **完了**               | `p1` `enhancement` `area:options` `area:content`           |
-| [#10](../../issues/10) | 単語ポップアップ UI 刷新・AI タブ拡張と `dictionaryapi.dev` ハンドラ実装           | P2     | 後続タスク | 未完了                 | `enhancement` `area:content` `area:popup` `p2`             |
-| [#12](../../issues/12) | content.js Phase A: `vtt-normalizer.js` / `debug-logger.js` を切り出す             | P1     | Phase 3    | **完了**               | `p1` `enhancement` `area:content`                          |
-| [#13](../../issues/13) | content.js Phase B: `subtitle-track-resolver.js` を切り出す                        | P1     | Phase 3    | **完了**               | `p1` `enhancement` `area:content`                          |
-| [#14](../../issues/14) | 設定変更時と動画初期化時を基準に字幕設定を反映し、ページ離脱時リセット依存を減らす | P1     | Phase 3    | **完了**               | `p1` `enhancement` `area:content`                          |
-| [#16](../../issues/16) | Phase C: `settings-bridge.js` / `debug-panel.js` を切り出す                        | P1     | Phase C    | **完了**               | `p1` `enhancement` `area:content`                          |
-| [#17](../../issues/17) | `content.js` の current 表示モデルを整理し、マーク移動と最小スクロールへ移行する   | P1     | 完了       | **完了**               | `p1` `enhancement` `area:ui` `area:content`                |
-| [#18](../../issues/18) | primaryLang を英語以外にした場合に主字幕が表示されない問題を切り分ける             | P1     | Phase 3    | **完了**               | `p1` `bug` `area:content`                                  |
-| [#19](../../issues/19) | Phase D: binder/sidebar 側で primary cue が UI に反映されない非対称を解消する      | P1     | Phase D    | **完了**               | `p1` `area:content` `area:ui`                              |
-| [#20](../../issues/20) | Phase E (1): `content.js` panel / overlay セクションの責務分離                     | P1     | Phase E    | 進行中（入口整理完了） | `enhancement` `p1` `area:ui` `area:content` `area:options` |
-| [#21](../../issues/21) | Phase E (2): `content.js` binder / cue ロジックの整理と分割準備                    | P1     | Phase E    | 未着手                 | `enhancement` `p1` `area:content` `area:options`           |
+| #                      | タイトル                                                                           | 優先度 | フェーズ   | 状態                                | ラベル                                                     |
+| ---------------------- | ---------------------------------------------------------------------------------- | ------ | ---------- | ----------------------------------- | ---------------------------------------------------------- |
+| [#3](../../issues/3)   | 字幕パネル表示時に動画操作レイヤーが右パネルに隠れないよう調整する                 | P0     | Phase 1    | **完了**                            | `p0` `bug` `enhancement` `area:ui`                         |
+| [#4](../../issues/4)   | ATV DEBUG を独立表示から右字幕パネル下部の折り畳みセクションへ統合する             | P1     | Phase 2    | **完了**                            | `p1` `enhancement` `area:ui` `area:content`                |
+| [#5](../../issues/5)   | options の「デバッグログ（開発者向け）」セクションを折り畳み既定にする             | P1     | Phase 2    | **完了**                            | `p1` `enhancement` `area:options`                          |
+| [#6](../../issues/6)   | popup / options の字幕言語一覧を動画状態から分離して固定化する                     | P0     | Phase 1    | **完了**                            | `p0` `bug` `enhancement` `area:popup` `area:content`       |
+| [#7](../../issues/7)   | secondaryLang の空値保存とブラウザ言語 fallback の挙動を統一する                   | P0     | Phase 1    | **完了**                            | `p0` `bug` `enhancement` `area:popup` `area:content`       |
+| [#8](../../issues/8)   | Debug ログのカテゴリ設計を整理し、共通ログ基盤を共有する                           | P1     | Phase 3    | **完了**                            | `p1` `enhancement` `area:options` `area:content`           |
+| [#10](../../issues/10) | 単語ポップアップ UI 刷新・AI タブ拡張と `dictionaryapi.dev` ハンドラ実装           | P2     | 後続タスク | 未完了                              | `enhancement` `area:content` `area:popup` `p2`             |
+| [#12](../../issues/12) | content.js Phase A: `vtt-normalizer.js` / `debug-logger.js` を切り出す             | P1     | Phase 3    | **完了**                            | `p1` `enhancement` `area:content`                          |
+| [#13](../../issues/13) | content.js Phase B: `subtitle-track-resolver.js` を切り出す                        | P1     | Phase 3    | **完了**                            | `p1` `enhancement` `area:content`                          |
+| [#14](../../issues/14) | 設定変更時と動画初期化時を基準に字幕設定を反映し、ページ離脱時リセット依存を減らす | P1     | Phase 3    | **完了**                            | `p1` `enhancement` `area:content`                          |
+| [#16](../../issues/16) | Phase C: `settings-bridge.js` / `debug-panel.js` を切り出す                        | P1     | Phase C    | **完了**                            | `p1` `enhancement` `area:content`                          |
+| [#17](../../issues/17) | `content.js` の current 表示モデルを整理し、マーク移動と最小スクロールへ移行する   | P1     | 完了       | **完了**                            | `p1` `enhancement` `area:ui` `area:content`                |
+| [#18](../../issues/18) | primaryLang を英語以外にした場合に主字幕が表示されない問題を切り分ける             | P1     | Phase 3    | **完了**                            | `p1` `bug` `area:content`                                  |
+| [#19](../../issues/19) | Phase D: binder/sidebar 側で primary cue が UI に反映されない非対称を解消する      | P1     | Phase D    | **完了**                            | `p1` `area:content` `area:ui`                              |
+| [#20](../../issues/20) | Phase E (1): `content.js` panel / overlay セクションの責務分離                     | P1     | Phase E    | 進行中（overlay/popup 1段整理済み） | `enhancement` `p1` `area:ui` `area:content` `area:options` |
+| [#21](../../issues/21) | Phase E (2): `content.js` binder / cue ロジックの整理と分割準備                    | P1     | Phase E    | 未着手                              | `enhancement` `p1` `area:content` `area:options`           |
 
 ---
 
@@ -115,7 +115,7 @@
 
 **ゴール**: Phase D までで整理した UI shell / binder / cue の境界を維持したまま、最も密結合で壊れやすい layout / observer / bootstrap 層を最後に整理する。
 
-- [ ] [#20](../../issues/20) Phase E (1): panel / overlay セクションの責務分離（入口整理完了、shell 分離本体へ移行準備済み）
+- [ ] [#20](../../issues/20) Phase E (1): panel / overlay セクションの責務分離（overlay/popup 1段整理済み、panel は safer path で継続）
 - [ ] [#21](../../issues/21) Phase E (2): binder / cue ロジックの整理と分割準備
 
 #### Phase E の進め方
@@ -133,7 +133,12 @@
 - `createRightPanel()` / `createOverlay()` / `createPopupHost()` は、host / shadow 準備、template 適用、イベント配線に集中させる
 - 長い template は `build*ShellHTML()` 系へ寄せる
 - 入口整理として、境界コメントの簡素化、subtitle popup 命名統一、`wireSubtitlePopupUiEvents()` 抽出、create 系責務整理、render の shell 反映責務線（`renderSecondarySubtitle()` / `renderPanel()` / `updateOverlay()` / `applyCurrentStateToPanel()`）まで反映済み
-- 次ステップは panel / overlay / subtitle popup の shell 分離本体を段階的に進め、`renderPanel()` の hover / click / scroll 本体分解はこの後段に送る
+- overlay は 1 段整理済み（`updateOverlay()` の word click listener を外し、`wireOverlayUiEvents()` の event delegation へ移動。`createOverlay()` は host 作成 → shadow 準備 → shell 適用 → wiring 呼び出しの流れへ寄せた）
+- subtitle popup は 1 段整理済み（`buildPopupShellStyleText()` を追加し style を分離、`wireSubtitlePopupUiEvents()` に責務コメント追加、`.atv-word-link` click は early return 形へ整理）
+- panel の `panel-debug-anchor` 追加 + debug mount 先変更案は、責務線が曖昧化しうるため今回は見送り
+- panel の次手は案A（`buildPanelShellHTML()` / `buildPanelDebugShellHTML()` / `createDebugPanel()` に短い責務コメントを追加して境界を明確化）
+- #21（binder / cue）と observer / bootstrap はこのバッチでは未着手
+- `renderPanel()` の hover / click / scroll 本体分解はこの後段に送る
 - DOM の `id` / `class` / `data-*`、見た目、close 動作、current 行や threshold-scroll の挙動は変えない
 
 #### #21 メモ（Phase E (2)）
@@ -306,6 +311,33 @@ Phase 1〜3 の主要項目（#3 / #4 / #5 / #6 / #7 / #8 / #12 / #13 / #14 / #1
 
 ## 文書管理方針
 
-| ファイル              | 目的 | GitHub 保管 |
-| --------------------- | ---- | ----------- |
-| `docs/dev-roadmap.md` |
+| ファイル                          | 目的                                                                   | GitHub 保管 |
+| --------------------------------- | ---------------------------------------------------------------------- | ----------- |
+| `docs/dev-roadmap.md`             | phase-3 全体の実装順、issue 状態、フェーズ進捗を管理する親ドキュメント | する        |
+| `docs/atv-design.md`              | UI / 表示仕様 / パネル・overlay・popup の設計意図を管理する            | する        |
+| `docs/contentjs-split-roadmap.md` | `content.js` 分割・責務整理の実装順とバッチ方針を管理する              | する        |
+| `docs/ai-session-templates.md`    | Copilot / AI セッションに渡す定型プロンプトと運用ルールを管理する      | する        |
+
+### 使い分けルール
+
+- 実装順・優先順位・phase 管理は `docs/dev-roadmap.md`
+- UI 表示仕様・責務境界の設計意図は `docs/atv-design.md`
+- `content.js` の分割順・バッチ粒度・安全策は `docs/contentjs-split-roadmap.md`
+- AI への依頼文・セッション運用ルールは `docs/ai-session-templates.md`
+
+### 更新ルール
+
+- 実装を進めたら、コードだけでなく関連 docs も同じバッチで更新する
+- 「実施済み」「見送り」「次の方針」が分かる形で書く
+- 未実施の案を、完了済みのように書かない
+- 最小差分を優先し、無関係な全体整形は避ける
+- 既存コメントや既存用語を壊さず、必要な箇所に責務境界コメントや進捗メモを補う
+
+---
+
+## 補足メモ
+
+- content.js の popup は **subtitle popup** を指す
+- extension popup（ブラウザ拡張の popup UI）は別物として扱う
+- Phase E では、まず #20 で UI shell 側、次に #21 で binder / cue 側を進める
+- observer / bootstrap / layout の本格整理は、#20 / #21 の後段で扱う

@@ -101,6 +101,7 @@
 - 実装でも docs でも、変更によって不要になった旧記述・旧分岐・未使用変数・死んだ説明は削除候補として確認する。
 - 旧ロジックを残したまま新ロジックを追加する形は避け、置き換えられるものは置き換える。
 - ただし、削除は「確実に不要」と判断できるものだけに限定し、不確実なものは残して報告する。
+- 既存コメントは壊さず、shell / render / wiring / debug mount の責務境界を補う短いコメントを必要箇所へ追加する。
 - commit / push を含む場合は、指示文の早い段階で「今回は commit まで」「今回は push まで」と明示する。
 - docs の粒度は役割で分ける:
   - 実装順 / 優先順位 / phase 管理 → `docs/dev-roadmap.md`
@@ -342,7 +343,14 @@ VS Code の GitHub Copilot / Serena MCP でこのプロジェクトを有効化�
 - Step:
   1) 入口整理（境界コメント整理 / create 責務整理）
   2) render 責務線追加（shell 作成ではなく既存 shell への state 反映を明示）
-  3) shell 分離本体（panel / overlay / subtitle popup を段階的に切り出す）
+  3) shell 分離本体（overlay / subtitle popup を先に 1 段整理し、panel は safer path で進める）
+
+進捗メモ（2026-07 時点）:
+- overlay は 1 段整理済み（`wireOverlayUiEvents()` へ event delegation を移し、`updateOverlay()` は render 専任）
+- subtitle popup は 1 段整理済み（`buildPopupShellStyleText()` で style 分離、wiring コメント追加）
+- panel の `panel-debug-anchor` 追加 + debug mount 先変更案は見送り
+- panel の次手は案A（`buildPanelShellHTML()` / `buildPanelDebugShellHTML()` / `createDebugPanel()` に責務コメントを追加）
+- #21（binder / cue）、observer / bootstrap、#10 はこのバッチで触らない
 
 用語ポリシー:
 - content.js の popup は subtitle popup（字幕上の辞書 popup）と表記する

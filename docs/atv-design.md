@@ -317,6 +317,15 @@ Phase E では、Phase D までで整理した UI 表示仕様を崩さずに、
 - UI shell / binder-cue / observer-bootstrap の境界をコメントと関数配置で見える化する
 - render は shell を新規作成せず、既存 shell へ subtitle history / current state を適用する責務に留める
 
+#### Phase E / #20 の現状（更新）
+
+- overlay は 1 段整理済み（`updateOverlay()` の word click listener 登録を外し、`wireOverlayUiEvents()` の event delegation へ移行）
+- `createOverlay()` は host 作成 → shadow root 準備 → shell HTML 適用 → wiring 呼び出しの順へ寄せた
+- subtitle popup は 1 段整理済み（`buildPopupShellHTML()` から style 定義を `buildPopupShellStyleText()` へ分離）
+- `wireSubtitlePopupUiEvents()` には責務コメントを追加し、`.atv-word-link` click 処理を early return 形で整理した
+- panel の `panel-debug-anchor` 追加 + debug mount 先変更案は今回は見送りとし、次は案A（コメント追加で shell / debug shell / debug mount の境界明確化）を優先する
+- いずれも挙動は変えず、binder / cue（#21）/ observer / bootstrap / #10 には踏み込まない
+
 #### Phase E で後ろに回すこと
 
 - `renderPanel()` の hover / click / scroll ロジックの本格分割

@@ -245,6 +245,7 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
   - `// [binder/cue logic]`
   - `// [observer/layout]`
   - `// [bootstrap]`
+- 既存コメントは維持し、責務境界を追加で明確化したい箇所に短いコメントを足す
 - 新規 helper は薄い責務のものに限定し、旧ロジックを残したまま新ロジックを継ぎ足す形を避ける
 - 削除は「確実に不要」と判断できるものに限り、迷うものは次バッチへ送る
 
@@ -256,9 +257,16 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - `createRightPanel()` / `createOverlay()` / `createPopupHost()` は host / shadow 準備、shell 適用、イベント配線呼び出しへ責務を寄せた
 - subtitle popup の wiring は `wireSubtitlePopupUiEvents()` へ抽出し、create 系の責務線を揃えた
 - popup / overlay の長い template は `buildPopupShellHTML()` / `buildOverlayShellHTML()` のような builder 関数へ寄せる
+- overlay は 1 段整理済み（`updateOverlay()` の word click listener 登録を外し、`wireOverlayUiEvents()` の event delegation へ移動）
+- `createOverlay()` は host 作成 → shadow root 準備 → shell HTML 適用 → wiring 呼び出しへ統一
+- subtitle popup は 1 段整理済み（`buildPopupShellStyleText()` へ style 定義を分離し、`wireSubtitlePopupUiEvents()` に責務コメントを追加）
+- popup 内 `.atv-word-link` click 処理は early return 形へ整理（仕様・挙動は変更しない）
+- panel の `panel-debug-anchor` 追加 + debug mount 先変更案は、責務線が曖昧化しうるため今回は見送り
+- panel の次手は案A（`buildPanelShellHTML()` / `buildPanelDebugShellHTML()` / `createDebugPanel()` に責務コメントを補う）
 - DOM の id / class / data 属性、見た目、close 動作、panel の current 行や threshold-scroll の挙動は変えない
 - `renderPanel()` / `renderSecondarySubtitle()` / `updateOverlay()` / `applyCurrentStateToPanel()` は、shell 作成ではなく既存 shell への state 反映責務として境界を明示した
 - 今回は全面分割に進まず、Phase E 本体で panel / overlay / subtitle popup の shell 分離を段階的に切り出す
+- #21（binder / cue）/ observer / bootstrap / #10 は今回の範囲外とする
 - `renderPanel()` の hover / click / scroll ロジック分解は #20 の範囲では行わず、必要なら次バッチへ送る
 
 ### Phase E (2) メモ: binder / cue logic の整理と分割準備
