@@ -21,6 +21,7 @@
   };
 
   const DEBUG_SECONDARY_SUBS = false;
+  // Optional probe logs for #19 regressions. Keep false in normal operation.
   const DEBUG_PANEL_PROBE = false;
   const LOG_CATEGORIES = Object.freeze({
     SETTINGS: "settings",
@@ -2760,6 +2761,7 @@
       }
       const currentSecondaryText = cleanCueText(curSecondaryCue);
       if (DEBUG_PANEL_PROBE) {
+        // Probe current-row source texts to verify primary/secondary cue assignment.
         logContent("panel render current block probe", {
           currentTime,
           settingsPrimaryLang: state.contentSettings.primaryLang,
@@ -3420,6 +3422,7 @@
     const sText = cleanCueText(sCue);
 
     if (DEBUG_PANEL_PROBE) {
+      // Probe cuechange source tracks/texts when reproducing #19 symptoms.
       logContent("cuechange track probe", {
         primaryTrackLanguage: state.primaryTrack?.language,
         secondaryTrackLanguage: state.secondaryTrack?.language,
