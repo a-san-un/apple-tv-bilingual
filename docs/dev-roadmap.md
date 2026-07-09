@@ -40,7 +40,7 @@
 | [#17](../../issues/17) | `content.js` の current 表示モデルを整理し、マーク移動と最小スクロールへ移行する   | P1     | 完了       | **完了** | `p1` `enhancement` `area:ui` `area:content`                |
 | [#18](../../issues/18) | primaryLang を英語以外にした場合に主字幕が表示されない問題を切り分ける             | P1     | Phase 3    | **完了** | `p1` `bug` `area:content`                                  |
 | [#19](../../issues/19) | Phase D: binder/sidebar 側で primary cue が UI に反映されない非対称を解消する      | P1     | Phase D    | **完了** | `p1` `area:content` `area:ui`                              |
-| [#20](../../issues/20) | Phase E (1): `content.js` panel / overlay セクションの責務分離                     | P1     | Phase E    | 進行中   | `enhancement` `p1` `area:ui` `area:content` `area:options` |
+| [#20](../../issues/20) | Phase E (1): `content.js` panel / overlay セクションの責務分離                     | P1     | Phase E    | 進行中（入口整理完了） | `enhancement` `p1` `area:ui` `area:content` `area:options` |
 | [#21](../../issues/21) | Phase E (2): `content.js` binder / cue ロジックの整理と分割準備                    | P1     | Phase E    | 未着手   | `enhancement` `p1` `area:content` `area:options`           |
 
 ---
@@ -115,7 +115,7 @@
 
 **ゴール**: Phase D までで整理した UI shell / binder / cue の境界を維持したまま、最も密結合で壊れやすい layout / observer / bootstrap 層を最後に整理する。
 
-- [ ] [#20](../../issues/20) Phase E (1): panel / overlay セクションの責務分離
+- [ ] [#20](../../issues/20) Phase E (1): panel / overlay セクションの責務分離（入口整理完了、shell 分離本体へ移行準備済み）
 - [ ] [#21](../../issues/21) Phase E (2): binder / cue ロジックの整理と分割準備
 
 #### Phase E の進め方
@@ -129,11 +129,12 @@
 
 #### #20 メモ（Phase E (1)）
 
-- panel / debug / overlay / popup の UI shell を対象に、構造・template・イベント配線の責務境界を明確にする
+- panel / debug / overlay / subtitle popup の UI shell を対象に、構造・template・イベント配線の責務境界を明確にする
 - `createRightPanel()` / `createOverlay()` / `createPopupHost()` は、host / shadow 準備、template 適用、イベント配線に集中させる
 - 長い template は `build*ShellHTML()` 系へ寄せる
+- 入口整理として、境界コメントの簡素化、subtitle popup 命名統一、`wireSubtitlePopupUiEvents()` 抽出、create 系責務整理、render の shell 反映責務線（`renderSecondarySubtitle()` / `renderPanel()` / `updateOverlay()` / `applyCurrentStateToPanel()`）まで反映済み
+- 次ステップは panel / overlay / subtitle popup の shell 分離本体を段階的に進め、`renderPanel()` の hover / click / scroll 本体分解はこの後段に送る
 - DOM の `id` / `class` / `data-*`、見た目、close 動作、current 行や threshold-scroll の挙動は変えない
-- `renderPanel()` の hover / click / scroll ロジック分解は #20 の範囲では行わない
 
 #### #21 メモ（Phase E (2)）
 

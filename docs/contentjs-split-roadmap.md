@@ -231,27 +231,34 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 
 - Phase E は「コード整備を含めた挙動を変えない責務整理」から着手する
 - UI shell と binder / cue logic を同じ差分で同時に大きく触らない
-- panel / debug / overlay / popup の構造・template・イベント配線は UI shell 側へ寄せる
+- panel / debug / overlay / subtitle popup の構造・template・イベント配線は UI shell 側へ寄せる
 - track binding / cue handling / history / current row 連携は binder / cue logic 側としてまとめる
 - `createRightPanel()` / `createOverlay()` / `createPopupHost()` などのエントリ関数は、host / shadow 準備、template 適用、イベント配線に集中させる
 - 長い HTML テンプレは create 系関数へ直書きせず、`build*ShellHTML()` 系の builder 関数へ寄せる
 - `renderPanel()` や `onCueChange()` のような挙動影響が大きい関数は、UI shell 整理と同じバッチで深く分解しない
 - resolver の仕様、secondaryLang fallback、#17 の current 行モデル、Phase D で確定した primary 表示条件は維持する
 - コメント境界を明示し、少なくとも以下のまとまりを保つ
-  - `// [UI shell] panel / debug`
-  - `// [UI shell] overlay / popup`
-  - `// [binder / cue logic]`
+  - `// [UI shell: panel/debug]`
+  - `// [UI shell: subtitle popup]`
+  - `// [UI shell: overlay/panel anchor]`
+  - `// [render]`
+  - `// [binder/cue logic]`
+  - `// [observer/layout]`
+  - `// [bootstrap]`
 - 新規 helper は薄い責務のものに限定し、旧ロジックを残したまま新ロジックを継ぎ足す形を避ける
 - 削除は「確実に不要」と判断できるものに限り、迷うものは次バッチへ送る
 
 ### Phase E (1) メモ: panel / overlay UI shell の責務整理
 
 - 関連 issue: [#20](../../issues/20) Phase E (1): content.js panel / overlay セクションの責務分離
-- Phase E の最初の一手では、UI shell 側から安全に整理を進める
-- 対象は panel / debug / overlay / popup の構造整理とし、binder / cue logic には踏み込まない
-- `createRightPanel()` は host / shadow 準備、shell 適用、イベント配線へ責務を寄せる
+- Phase E の最初の一手（入口整理）は完了し、UI shell 側から安全に整理を進めた
+- 対象は panel / debug / overlay / subtitle popup の構造整理とし、binder / cue logic には踏み込まない
+- `createRightPanel()` / `createOverlay()` / `createPopupHost()` は host / shadow 準備、shell 適用、イベント配線呼び出しへ責務を寄せた
+- subtitle popup の wiring は `wireSubtitlePopupUiEvents()` へ抽出し、create 系の責務線を揃えた
 - popup / overlay の長い template は `buildPopupShellHTML()` / `buildOverlayShellHTML()` のような builder 関数へ寄せる
 - DOM の id / class / data 属性、見た目、close 動作、panel の current 行や threshold-scroll の挙動は変えない
+- `renderPanel()` / `renderSecondarySubtitle()` / `updateOverlay()` / `applyCurrentStateToPanel()` は、shell 作成ではなく既存 shell への state 反映責務として境界を明示した
+- 今回は全面分割に進まず、Phase E 本体で panel / overlay / subtitle popup の shell 分離を段階的に切り出す
 - `renderPanel()` の hover / click / scroll ロジック分解は #20 の範囲では行わず、必要なら次バッチへ送る
 
 ### Phase E (2) メモ: binder / cue logic の整理と分割準備
@@ -269,7 +276,7 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - controls 位置調整が壊れない
 - panel と footer / unified-controls の干渉が再発しない
 - observer の無限ループ・多重登録がない
-- panel / debug / overlay / popup の UI shell 境界がコメントと関数構造で追える
+- panel / debug / overlay / subtitle popup の UI shell 境界がコメントと関数構造で追える
 - binder / cue logic のまとまりが UI shell と混線せずに追える
 - observer / timer / retry を触る差分と、UI shell / binder 整理の差分が必要以上に混ざらない
 

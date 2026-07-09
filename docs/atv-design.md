@@ -30,7 +30,8 @@
 - 辞書連携は Jisho / Tatoeba / `dictionaryapi.dev` などを含む構成
 - AI 補助表示は今後の拡張対象
 - 字幕本体の 2 行表示と、学習補助ポップアップは役割を分けて扱う
-- popup の UI shell は整理を進めつつあるが、辞書入力文字列の正規化仕様（例: `You're` → `Youre`）は別課題として扱う
+- subtitle popup の UI shell は整理を進めつつあるが、辞書入力文字列の正規化仕様（例: `You're` → `Youre`）は別課題として扱う
+- content.js で扱う popup は subtitle popup（字幕上の辞書 popup）であり、拡張機能の extension popup（`popup.html` / `popup.js`）とは別責務として扱う
 
 ### 1.4 言語設定の現状
 
@@ -294,7 +295,7 @@ Phase E では、Phase D までで整理した UI 表示仕様を崩さずに、
 
 - 最初の一手は、**コード整備を含めた「挙動を変えない責務整理」**とする
 - UI shell と binder / cue logic を同じ差分で同時に大きく触らない
-- panel / debug / overlay / popup は UI shell として扱う
+- panel / debug / overlay / subtitle popup は UI shell として扱う
 - track binding / cue handling / history / current row 連携は binder / cue logic として扱う
 - `ResizeObserver` / `MutationObserver` / timer / retry / bootstrap はさらに後段で整理する
 - 最終的に `content.js` は bootstrap 的な薄い入口に寄せる
@@ -305,7 +306,7 @@ Phase E では、Phase D までで整理した UI 表示仕様を崩さずに、
 - #19 で確定した primary / secondary 表示責務
 - resolver の言語一致仕様
 - `secondaryLang` fallback
-- panel / overlay / popup の見た目と close 挙動
+- panel / overlay / subtitle popup の見た目と close 挙動
 - デバッグログ観測導線
 
 #### Phase E で先に進めること
@@ -314,6 +315,7 @@ Phase E では、Phase D までで整理した UI 表示仕様を崩さずに、
 - `createRightPanel()` / `createOverlay()` / `createPopupHost()` のような create 系エントリ関数の薄化
 - `buildPanelShellHTML()` / `buildPanelDebugShellHTML()` と同じ考え方で、長い template を builder 関数へ寄せる
 - UI shell / binder-cue / observer-bootstrap の境界をコメントと関数配置で見える化する
+- render は shell を新規作成せず、既存 shell へ subtitle history / current state を適用する責務に留める
 
 #### Phase E で後ろに回すこと
 

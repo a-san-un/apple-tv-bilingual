@@ -327,6 +327,28 @@ commit / push 方針:
 - 必要なら docs / issue 更新案
 ```
 
+### 6.2 Phase E 実装テンプレート（#20 向け）
+
+```text
+VS Code の GitHub Copilot / Serena MCP でこのプロジェクトを有効化してください。
+プロジェクト名: apple-tv-bilingual
+対象ブランチ: phase-3
+
+今回は実装まで進めてください。
+
+現在位置:
+- Phase: Phase E
+- Issue: #20「content.js panel / overlay セクションの責務分離」
+- Step:
+  1) 入口整理（境界コメント整理 / create 責務整理）
+  2) render 責務線追加（shell 作成ではなく既存 shell への state 反映を明示）
+  3) shell 分離本体（panel / overlay / subtitle popup を段階的に切り出す）
+
+用語ポリシー:
+- content.js の popup は subtitle popup（字幕上の辞書 popup）と表記する
+- extension popup（拡張 UI の popup.html / popup.js）は別物として扱い、#20 差分へ混ぜない
+```
+
 ---
 
 ## 7. docs 更新テンプレート（このチャット → Copilot / Serena）
