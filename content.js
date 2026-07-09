@@ -2228,6 +2228,8 @@ function buildPanelShellHTML() {
     `;
   }
 
+  // [wiring: panel header] パネルヘッダー（設定/閉じるボタン）の UI イベントを panel shell に接続する。
+  // shell の構造自体は buildPanelShellHTML が担い、ここではヘッダー操作の wiring のみを行う。
   function wirePanelHeaderActions() {
     const root = state.panelShadowRoot;
     if (!root) return;
