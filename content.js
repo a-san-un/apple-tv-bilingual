@@ -2174,6 +2174,8 @@
     state.overlayRoot = null;
   }
 
+  // [UI shell] panel / debug
+
   function buildPanelDebugShellHTML() {
     return `
       <div id="debug-section" class="debug-section">
@@ -2220,6 +2222,21 @@
     `;
   }
 
+  function wirePanelHeaderActions() {
+    if (!state.panelShadowRoot) return;
+
+    state.panelShadowRoot
+      .getElementById("close-btn")
+      .addEventListener("click", () => togglePanel());
+    state.panelShadowRoot
+      .getElementById("settings-btn")
+      .addEventListener("click", () => {
+        try {
+          chrome.runtime.sendMessage({ type: "OPEN_OPTIONS_PAGE" });
+        } catch (_) {}
+      });
+  }
+
   function createRightPanel() {
     if (getTarget().querySelector("#atv-panel-host")) {
       state.panelShadowRoot =
@@ -2248,16 +2265,7 @@
     state.panelShadowRoot = host.attachShadow({ mode: "open" });
     state.panelShadowRoot.innerHTML = buildPanelShellHTML();
 
-    state.panelShadowRoot
-      .getElementById("close-btn")
-      .addEventListener("click", () => togglePanel());
-    state.panelShadowRoot
-      .getElementById("settings-btn")
-      .addEventListener("click", () => {
-        try {
-          chrome.runtime.sendMessage({ type: "OPEN_OPTIONS_PAGE" });
-        } catch (_) {}
-      });
+    wirePanelHeaderActions();
 
     ensureSecondarySubtitleElement();
   }
@@ -2293,22 +2301,10 @@
     getTarget().appendChild(btn);
   }
 
-  function createPopupHost() {
-    if (getTarget().querySelector("#atv-popup-host")) {
-      state.popupShadowRoot =
-        getTarget().querySelector("#atv-popup-host")?.shadowRoot ||
-        state.popupShadowRoot;
-      return;
-    }
+  // [UI shell] overlay / popup
 
-    const host = document.createElement("div");
-    host.id = "atv-popup-host";
-    host.style.cssText =
-      "position:fixed;top:0;left:0;width:0;height:0;z-index:999999;pointer-events:none;";
-    getTarget().appendChild(host);
-
-    state.popupShadowRoot = host.attachShadow({ mode: "open" });
-    state.popupShadowRoot.innerHTML = `
+  function buildPopupShellHTML() {
+    return `
       <style>
         #popup {
           display: none; position: fixed; width: 340px;
@@ -2425,9 +2421,28 @@
         <div class="popup-pane" id="pane-ai"><span class="loading">翻訳中...</span></div>
       </div>
     `;
+  }
+
+  function createPopupHost() {
+    if (getTarget().querySelector("#atv-popup-host")) {
+      state.popupShadowRoot =
+        getTarget().querySelector("#atv-popup-host")?.shadowRoot ||
+        state.popupShadowRoot;
+      return;
+    }
+
+    const host = document.createElement("div");
+    host.id = "atv-popup-host";
+    host.style.cssText =
+      "position:fixed;top:0;left:0;width:0;height:0;z-index:999999;pointer-events:none;";
+    getTarget().appendChild(host);
+
+    state.popupShadowRoot = host.attachShadow({ mode: "open" });
+    state.popupShadowRoot.innerHTML = buildPopupShellHTML();
 
     const popup = state.popupShadowRoot.getElementById("popup");
 
+    // popup 内の UI 操作 listener 登録
     state.popupShadowRoot
       .getElementById("popup-close")
       .addEventListener("click", () => {
@@ -2450,11 +2465,13 @@
       });
     });
 
+    // popup 外クリックで閉じるための document listener 登録
     state.popupDocClickHandler = () => {
       popup.style.display = "none";
     };
     document.addEventListener("click", state.popupDocClickHandler);
 
+    // popup 内の動的単語リンククリックを拾う listener 登録
     state.popupShadowRoot.addEventListener("click", (e) => {
       if (e.target.classList.contains("atv-word-link")) {
         e.stopPropagation();
@@ -2900,6 +2917,30 @@
     }
   }
 
+  function buildOverlayShellHTML() {
+    return `
+      <style>
+        #overlay {
+          display: inline-block; background: rgba(0,0,0,0.7);
+          border-radius: 6px; padding: 6px 16px;
+          max-width: 80%; text-align: center; pointer-events: auto;
+        }
+        .sub-line {
+          display: block;
+          font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+          font-size: 18px; font-weight: 500; color: #fff;
+          text-shadow: 0 1px 3px rgba(0,0,0,0.9); line-height: 1.4;
+        }
+        .atv-word { cursor: pointer; border-radius: 2px; padding: 0 1px; }
+        .atv-word:hover { background: rgba(255,220,80,0.4); }
+      </style>
+      <div id="overlay">
+        <span class="sub-line" id="ov-primary"></span>
+        <span class="sub-line" id="ov-secondary"></span>
+      </div>
+    `;
+  }
+
   function createOverlay() {
     if (getTarget().querySelector("#atv-overlay-host")) {
       state.overlayRoot =
@@ -2922,27 +2963,7 @@
     getTarget().appendChild(host);
 
     state.overlayRoot = host.attachShadow({ mode: "open" });
-    state.overlayRoot.innerHTML = `
-      <style>
-        #overlay {
-          display: inline-block; background: rgba(0,0,0,0.7);
-          border-radius: 6px; padding: 6px 16px;
-          max-width: 80%; text-align: center; pointer-events: auto;
-        }
-        .sub-line {
-          display: block;
-          font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
-          font-size: 18px; font-weight: 500; color: #fff;
-          text-shadow: 0 1px 3px rgba(0,0,0,0.9); line-height: 1.4;
-        }
-        .atv-word { cursor: pointer; border-radius: 2px; padding: 0 1px; }
-        .atv-word:hover { background: rgba(255,220,80,0.4); }
-      </style>
-      <div id="overlay">
-        <span class="sub-line" id="ov-primary"></span>
-        <span class="sub-line" id="ov-secondary"></span>
-      </div>
-    `;
+    state.overlayRoot.innerHTML = buildOverlayShellHTML();
   }
 
   function updateOverlay(primaryText, secondaryText) {
@@ -3420,6 +3441,8 @@
     });
   }
 
+  // [binder / cue logic]
+
   function onCueChange() {
     const currentTime = state.video?.currentTime ?? 0;
     const pCue = getCurrentCue(state.primaryTrack, currentTime);
@@ -3510,6 +3533,7 @@
     clearPlaybackControlsTransforms();
 
     if (state.popupDocClickHandler) {
+      // createPopupHost で登録した document listener の解除
       document.removeEventListener("click", state.popupDocClickHandler);
       state.popupDocClickHandler = null;
     }
