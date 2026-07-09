@@ -2304,9 +2304,9 @@
 
   // [UI shell: subtitle popup]
 
-  function buildPopupShellHTML() {
+  // [UI shell: subtitle popup style]
+  function buildPopupShellStyleText() {
     return `
-      <style>
         #popup {
           display: none; position: fixed; width: 340px;
           background: #1c1c1e; border: 1px solid rgba(255,255,255,0.15);
@@ -2402,6 +2402,13 @@
         .ai-result { color: #fff; font-size: 13px; line-height: 1.5; }
         .loading   { color: #666; font-size: 12px; display: block; padding: 12px 14px; }
         .error     { color: #ff6b6b; font-size: 12px; display: block; padding: 12px 14px; }
+    `;
+  }
+
+  function buildPopupShellHTML() {
+    return `
+      <style>
+        ${buildPopupShellStyleText()}
       </style>
       <div id="popup">
         <div id="popup-header">
@@ -2424,6 +2431,7 @@
     `;
   }
 
+  // [UI wiring: subtitle popup]
   function wireSubtitlePopupUiEvents() {
     const root = state.popupShadowRoot;
     if (!root) return;
@@ -2457,14 +2465,16 @@
 
     // subtitle popup 内の動的単語リンククリックを拾う listener 登録
     root.addEventListener("click", (e) => {
-      if (e.target.classList.contains("atv-word-link")) {
-        e.stopPropagation();
-        const word = e.target.textContent.trim();
-        if (word) {
-          const rect = e.target.getBoundingClientRect();
-          showPopup(word, word, rect);
-        }
-      }
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      if (!target.classList.contains("atv-word-link")) return;
+
+      e.stopPropagation();
+      const word = target.textContent.trim();
+      if (!word) return;
+
+      const rect = target.getBoundingClientRect();
+      showPopup(word, word, rect);
     });
   }
 
