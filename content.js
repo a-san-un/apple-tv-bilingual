@@ -2732,6 +2732,7 @@
       if (h.endTime <= currentTime) allBlocks.push({ ...h, state: "past" });
     });
 
+    // [render: panel list blocks - current]
     // primary は state.primaryTrack、secondary は state.secondaryTrack の cue だけを使う。
     const curPrimaryCue = getCurrentCue(state.primaryTrack, currentTime);
     const curSecondaryCue = findCueAt(state.secondaryTrack, currentTime);
@@ -2780,6 +2781,7 @@
       });
     }
 
+    // [render: panel list blocks - future / snapshot]
     if (state.primaryTrack && state.primaryTrack.cues) {
       for (let i = 0; i < state.primaryTrack.cues.length; i++) {
         const c = state.primaryTrack.cues[i];
@@ -2810,6 +2812,7 @@
       state.lastPrimarySnapshotAt = Date.now();
     }
 
+    // [render: panel list DOM apply]
     list.innerHTML = allBlocks
       .map((block) => {
         const isCurrent = block.state === "current";
@@ -2835,6 +2838,7 @@
       })
       .join("");
 
+    // [wiring: panel list interactions]
     list.querySelectorAll(".subtitle-block").forEach((blockEl) => {
       blockEl.querySelectorAll(".atv-word").forEach((span) => {
         span.addEventListener("mouseenter", () => {
