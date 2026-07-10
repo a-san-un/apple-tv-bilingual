@@ -2742,6 +2742,44 @@
       `;
   }
 
+
+  function bindPanelWordInteractions(blockEl) {
+    blockEl.querySelectorAll(".atv-word").forEach((span) => {
+      span.addEventListener("mouseenter", () => {
+        span.style.background = "rgba(255,220,80,0.3)";
+      });
+      span.addEventListener("mouseleave", () => {
+        span.style.background = "";
+      });
+      span.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        showPopup(
+          span.dataset.word,
+          decodeURIComponent(span.dataset.sentence),
+          span.getBoundingClientRect(),
+        );
+      });
+    });
+  }
+
+  function bindPanelBlockInteractions(list) {
+    list.querySelectorAll(".subtitle-block").forEach((blockEl) => {
+      bindPanelWordInteractions(blockEl);
+
+      blockEl.addEventListener("click", (e) => {
+        if (e.target.classList.contains("atv-word")) return;
+        e.stopPropagation();
+        e.preventDefault();
+        const t = parseFloat(blockEl.dataset.time);
+        if (state.video && !Number.isNaN(t)) {
+          state.video.currentTime = t;
+          setTimeout(() => renderPanel(), 100);
+        }
+      });
+    });
+  }
+
   // [render: panel list apply]
   function renderPanel() {
     if (!state.panelShadowRoot) return;
@@ -2839,36 +2877,7 @@
     list.innerHTML = allBlocks.map((block) => buildPanelBlockHtml(block)).join("");
 
     // [wiring: panel list interactions]
-    list.querySelectorAll(".subtitle-block").forEach((blockEl) => {
-      blockEl.querySelectorAll(".atv-word").forEach((span) => {
-        span.addEventListener("mouseenter", () => {
-          span.style.background = "rgba(255,220,80,0.3)";
-        });
-        span.addEventListener("mouseleave", () => {
-          span.style.background = "";
-        });
-        span.addEventListener("click", (e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          showPopup(
-            span.dataset.word,
-            decodeURIComponent(span.dataset.sentence),
-            span.getBoundingClientRect(),
-          );
-        });
-      });
-
-      blockEl.addEventListener("click", (e) => {
-        if (e.target.classList.contains("atv-word")) return;
-        e.stopPropagation();
-        e.preventDefault();
-        const t = parseFloat(blockEl.dataset.time);
-        if (state.video && !Number.isNaN(t)) {
-          state.video.currentTime = t;
-          setTimeout(() => renderPanel(), 100);
-        }
-      });
-    });
+    bindPanelBlockInteractions(list);
 
     scrollCurrentPanelBlockIntoView();
   }
