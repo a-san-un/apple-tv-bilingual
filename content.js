@@ -626,56 +626,6 @@
     return cleanCueText(getCurrentCue(track, time));
   }
 
-  function unbindSecondarySubtitleTrack() {
-    if (secondaryTrackCleanup) {
-      secondaryTrackCleanup();
-      secondaryTrackCleanup = null;
-    }
-    secondaryTrackBound = null;
-  }
-
-  function bindSecondarySubtitleTrack(track, renderSecondarySubtitle) {
-    if (!track || typeof renderSecondarySubtitle !== "function") return;
-
-    unbindSecondarySubtitleTrack();
-
-    try {
-      track.mode = "showing";
-    } catch (_) {}
-
-    if (DEBUG_SECONDARY_SUBS) {
-      logContent("secondary track forced to showing", {
-        trackLanguage: track?.language || "",
-        cuesLength: getTrackCuesLength(track),
-        activeCuesLength: getTrackActiveCuesLength(track),
-      });
-    }
-
-    const onSecondaryCueChange = () => {
-      if (DEBUG_SECONDARY_SUBS) {
-        const effectiveSecondaryLanguage =
-          state.requestedSecondaryLang || state.contentSettings.secondaryLang;
-        logContent(
-          "secondary cuechange render",
-          getSecondaryTrackDebugPayload(effectiveSecondaryLanguage, track),
-        );
-      }
-      renderSecondarySubtitle(getCurrentCueText(track), track);
-      renderPanel();
-    };
-
-    track.addEventListener("cuechange", onSecondaryCueChange);
-
-    secondaryTrackCleanup = () => {
-      track.removeEventListener("cuechange", onSecondaryCueChange);
-    };
-
-    secondaryTrackBound = track;
-
-    // Initial paint
-    renderSecondarySubtitle(getCurrentCueText(track), track);
-  }
-
   function getSecondaryRenderLogPayload(text, track, elementCount) {
     return {
       textPreview: String(text || "").slice(0, 40),
@@ -2179,8 +2129,8 @@
   // [UI shell: panel/debug]
 
   // [UI shell: debug] パネル内 debug セクションの HTML 骨格を返す。
-// wiring・mount は行わない。buildPanelShellHTML から呼ばれる。
-function buildPanelDebugShellHTML() {
+  // wiring・mount は行わない。buildPanelShellHTML から呼ばれる。
+  function buildPanelDebugShellHTML() {
     return `
       <div id="debug-section" class="debug-section">
         <div class="debug-section__header">
@@ -2206,8 +2156,8 @@ function buildPanelDebugShellHTML() {
   }
 
   // [UI shell: panel] パネル全体の HTML 骨格（CSS link・header・debug shell・scroll area）を返す。
-// DOM への挿入・wiring・mount は createRightPanel / wirePanelHeaderActions が担う。
-function buildPanelShellHTML() {
+  // DOM への挿入・wiring・mount は createRightPanel / wirePanelHeaderActions が担う。
+  function buildPanelShellHTML() {
     const panelCssUrl = chrome.runtime.getURL("panel.css");
     return `
       <link rel="stylesheet" href="${panelCssUrl}">
@@ -2505,8 +2455,8 @@ function buildPanelShellHTML() {
   }
 
   // [debug mount] debug panel モジュールを panelShadowRoot にマウントする。
-// HTML shell は buildPanelDebugShellHTML が担い、UI wiring は debugPanel.mount 側へ委ねる。
-function createDebugPanel() {
+  // HTML shell は buildPanelDebugShellHTML が担い、UI wiring は debugPanel.mount 側へ委ねる。
+  function createDebugPanel() {
     if (!state.panelShadowRoot) return;
     state.debugPanelRoot = state.panelShadowRoot;
     const debugPanel = window.ATVB?.debugPanel;
@@ -3103,6 +3053,7 @@ function createDebugPanel() {
     state.trackResolveRetryTimers = [];
   }
 
+  // [binder/cue logic: track selection]
   function selectPrimaryAndSecondaryTracks(
     video,
     primaryLang,
@@ -3173,6 +3124,8 @@ function createDebugPanel() {
         : null,
     };
   }
+
+  // [binder/cue logic: cue availability / recovery gate]
 
   function hasRecoverableInitialCue() {
     const currentTime = state.video?.currentTime ?? 0;
@@ -3485,6 +3438,56 @@ function createDebugPanel() {
   }
 
   // [binder/cue logic]
+
+  function unbindSecondarySubtitleTrack() {
+    if (secondaryTrackCleanup) {
+      secondaryTrackCleanup();
+      secondaryTrackCleanup = null;
+    }
+    secondaryTrackBound = null;
+  }
+
+  function bindSecondarySubtitleTrack(track, renderSecondarySubtitle) {
+    if (!track || typeof renderSecondarySubtitle !== "function") return;
+
+    unbindSecondarySubtitleTrack();
+
+    try {
+      track.mode = "showing";
+    } catch (_) {}
+
+    if (DEBUG_SECONDARY_SUBS) {
+      logContent("secondary track forced to showing", {
+        trackLanguage: track?.language || "",
+        cuesLength: getTrackCuesLength(track),
+        activeCuesLength: getTrackActiveCuesLength(track),
+      });
+    }
+
+    const onSecondaryCueChange = () => {
+      if (DEBUG_SECONDARY_SUBS) {
+        const effectiveSecondaryLanguage =
+          state.requestedSecondaryLang || state.contentSettings.secondaryLang;
+        logContent(
+          "secondary cuechange render",
+          getSecondaryTrackDebugPayload(effectiveSecondaryLanguage, track),
+        );
+      }
+      renderSecondarySubtitle(getCurrentCueText(track), track);
+      renderPanel();
+    };
+
+    track.addEventListener("cuechange", onSecondaryCueChange);
+
+    secondaryTrackCleanup = () => {
+      track.removeEventListener("cuechange", onSecondaryCueChange);
+    };
+
+    secondaryTrackBound = track;
+
+    // Initial paint
+    renderSecondarySubtitle(getCurrentCueText(track), track);
+  }
 
   function onCueChange() {
     const currentTime = state.video?.currentTime ?? 0;
