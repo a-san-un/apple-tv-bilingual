@@ -1013,6 +1013,10 @@
       const shouldAttemptPrimaryRecovery =
         hasSecondarySignal && !hasPrimarySignal && trackCount > 1;
 
+      // [binder/cue: recovery - sync interval path]
+      // secondary signal はあるが primary signal が無い場合、
+      // sync interval 経由で primary recovery を試行する。
+
       if (!shouldAttemptPrimaryRecovery) {
         if (hasPrimarySignal) {
           state.lastPrimaryRecoveryAttemptAt = 0;
@@ -2109,11 +2113,15 @@
 
   function unpinRightPanel() {}
 
-  function applySettingsToUI(settings) {
-    if (settings.showSidebar) {
-      showRightPanel();
-    } else {
-      hideRightPanel();
+  function applySettingsToUI(settings, options = {}) {
+    const shouldSyncPanelVisibility = options.syncPanelVisibility !== false;
+
+    if (shouldSyncPanelVisibility) {
+      if (settings.showSidebar) {
+        showRightPanel();
+      } else {
+        hideRightPanel();
+      }
     }
 
     if (settings.pinSidebar) {
@@ -2128,6 +2136,8 @@
       playWordAudio: settings.playWordAudio,
       enableAiTooltip: settings.enableAiTooltip,
       preferredAiProvider: settings.preferredAiProvider,
+      syncPanelVisibility: shouldSyncPanelVisibility,
+      panelVisible: state.panelVisible,
     });
   }
 
@@ -3086,8 +3096,15 @@
   }
 
   function togglePanel(force) {
+    const previousPanelVisible = state.panelVisible;
     if (typeof force === "boolean") state.panelVisible = force;
     else state.panelVisible = !state.panelVisible;
+    logContent("togglePanel trace", {
+      previousPanelVisible,
+      nextPanelVisible: state.panelVisible,
+      force: typeof force === "boolean" ? force : null,
+    });
+    console.trace("togglePanel trace");
 
     if (state.panelVisible) {
       // パネル open 時は設定を再読込し、トラック再解決後に描画を更新する。
@@ -3136,13 +3153,17 @@
     state.initialCueRecoveryCleanup = [];
   }
 
+  // [binder/cue: attach] primary / secondary track の選択・bind・unbind を扱うセクション。
+  // attach 軸では track selection と listener binding の境界をコメントで追える状態に保つ。
   function clearTrackResolveRetryTimers() {
     if (!state.trackResolveRetryTimers.length) return;
     state.trackResolveRetryTimers.forEach((timerId) => clearTimeout(timerId));
     state.trackResolveRetryTimers = [];
   }
 
-  // [binder/cue logic: track selection]
+  // [binder/cue: attach] track selection
+  // [binder/cue: attach] primary / secondary track を選択し、listener bind の入口をまとめる。
+  // overlay / panel への描画更新は fan-out 側が担い、この関数では track attach の責務を読む。
   function selectPrimaryAndSecondaryTracks(
     video,
     primaryLang,
@@ -3163,9 +3184,12 @@
     state.video = video;
     clearTrackBindings();
 
+    // [attach: primary/secondary reset] 既存 bind を一度解除してから今回の track 選択に入る。
+
     const tracks = video.textTracks;
     let primaryListenerBound = false;
 
+    // [attach: primary] primary resolver → mode 設定 → cuechange bind
     state.primaryTrack = pickBestSubtitleTrack(tracks, primaryLang);
     if (state.primaryTrack) {
       try {
@@ -3179,6 +3203,7 @@
       }
     }
 
+    // [attach: secondary] secondary resolver / binder は sync helper 側へ委譲する。
     if (secondaryLang) {
       syncSecondarySubtitleTrack(video, secondaryLang, renderSecondarySubtitle);
     } else {
@@ -3214,8 +3239,9 @@
     };
   }
 
-  // [binder/cue logic: cue availability / recovery gate]
+  // [binder/cue: recovery] cue availability / recovery gate
 
+  // [binder/cue: recovery] 現在の primary / secondary track から初回 cue を回収できるか判定する。
   function hasRecoverableInitialCue() {
     const currentTime = state.video?.currentTime ?? 0;
     const tracks = [
@@ -3305,6 +3331,8 @@
     });
   }
 
+  // [binder/cue: recovery] attach / recovery の再初期化入口。
+  // track 再選択・listener 再接続・panel 反映を最小差分でまとめて行う。
   function reinitializeSubtitlePipeline(reason = "unknown") {
     const switched = syncHistoryContextWithPlayback(reason);
     clearInternalSubtitleState(reason);
@@ -3359,6 +3387,7 @@
     };
   }
 
+  // [binder/cue: recovery] track resolve retry タイマーを管理する。
   function scheduleTrackResolveRetry(reason = "video_changed") {
     clearTrackResolveRetryTimers();
 
@@ -3518,6 +3547,7 @@
     });
   }
 
+  // [binder/cue: recovery] 初回 cue recovery の event-driven / delayed retry を束ねる。
   function scheduleInitialCueRecovery() {
     clearInitialCueRecoveryTimers();
     clearInitialCueRecoveryCleanup();
@@ -3556,10 +3586,10 @@
     });
   }
 
-  // [binder/cue logic]
-
-  // [binder/cue logic: secondary track binder]
+  // [binder/cue: attach] secondary track binder
+  // [binder/cue: attach] secondary cuechange listener を detach し、bound track 参照を外す。
   function unbindSecondarySubtitleTrack() {
+    // [attach: secondary detach] secondary binder cleanup を実行する。
     if (secondaryTrackCleanup) {
       secondaryTrackCleanup();
       secondaryTrackCleanup = null;
@@ -3567,9 +3597,11 @@
     secondaryTrackBound = null;
   }
 
+  // [binder/cue: attach] secondary track を bind し、cuechange を panel render 側へ接続する。
   function bindSecondarySubtitleTrack(track, renderSecondarySubtitle) {
     if (!track || typeof renderSecondarySubtitle !== "function") return;
 
+    // [attach: secondary rebind] 既存 secondary binding を解除してから今回の track を bind する。
     unbindSecondarySubtitleTrack();
 
     try {
@@ -3584,6 +3616,7 @@
       });
     }
 
+    // [attach: secondary cuechange -> render] secondary cuechange を secondary render / panel render へ配信する。
     const onSecondaryCueChange = () => {
       if (DEBUG_SECONDARY_SUBS) {
         const effectiveSecondaryLanguage =
@@ -3599,21 +3632,24 @@
 
     track.addEventListener("cuechange", onSecondaryCueChange);
 
+    // [attach: secondary detach handle] detach 時に使う cleanup を保持する。
     secondaryTrackCleanup = () => {
       track.removeEventListener("cuechange", onSecondaryCueChange);
     };
 
     secondaryTrackBound = track;
 
-    // Initial paint
+    // [attach: secondary initial paint] bind 直後に current cue で初期描画する。
     renderSecondarySubtitle(getCurrentCueText(track), track);
   }
 
-  // [binder/cue logic: primary cuechange fan-out]
+  // [binder/cue: fan-out] primary cuechange fan-out
+  // [binder/cue: fan-out] binder から overlay render への配信。
   function updateCueOverlay(pText, sText) {
     updateOverlay(pText, sText);
   }
 
+  // [binder/cue: fan-out] binder から subtitle history への配信。
   function appendCueHistory(pCue, pText, sText) {
     if (!pText || pText === state.lastPrimaryText || !pCue) return;
 
@@ -3626,6 +3662,7 @@
     });
   }
 
+  // [binder/cue: fan-out] binder から panel render への配信。
   function renderCuePanel(sText) {
     if (state.secondaryTrack) {
       renderSecondarySubtitle(sText, state.secondaryTrack);
@@ -3634,7 +3671,10 @@
     renderPanel();
   }
 
+  // [binder/cue: fan-out] cuechange fan-out:
+  // track(primary/secondary) → binder → overlay/history/panel render
   function onCueChange() {
+    // [fan-out: track -> binder] primary / secondary の current cue を取得する。
     const currentTime = state.video?.currentTime ?? 0;
     const pCue = getCurrentCue(state.primaryTrack, currentTime);
     const pText = cleanCueText(pCue);
@@ -3651,28 +3691,32 @@
       });
     }
 
-    // overlay 更新
+    // [fan-out: binder -> overlay render]
     updateCueOverlay(pText, sText);
 
-    // history 書き込み
+    // [fan-out: binder -> history]
     appendCueHistory(pCue, pText, sText);
 
-    // panel 再描画
+    // [fan-out: binder -> panel render]
     renderCuePanel(sText);
   }
 
+  // [binder/cue: attach] primary / secondary の listener・timer・mode をまとめて解除する。
   function clearTrackBindings() {
+    // [attach: detach timers] retry / recovery timer 群を先に解除する。
     clearTrackResolveRetryTimers();
     clearInitialCueRecoveryTimers();
     clearInitialCueRecoveryCleanup();
     unbindSecondarySubtitleTrack();
 
+    // [attach: detach primary listener] primary cuechange listener を解除する。
     if (state.primaryTrack) {
       try {
         state.primaryTrack.removeEventListener("cuechange", onCueChange);
       } catch (_) {}
     }
 
+    // [attach: detach track modes] textTracks を hidden に戻す。
     if (state.video?.textTracks) {
       for (let i = 0; i < state.video.textTracks.length; i++) {
         try {
@@ -3681,11 +3725,13 @@
       }
     }
 
+    // [attach: detach secondary timer] secondary hide timer を解除する。
     if (state.secondaryHideTimer) {
       clearTimeout(state.secondaryHideTimer);
       state.secondaryHideTimer = null;
     }
 
+    // [attach: detach state reset] binder が保持する track 参照をクリアする。
     state.primaryTrack = null;
     state.secondaryTrack = null;
   }
@@ -3698,7 +3744,6 @@
     state.lastPrimaryText = "";
     state.lastPrimarySnapshotAt = 0;
     state.lastObservedVideoTime = null;
-    if (options.keepPanelVisible !== true) state.panelVisible = true;
   }
 
   function teardownForRestart() {
@@ -3724,6 +3769,7 @@
     applyLayout(false);
   }
 
+  // [binder/cue: attach] bootstrap から呼ばれる track bind の薄い入口。
   function bindTracks() {
     return selectPrimaryAndSecondaryTracks(
       state.video,
@@ -3748,7 +3794,8 @@
     });
   }
 
-  // [binder/cue logic: initial snapshot apply]
+  // [binder/cue: recovery] initial snapshot apply
+  // [binder/cue: recovery] 起動時に取得済み cue を即時適用し、未取得なら recovery 経路へ委譲する。
   function renderCurrentSnapshot() {
     ensureSecondarySubtitleElement();
 
@@ -3767,7 +3814,7 @@
       });
     }
 
-    applySettingsToUI(state.contentSettings);
+    applySettingsToUI(state.contentSettings, { syncPanelVisibility: false });
     if (secondaryTrackBound) {
       renderSecondarySubtitle(
         getCurrentCueText(secondaryTrackBound),
@@ -3776,7 +3823,15 @@
     }
   }
 
-  function startBilingual() {
+  function startBilingual(options = {}) {
+    logContent("startBilingual trace", {
+      panelVisible: state.panelVisible,
+      keepPanelVisible:
+        typeof options.keepPanelVisible === "boolean"
+          ? options.keepPanelVisible
+          : null,
+    });
+    console.trace("startBilingual trace");
     if (!state.video) return;
 
     if (!isPlaybackPageReady()) {
@@ -3841,7 +3896,19 @@
       );
     }
 
-    state.panelVisible = true;
+    if (typeof options.keepPanelVisible === "boolean") {
+      state.panelVisible = options.keepPanelVisible;
+    } else {
+      state.panelVisible = true;
+    }
+    logContent("startBilingual panelVisible applied", {
+      panelVisible: state.panelVisible,
+      keepPanelVisible:
+        typeof options.keepPanelVisible === "boolean"
+          ? options.keepPanelVisible
+          : null,
+    });
+    console.trace("startBilingual panelVisible applied");
     applyCurrentStateToPanel("startBilingual_ready");
     scheduleInitialCueRecovery();
     scheduleControlSettlingBurst("startBilingual");
@@ -3905,6 +3972,11 @@
   // 設定変更反映や大きな再初期化が必要なケースの入口。
 
   function restartBilingual(nextSettings = null, reason = "unknown") {
+    logContent("restartBilingual trace", {
+      reason,
+      panelVisible: state.panelVisible,
+    });
+    console.trace("restartBilingual trace");
     if (state.restarting) {
       logContent("restartBilingual skipped: already restarting", { reason });
       return;
@@ -3935,9 +4007,10 @@
         requestedSecondaryLang: state.requestedSecondaryLang,
       });
 
+      const wasPanelVisible = state.panelVisible;
       teardownForRestart();
       resetRuntimeState();
-      startBilingual();
+      startBilingual({ keepPanelVisible: wasPanelVisible });
       ensureSecondarySubtitleElement();
 
       logContentSettings("restartBilingual done", { reason });
