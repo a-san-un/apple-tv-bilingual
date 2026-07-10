@@ -3405,18 +3405,10 @@
     return true;
   }
 
-  function scheduleInitialCueRecovery() {
-    clearInitialCueRecoveryTimers();
-    clearInitialCueRecoveryCleanup();
-
-    let recovered = false;
-    const completeRecovery = () => {
-      if (recovered) return;
-      recovered = true;
-      clearInitialCueRecoveryTimers();
-      clearInitialCueRecoveryCleanup();
-    };
-
+  function bindInitialCueRecoveryListeners(completeRecovery) {
+    // [initial cue recovery: event-driven path]
+    // cuechange / timeupdate を一時的に監視し、初回 cue が取れた瞬間に
+    // render を再試行して recovery を完了させる。
     const attachRecoveryListener = (target, eventName, label) => {
       if (!target || typeof target.addEventListener !== "function") return;
 
@@ -3442,6 +3434,40 @@
       );
     }
     attachRecoveryListener(state.video, "timeupdate", "video");
+  }
+
+  function scheduleInitialCueRecoveryRetries(completeRecovery, isRecovered) {
+    // [initial cue recovery: delayed retry path]
+    // イベントだけでは初回 cue を拾えないケースに備えて、
+    // 短い遅延で数回だけ render を再試行する。
+    const delays = [220, 650, 1300];
+    delays.forEach((delayMs) => {
+      const timerId = window.setTimeout(() => {
+        if (!state.video || !state.primaryTrack) return;
+        if (isRecovered()) return;
+
+        if (!hasRecoverableInitialCue()) return;
+        if (!runInitialCueRecoveryRender(`delay:${delayMs}`)) return;
+        completeRecovery();
+      }, delayMs);
+      state.initialCueRecoveryTimers.push(timerId);
+    });
+  }
+
+  function scheduleInitialCueRecovery() {
+    clearInitialCueRecoveryTimers();
+    clearInitialCueRecoveryCleanup();
+
+    let recovered = false;
+    const completeRecovery = () => {
+      if (recovered) return;
+      recovered = true;
+      clearInitialCueRecoveryTimers();
+      clearInitialCueRecoveryCleanup();
+    };
+    const isRecovered = () => recovered;
+
+    bindInitialCueRecoveryListeners(completeRecovery);
 
     logContent("initial cue recovery scheduled", {
       primaryMode: state.primaryTrack?.mode || "",
@@ -3450,18 +3476,7 @@
       secondaryActiveCues: getTrackActiveCuesLength(state.secondaryTrack),
     });
 
-    const delays = [220, 650, 1300];
-    delays.forEach((delayMs) => {
-      const timerId = window.setTimeout(() => {
-        if (!state.video || !state.primaryTrack) return;
-        if (recovered) return;
-
-        if (!hasRecoverableInitialCue()) return;
-        if (!runInitialCueRecoveryRender(`delay:${delayMs}`)) return;
-        completeRecovery();
-      }, delayMs);
-      state.initialCueRecoveryTimers.push(timerId);
-    });
+    scheduleInitialCueRecoveryRetries(completeRecovery, isRecovered);
   }
 
   function refreshSettingsOnPanelOpen() {
@@ -3672,6 +3687,10 @@
   // [binder/cue logic: initial snapshot apply]
   function renderCurrentSnapshot() {
     ensureSecondarySubtitleElement();
+
+    // [initial snapshot policy]
+    // 起動時に cue が既に読めるなら通常の cuechange 経路を即時実行する。
+    // まだ cue が無ければ recovery 側に任せ、ここでは待機ログだけ出す。
 
     const hasInitialCue = hasRecoverableInitialCue();
     if (hasInitialCue) {
