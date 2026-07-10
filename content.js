@@ -2969,6 +2969,7 @@
 
   // [UI shell: overlay/panel anchor]
 
+  // [UI shell: overlay] overlay の style と primary / secondary line の HTML 骨格を返す。
   function buildOverlayShellHTML() {
     return `
       <style>
@@ -2993,6 +2994,7 @@
     `;
   }
 
+  // [wiring: overlay] overlay 内の単語 click を subtitle popup 表示へ接続する。
   function wireOverlayUiEvents() {
     const root = state.overlayRoot;
     if (!root) return;
@@ -3018,6 +3020,7 @@
     });
   }
 
+  // [UI shell: overlay host] host 再利用・mount・shadow shell 注入・overlay wiring をまとめて行う。
   function createOverlay() {
     const target = getTarget();
     const existingHost = target.querySelector("#atv-overlay-host");
@@ -3026,6 +3029,7 @@
       return;
     }
 
+    // [shell: overlay host mount] overlay host を生成して playback target に追加する。
     const host = document.createElement("div");
     host.id = "atv-overlay-host";
     host.style.cssText = [
@@ -3039,9 +3043,11 @@
     ].join(";");
     target.appendChild(host);
 
+    // [shell: overlay shadow mount] shadow root を attach し、overlay shell HTML を注入する。
     state.overlayRoot = host.attachShadow({ mode: "open" });
     state.overlayRoot.innerHTML = buildOverlayShellHTML();
 
+    // [wiring: overlay] overlay click handler を shell に接続する。
     wireOverlayUiEvents();
   }
 
