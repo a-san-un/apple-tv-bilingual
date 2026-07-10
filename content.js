@@ -3489,6 +3489,30 @@
     renderSecondarySubtitle(getCurrentCueText(track), track);
   }
 
+  function updateCueOverlay(pText, sText) {
+    updateOverlay(pText, sText);
+  }
+
+  function appendCueHistory(pCue, pText, sText) {
+    if (!pText || pText === state.lastPrimaryText || !pCue) return;
+
+    state.lastPrimaryText = pText;
+    appendSubtitleHistory({
+      startTime: pCue.startTime,
+      endTime: pCue.endTime,
+      primary: pText,
+      secondary: sText,
+    });
+  }
+
+  function renderCuePanel(sText) {
+    if (state.secondaryTrack) {
+      renderSecondarySubtitle(sText, state.secondaryTrack);
+    }
+
+    renderPanel();
+  }
+
   function onCueChange() {
     const currentTime = state.video?.currentTime ?? 0;
     const pCue = getCurrentCue(state.primaryTrack, currentTime);
@@ -3507,25 +3531,13 @@
     }
 
     // overlay 更新
-    updateOverlay(pText, sText);
+    updateCueOverlay(pText, sText);
 
     // history 書き込み
-    if (pText && pText !== state.lastPrimaryText && pCue) {
-      state.lastPrimaryText = pText;
-      appendSubtitleHistory({
-        startTime: pCue.startTime,
-        endTime: pCue.endTime,
-        primary: pText,
-        secondary: sText,
-      });
-    }
+    appendCueHistory(pCue, pText, sText);
 
     // panel 再描画
-    if (state.secondaryTrack) {
-      renderSecondarySubtitle(sText, state.secondaryTrack);
-    }
-
-    renderPanel();
+    renderCuePanel(sText);
   }
 
   function clearTrackBindings() {
