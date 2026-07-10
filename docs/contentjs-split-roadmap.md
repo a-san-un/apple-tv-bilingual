@@ -262,7 +262,9 @@ const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
 - subtitle popup は 1 段整理済み（`buildPopupShellStyleText()` へ style 定義を分離し、`wireSubtitlePopupUiEvents()` に責務コメントを追加）
 - popup 内 `.atv-word-link` click 処理は early return 形へ整理（仕様・挙動は変更しない）
 - panel の `panel-debug-anchor` 追加 + debug mount 先変更案は、責務線が曖昧化しうるため今回は見送り
-- panel の次手は案A（`buildPanelShellHTML()` / `buildPanelDebugShellHTML()` / `createDebugPanel()` に責務コメントを補う）
+- panel は案A を 1 段適用済み（`buildPanelShellHTML()` / `buildPanelDebugShellHTML()` / `createDebugPanel()` に責務コメントを追加）
+- panel header は `wirePanelHeaderActions()` に責務コメントを追加し、header wiring と shell の境界を明確化した
+- debug 側は `createDebugPanel()` / `debug-panel.js` の `mount()` に責務コメントを追加し、debug mount / debug wiring の境界を明確化した
 - DOM の id / class / data 属性、見た目、close 動作、panel の current 行や threshold-scroll の挙動は変えない
 - `renderPanel()` / `renderSecondarySubtitle()` / `updateOverlay()` / `applyCurrentStateToPanel()` は、shell 作成ではなく既存 shell への state 反映責務として境界を明示した
 - 今回は全面分割に進まず、Phase E 本体で panel / overlay / subtitle popup の shell 分離を段階的に切り出す

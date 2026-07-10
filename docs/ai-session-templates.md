@@ -349,7 +349,9 @@ VS Code の GitHub Copilot / Serena MCP でこのプロジェクトを有効化�
 - overlay は 1 段整理済み（`wireOverlayUiEvents()` へ event delegation を移し、`updateOverlay()` は render 専任）
 - subtitle popup は 1 段整理済み（`buildPopupShellStyleText()` で style 分離、wiring コメント追加）
 - panel の `panel-debug-anchor` 追加 + debug mount 先変更案は見送り
-- panel の次手は案A（`buildPanelShellHTML()` / `buildPanelDebugShellHTML()` / `createDebugPanel()` に責務コメントを追加）
+- panel は案A を 1 段適用済み（`buildPanelShellHTML()` / `buildPanelDebugShellHTML()` / `createDebugPanel()` に責務コメントを追加）
+- panel header は `wirePanelHeaderActions()` に責務コメントを追加済み
+- debug 側は `createDebugPanel()` / `debug-panel.js` の `mount()` に責務コメントを追加済み（debug wiring の実体は `debug-panel.js` 側に保持）
 - #21（binder / cue）、observer / bootstrap、#10 はこのバッチで触らない
 
 用語ポリシー:

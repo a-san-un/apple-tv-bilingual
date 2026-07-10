@@ -323,7 +323,10 @@ Phase E では、Phase D までで整理した UI 表示仕様を崩さずに、
 - `createOverlay()` は host 作成 → shadow root 準備 → shell HTML 適用 → wiring 呼び出しの順へ寄せた
 - subtitle popup は 1 段整理済み（`buildPopupShellHTML()` から style 定義を `buildPopupShellStyleText()` へ分離）
 - `wireSubtitlePopupUiEvents()` には責務コメントを追加し、`.atv-word-link` click 処理を early return 形で整理した
-- panel の `panel-debug-anchor` 追加 + debug mount 先変更案は今回は見送りとし、次は案A（コメント追加で shell / debug shell / debug mount の境界明確化）を優先する
+- panel の `panel-debug-anchor` 追加 + debug mount 先変更案は今回は見送りとした
+- panel は案A を 1 段適用済みで、`buildPanelShellHTML()` / `buildPanelDebugShellHTML()` / `createDebugPanel()` に責務コメントを追加した
+- `wirePanelHeaderActions()` に責務コメントを追加し、panel header wiring と shell の境界を明確化した
+- `createDebugPanel()` / `debug-panel.js` の `mount()` に責務コメントを追加し、debug mount / debug wiring の境界を明確化した
 - いずれも挙動は変えず、binder / cue（#21）/ observer / bootstrap / #10 には踏み込まない
 
 #### Phase E で後ろに回すこと
