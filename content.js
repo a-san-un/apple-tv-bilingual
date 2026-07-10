@@ -3506,8 +3506,10 @@
       });
     }
 
+    // overlay 更新
     updateOverlay(pText, sText);
 
+    // history 書き込み
     if (pText && pText !== state.lastPrimaryText && pCue) {
       state.lastPrimaryText = pText;
       appendSubtitleHistory({
@@ -3518,6 +3520,7 @@
       });
     }
 
+    // panel 再描画
     if (state.secondaryTrack) {
       renderSecondarySubtitle(sText, state.secondaryTrack);
     }
