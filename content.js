@@ -3439,6 +3439,7 @@
 
   // [binder/cue logic]
 
+  // [binder/cue logic: secondary track binder]
   function unbindSecondarySubtitleTrack() {
     if (secondaryTrackCleanup) {
       secondaryTrackCleanup();
@@ -3489,6 +3490,7 @@
     renderSecondarySubtitle(getCurrentCueText(track), track);
   }
 
+  // [binder/cue logic: primary cuechange fan-out]
   function updateCueOverlay(pText, sText) {
     updateOverlay(pText, sText);
   }
@@ -3627,6 +3629,7 @@
     });
   }
 
+  // [binder/cue logic: initial snapshot apply]
   function renderCurrentSnapshot() {
     ensureSecondarySubtitleElement();
 
