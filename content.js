@@ -1642,6 +1642,30 @@
     clearManagedTranslateX(volume);
   }
 
+  function clearPlaybackControlsLayoutState({
+    header,
+    controls,
+    progress,
+    skipOverlay,
+    footer,
+    unified,
+    volume,
+    shadowProgressBar,
+    shadowRemainingTime,
+  }) {
+    clearManagedHeaderSizing(header);
+    clearManagedTranslateX(controls);
+    clearManagedProgressInset(progress);
+    clearManagedTranslateX(shadowProgressBar);
+    clearManagedTranslateX(shadowRemainingTime);
+    clearManagedSkipPosition(skipOverlay);
+    clearManagedTranslateX(skipOverlay);
+    clearManagedFooterSizing(footer);
+    clearManagedFooterChildSizing(footer);
+    clearManagedTranslateX(unified);
+    clearManagedTranslateX(volume);
+  }
+
   function adjustPlaybackControlsForPanel(reason = "unknown") {
     if (state.playbackControlsApplying) return;
 
@@ -1676,18 +1700,18 @@
 
       const visibleArea = computePlaybackVisibleArea(panel, video);
       if (!visibleArea) {
-        clearManagedHeaderSizing(header);
-        clearManagedTranslateX(controls);
-        clearManagedProgressInset(progress);
-        clearManagedTranslateX(shadowProgressBar);
-        clearManagedTranslateX(shadowRemainingTime);
-        clearManagedSkipPosition(skipOverlay);
-        clearManagedTranslateX(skipOverlay);
         clearManagedTranslateX(footer);
-        clearManagedFooterSizing(footer);
-        clearManagedFooterChildSizing(footer);
-        clearManagedTranslateX(unified);
-        clearManagedTranslateX(volume);
+        clearPlaybackControlsLayoutState({
+          header,
+          controls,
+          progress,
+          skipOverlay,
+          footer,
+          unified,
+          volume,
+          shadowProgressBar,
+          shadowRemainingTime,
+        });
         return;
       }
 
@@ -1718,17 +1742,17 @@
       clearManagedProgressInset(progress);
 
       if (visibleWidth <= 0) {
-        clearManagedHeaderSizing(header);
-        clearManagedFooterSizing(footer);
-        clearManagedFooterChildSizing(footer);
-        clearManagedTranslateX(controls);
-        clearManagedProgressInset(progress);
-        clearManagedTranslateX(shadowProgressBar);
-        clearManagedTranslateX(shadowRemainingTime);
-        clearManagedSkipPosition(skipOverlay);
-        clearManagedTranslateX(skipOverlay);
-        clearManagedTranslateX(unified);
-        clearManagedTranslateX(volume);
+        clearPlaybackControlsLayoutState({
+          header,
+          controls,
+          progress,
+          skipOverlay,
+          footer,
+          unified,
+          volume,
+          shadowProgressBar,
+          shadowRemainingTime,
+        });
         return;
       }
 
@@ -3355,6 +3379,10 @@
     });
   }
 
+  // [settings reinit path: partial]
+  // 設定を再読込し、現在の video / track に対して subtitle pipeline を再解決する。
+  // UI 全体の teardown / rebuild までは行わない軽量な再初期化入口。
+
   function reloadSettingsAndReinitialize(reason = "unknown") {
     if (state.restarting) return;
 
@@ -3835,6 +3863,10 @@
         });
       });
   }
+
+  // [settings reinit path: full restart]
+  // runtime state と UI を teardown してから起動シーケンスをやり直す。
+  // 設定変更反映や大きな再初期化が必要なケースの入口。
 
   function restartBilingual(nextSettings = null, reason = "unknown") {
     if (state.restarting) {
