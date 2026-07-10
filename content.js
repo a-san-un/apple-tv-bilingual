@@ -2802,6 +2802,77 @@
     return blocks;
   }
 
+
+  function buildCurrentPanelBlock(currentTime) {
+    const curPrimaryCue = getCurrentCue(state.primaryTrack, currentTime);
+    const curSecondaryCue = findCueAt(state.secondaryTrack, currentTime);
+    if (!curPrimaryCue && !curSecondaryCue) {
+      return { block: null, curPrimaryCue: null };
+    }
+
+    const currentCue = curPrimaryCue || curSecondaryCue;
+    let currentPrimaryText = curPrimaryCue ? cleanCueText(curPrimaryCue) : "";
+
+    if (
+      !currentPrimaryText &&
+      state.primaryTrack &&
+      curSecondaryCue &&
+      state.lastPrimaryText
+    ) {
+      const elapsedSincePrimarySnapshot = Date.now() - state.lastPrimarySnapshotAt;
+      if (
+        state.lastPrimarySnapshotAt > 0 &&
+        elapsedSincePrimarySnapshot <= PANEL_PRIMARY_GRACE_MS
+      ) {
+        currentPrimaryText = state.lastPrimaryText;
+      }
+    }
+
+    const currentSecondaryText = cleanCueText(curSecondaryCue);
+    if (DEBUG_PANEL_PROBE) {
+      logContent("panel render current block probe", {
+        currentTime,
+        settingsPrimaryLang: state.contentSettings.primaryLang,
+        primaryTrackLanguage: state.primaryTrack?.language,
+        primaryTrackLabel: state.primaryTrack?.label,
+        secondaryTrackLanguage: state.secondaryTrack?.language,
+        secondaryTrackLabel: state.secondaryTrack?.label,
+        curPrimaryCueText: cleanCueText(curPrimaryCue).slice(0, 40),
+        curSecondaryCueText: currentSecondaryText.slice(0, 40),
+        resolvedPrimary: currentPrimaryText.slice(0, 40),
+        currentBlockSecondary: currentSecondaryText.slice(0, 40),
+      });
+    }
+
+    return {
+      curPrimaryCue,
+      block: {
+        startTime: currentCue.startTime,
+        endTime: currentCue.endTime,
+        primary: currentPrimaryText,
+        secondary: currentSecondaryText,
+        state: "current",
+      },
+    };
+  }
+
+  function updatePanelRenderSnapshot(allBlocks, curPrimaryCue) {
+    const currentSubtitleBlock = allBlocks.find((b) => b.state === "current");
+    state.lastPanelRenderSnapshot = {
+      allBlocksCount: allBlocks.length,
+      currentSubtitleBlock: currentSubtitleBlock
+        ? {
+            primaryText: currentSubtitleBlock.primary || "",
+            secondaryText: currentSubtitleBlock.secondary || "",
+          }
+        : null,
+    };
+
+    if (curPrimaryCue && currentSubtitleBlock?.primary) {
+      state.lastPrimarySnapshotAt = Date.now();
+    }
+  }
+
   // [render: panel list apply]
   function renderPanel() {
     if (!state.panelShadowRoot) return;
@@ -2817,69 +2888,15 @@
 
     // [render: panel list blocks - current]
     // primary は state.primaryTrack、secondary は state.secondaryTrack の cue だけを使う。
-    const curPrimaryCue = getCurrentCue(state.primaryTrack, currentTime);
-    const curSecondaryCue = findCueAt(state.secondaryTrack, currentTime);
-    if (curPrimaryCue || curSecondaryCue) {
-      const currentCue = curPrimaryCue || curSecondaryCue;
-      let currentPrimaryText = curPrimaryCue ? cleanCueText(curPrimaryCue) : "";
-      // grace 補完は requested primary track がある時だけ許可し、track が無い時は補完しない。
-      if (
-        !currentPrimaryText &&
-        state.primaryTrack &&
-        curSecondaryCue &&
-        state.lastPrimaryText
-      ) {
-        const elapsedSincePrimarySnapshot =
-          Date.now() - state.lastPrimarySnapshotAt;
-        // Grace 内だけ直近 primary テキストを使い、secondary 先行で空になる瞬間を吸収する。
-        if (
-          state.lastPrimarySnapshotAt > 0 &&
-          elapsedSincePrimarySnapshot <= PANEL_PRIMARY_GRACE_MS
-        ) {
-          currentPrimaryText = state.lastPrimaryText;
-        }
-      }
-      const currentSecondaryText = cleanCueText(curSecondaryCue);
-      if (DEBUG_PANEL_PROBE) {
-        // Probe current-row source texts to verify primary/secondary cue assignment.
-        logContent("panel render current block probe", {
-          currentTime,
-          settingsPrimaryLang: state.contentSettings.primaryLang,
-          primaryTrackLanguage: state.primaryTrack?.language,
-          primaryTrackLabel: state.primaryTrack?.label,
-          secondaryTrackLanguage: state.secondaryTrack?.language,
-          secondaryTrackLabel: state.secondaryTrack?.label,
-          curPrimaryCueText: cleanCueText(curPrimaryCue).slice(0, 40),
-          curSecondaryCueText: currentSecondaryText.slice(0, 40),
-          resolvedPrimary: currentPrimaryText.slice(0, 40),
-          currentBlockSecondary: currentSecondaryText.slice(0, 40),
-        });
-      }
-      allBlocks.push({
-        startTime: currentCue.startTime,
-        endTime: currentCue.endTime,
-        primary: currentPrimaryText,
-        secondary: currentSecondaryText,
-        state: "current",
-      });
+    const { block: currentBlock, curPrimaryCue } = buildCurrentPanelBlock(currentTime);
+    if (currentBlock) {
+      allBlocks.push(currentBlock);
     }
 
     // [render: panel list blocks - future / snapshot]
     allBlocks.push(...collectFuturePanelBlocks(currentTime));
 
-    const currentSubtitleBlock = allBlocks.find((b) => b.state === "current");
-    state.lastPanelRenderSnapshot = {
-      allBlocksCount: allBlocks.length,
-      currentSubtitleBlock: currentSubtitleBlock
-        ? {
-            primaryText: currentSubtitleBlock.primary || "",
-            secondaryText: currentSubtitleBlock.secondary || "",
-          }
-        : null,
-    };
-    if (curPrimaryCue && currentSubtitleBlock?.primary) {
-      state.lastPrimarySnapshotAt = Date.now();
-    }
+    updatePanelRenderSnapshot(allBlocks, curPrimaryCue);
 
     // [render: panel list DOM apply]
     list.innerHTML = allBlocks.map((block) => buildPanelBlockHtml(block)).join("");
