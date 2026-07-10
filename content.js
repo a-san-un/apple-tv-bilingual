@@ -2780,6 +2780,28 @@
     });
   }
 
+
+  function collectFuturePanelBlocks(currentTime) {
+    const blocks = [];
+    if (!state.primaryTrack || !state.primaryTrack.cues) return blocks;
+
+    for (let i = 0; i < state.primaryTrack.cues.length; i++) {
+      const c = state.primaryTrack.cues[i];
+      if (c.startTime > currentTime + 0.1) {
+        const sc = findCueAt(state.secondaryTrack, c.startTime + 0.05);
+        blocks.push({
+          startTime: c.startTime,
+          endTime: c.endTime,
+          primary: cleanCueText(c),
+          secondary: cleanCueText(sc),
+          state: "future",
+        });
+      }
+    }
+
+    return blocks;
+  }
+
   // [render: panel list apply]
   function renderPanel() {
     if (!state.panelShadowRoot) return;
@@ -2843,21 +2865,7 @@
     }
 
     // [render: panel list blocks - future / snapshot]
-    if (state.primaryTrack && state.primaryTrack.cues) {
-      for (let i = 0; i < state.primaryTrack.cues.length; i++) {
-        const c = state.primaryTrack.cues[i];
-        if (c.startTime > currentTime + 0.1) {
-          const sc = findCueAt(state.secondaryTrack, c.startTime + 0.05);
-          allBlocks.push({
-            startTime: c.startTime,
-            endTime: c.endTime,
-            primary: cleanCueText(c),
-            secondary: cleanCueText(sc),
-            state: "future",
-          });
-        }
-      }
-    }
+    allBlocks.push(...collectFuturePanelBlocks(currentTime));
 
     const currentSubtitleBlock = allBlocks.find((b) => b.state === "current");
     state.lastPanelRenderSnapshot = {
