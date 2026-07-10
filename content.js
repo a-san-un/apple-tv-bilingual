@@ -2719,6 +2719,29 @@
       .join("<br>");
   }
 
+  function buildPanelBlockHtml(block) {
+    const isCurrent = block.state === "current";
+    const cls = "subtitle-block";
+    const mid = isCurrent ? 'id="current-block"' : "";
+    const mark = isCurrent
+      ? `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" /><polygon class="play-core" points="10,8 17,12 10,16" /></svg>`
+      : "";
+    const pText = makeClickableSpans(block.primary, block.primary);
+    const sText = makeClickableSpans(block.secondary, block.primary);
+    return `
+        <div class="${cls}" ${mid} data-time="${block.startTime}">
+          <div class="subtitle-row">
+            <div class="subtitle-mark">${mark}</div>
+            <div class="subtitle-content">
+              <div class="subtitle-time">${formatTime(block.startTime)}</div>
+              <div class="subtitle-primary">${pText}</div>
+              ${sText ? `<div class="subtitle-secondary">${sText}</div>` : ""}
+            </div>
+          </div>
+        </div>
+      `;
+  }
+
   // [render: panel list apply]
   function renderPanel() {
     if (!state.panelShadowRoot) return;
@@ -2813,30 +2836,7 @@
     }
 
     // [render: panel list DOM apply]
-    list.innerHTML = allBlocks
-      .map((block) => {
-        const isCurrent = block.state === "current";
-        const cls = "subtitle-block";
-        const mid = isCurrent ? 'id="current-block"' : "";
-        const mark = isCurrent
-          ? `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" /><polygon class="play-core" points="10,8 17,12 10,16" /></svg>`
-          : "";
-        const pText = makeClickableSpans(block.primary, block.primary);
-        const sText = makeClickableSpans(block.secondary, block.primary);
-        return `
-        <div class="${cls}" ${mid} data-time="${block.startTime}">
-          <div class="subtitle-row">
-            <div class="subtitle-mark">${mark}</div>
-            <div class="subtitle-content">
-              <div class="subtitle-time">${formatTime(block.startTime)}</div>
-              <div class="subtitle-primary">${pText}</div>
-              ${sText ? `<div class="subtitle-secondary">${sText}</div>` : ""}
-            </div>
-          </div>
-        </div>
-      `;
-      })
-      .join("");
+    list.innerHTML = allBlocks.map((block) => buildPanelBlockHtml(block)).join("");
 
     // [wiring: panel list interactions]
     list.querySelectorAll(".subtitle-block").forEach((blockEl) => {
