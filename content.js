@@ -2866,27 +2866,29 @@
       });
     });
 
-    const currentBlock = state.panelShadowRoot.getElementById("current-block");
-    const panelScroll = state.panelShadowRoot.getElementById("panel-scroll");
-    if (currentBlock && panelScroll) {
-      const scrollRect = panelScroll.getBoundingClientRect();
-      const currentRect = currentBlock.getBoundingClientRect();
-      const topThresholdY =
-        scrollRect.top + Math.max(32, currentRect.height * 0.8);
-      const bottomThresholdY =
-        scrollRect.bottom - Math.max(48, currentRect.height * 1.5);
-      if (
-        currentRect.top < topThresholdY ||
-        currentRect.bottom > bottomThresholdY
-      ) {
-        const targetTopOffset = Math.max(28, Math.min(72, currentRect.height));
-        const targetTopY = scrollRect.top + targetTopOffset;
-        const scrollBy = currentRect.top - targetTopY;
-        panelScroll.scrollTo({
-          top: Math.max(0, panelScroll.scrollTop + scrollBy),
-          behavior: "smooth",
-        });
-      }
+    scrollCurrentPanelBlockIntoView();
+  }
+
+  function scrollCurrentPanelBlockIntoView() {
+    const currentBlock = state.panelShadowRoot?.getElementById("current-block");
+    const panelScroll = state.panelShadowRoot?.getElementById("panel-scroll");
+    if (!currentBlock || !panelScroll) return;
+
+    const scrollRect = panelScroll.getBoundingClientRect();
+    const currentRect = currentBlock.getBoundingClientRect();
+    const topThresholdY =
+      scrollRect.top + Math.max(32, currentRect.height * 0.8);
+    const bottomThresholdY =
+      scrollRect.bottom - Math.max(48, currentRect.height * 1.5);
+
+    if (currentRect.top < topThresholdY || currentRect.bottom > bottomThresholdY) {
+      const targetTopOffset = Math.max(28, Math.min(72, currentRect.height));
+      const targetTopY = scrollRect.top + targetTopOffset;
+      const scrollBy = currentRect.top - targetTopY;
+      panelScroll.scrollTo({
+        top: Math.max(0, panelScroll.scrollTop + scrollBy),
+        behavior: "smooth",
+      });
     }
   }
 
