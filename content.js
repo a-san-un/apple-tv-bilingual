@@ -2218,6 +2218,7 @@
     });
   }
 
+  // [UI shell: panel host] host 再利用・mount・shadow shell 注入・header wiring をまとめて行う。
   function createRightPanel() {
     const target = getTarget();
     const existingHost = target.querySelector("#atv-panel-host");
@@ -2227,6 +2228,7 @@
       return;
     }
 
+    // [shell: panel host mount] panel host を生成して playback target に追加する。
     const host = document.createElement("div");
     host.id = "atv-panel-host";
     host.style.cssText = [
@@ -2241,13 +2243,17 @@
     ].join(";");
     target.appendChild(host);
 
+    // [shell: panel slot layer] secondary subtitle slot 用の light DOM style を確保する。
     ensurePanelSlotLayerStyle();
 
+    // [shell: panel shadow mount] shadow root を attach し、panel shell HTML を注入する。
     state.panelShadowRoot = host.attachShadow({ mode: "open" });
     state.panelShadowRoot.innerHTML = buildPanelShellHTML();
 
+    // [wiring: panel header] header action ボタンを shell に接続する。
     wirePanelHeaderActions();
 
+    // [render: panel secondary slot] panel shell 内の secondary subtitle 要素を確保する。
     ensureSecondarySubtitleElement();
   }
 
@@ -3209,11 +3215,9 @@
     return false;
   }
 
-  // [render: panel shell state sync]
-  function applyCurrentStateToPanel(reason = "unknown") {
-    renderCurrentSnapshot();
-    renderPanel();
-
+  // [render: panel secondary recovery]
+  // panel shell 適用後、secondary subtitle が空なら直近 history から最小差分で補完する。
+  function applySecondarySubtitleFallback(reason = "unknown") {
     const panelHost = getTarget().querySelector("#atv-panel-host");
     const secondaryEl = panelHost?.querySelector("[data-secondary-subtitle]");
     let secondaryText = normalizeSubtitleText(secondaryEl?.textContent || "");
@@ -3237,6 +3241,19 @@
         });
       }
     }
+
+    return {
+      panelHost,
+      secondaryText,
+    };
+  }
+
+  // [render: panel shell state sync]
+  function applyCurrentStateToPanel(reason = "unknown") {
+    renderCurrentSnapshot();
+    renderPanel();
+
+    const { panelHost, secondaryText } = applySecondarySubtitleFallback(reason);
 
     logContent("panel state applied", {
       reason,
