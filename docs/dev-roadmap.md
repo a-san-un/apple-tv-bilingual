@@ -1,7 +1,7 @@
 # phase-3 実装ロードマップ
 
 > **ブランチ**: `phase-3`  
-> **最終更新**: 2026-07-09  
+> **最終更新**: 2026-07-10  
 > **マージ先**: `main`（`phase-3` 側で機能が安定したタイミングでマージ）
 
 ---
@@ -40,7 +40,7 @@
 | [#17](../../issues/17) | `content.js` の current 表示モデルを整理し、マーク移動と最小スクロールへ移行する   | P1     | 完了       | **完了**                            | `p1` `enhancement` `area:ui` `area:content`                |
 | [#18](../../issues/18) | primaryLang を英語以外にした場合に主字幕が表示されない問題を切り分ける             | P1     | Phase 3    | **完了**                            | `p1` `bug` `area:content`                                  |
 | [#19](../../issues/19) | Phase D: binder/sidebar 側で primary cue が UI に反映されない非対称を解消する      | P1     | Phase D    | **完了**                            | `p1` `area:content` `area:ui`                              |
-| [#20](../../issues/20) | Phase E (1): `content.js` panel / overlay セクションの責務分離                     | P1     | Phase E    | 進行中（overlay/popup 1段整理済み） | `enhancement` `p1` `area:ui` `area:content` `area:options` |
+| [#20](../../issues/20) | Phase E (1): `content.js` panel / overlay セクションの責務分離                     | P1     | Phase E    | 進行中（overlay/popup 整理済み、panel shell/debug コメント整理進行） | `enhancement` `p1` `area:ui` `area:content` `area:options` |
 | [#21](../../issues/21) | Phase E (2): `content.js` binder / cue ロジックの整理と分割準備                    | P1     | Phase E    | 未着手                              | `enhancement` `p1` `area:content` `area:options`           |
 
 ---
@@ -136,7 +136,9 @@
 - overlay は 1 段整理済み（`updateOverlay()` の word click listener を外し、`wireOverlayUiEvents()` の event delegation へ移動。`createOverlay()` は host 作成 → shadow 準備 → shell 適用 → wiring 呼び出しの流れへ寄せた）
 - subtitle popup は 1 段整理済み（`buildPopupShellStyleText()` を追加し style を分離、`wireSubtitlePopupUiEvents()` に責務コメント追加、`.atv-word-link` click は early return 形へ整理）
 - panel の `panel-debug-anchor` 追加 + debug mount 先変更案は、責務線が曖昧化しうるため今回は見送り
-- panel の次手は案A（`buildPanelShellHTML()` / `buildPanelDebugShellHTML()` / `createDebugPanel()` に短い責務コメントを追加して境界を明確化）
+- panel は案A を 1 段適用済み（`buildPanelShellHTML()` / `buildPanelDebugShellHTML()` / `createDebugPanel()` に短い責務コメントを追加し、panel shell / debug shell / debug mount の境界を明確化）
+- panel header は `wirePanelHeaderActions()` に責務コメントを追加し、ヘッダーの UI wiring と shell の境界を明確化
+- debug 側は `createDebugPanel()` と `debug-panel.js` の `mount()` に責務コメントを追加し、debug mount / debug wiring の境界を明確化（debug wiring の実体は引き続き `debug-panel.js` 側に保持）
 - #21（binder / cue）と observer / bootstrap はこのバッチでは未着手
 - `renderPanel()` の hover / click / scroll 本体分解はこの後段に送る
 - DOM の `id` / `class` / `data-*`、見た目、close 動作、current 行や threshold-scroll の挙動は変えない
