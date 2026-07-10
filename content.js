@@ -2391,6 +2391,7 @@
     `;
   }
 
+  // [UI shell: subtitle popup] subtitle popup の style 参照・header・tabs・pane の HTML 骨格を返す。
   function buildPopupShellHTML() {
     return `
       <style>
@@ -2417,7 +2418,7 @@
     `;
   }
 
-  // [UI wiring: subtitle popup]
+  // [wiring: subtitle popup] close / tab / dynamic word link の UI イベントを subtitle popup shell に接続する。
   function wireSubtitlePopupUiEvents() {
     const root = state.popupShadowRoot;
     if (!root) return;
@@ -2464,6 +2465,7 @@
     });
   }
 
+  // [UI shell: subtitle popup host] host 再利用・mount・shadow shell 注入・popup wiring をまとめて行う。
   function createPopupHost() {
     const target = getTarget();
     const existingHost = target.querySelector("#atv-popup-host");
@@ -2472,15 +2474,18 @@
       return;
     }
 
+    // [shell: subtitle popup host mount] popup host を生成して playback target に追加する。
     const host = document.createElement("div");
     host.id = "atv-popup-host";
     host.style.cssText =
       "position:fixed;top:0;left:0;width:0;height:0;z-index:999999;pointer-events:none;";
     target.appendChild(host);
 
+    // [shell: subtitle popup shadow mount] shadow root を attach し、subtitle popup shell HTML を注入する。
     state.popupShadowRoot = host.attachShadow({ mode: "open" });
     state.popupShadowRoot.innerHTML = buildPopupShellHTML();
 
+    // [wiring: subtitle popup] popup UI event handlers を shell に接続する。
     wireSubtitlePopupUiEvents();
   }
 
@@ -2521,6 +2526,7 @@
     }
   }
 
+  // [render: subtitle popup display] subtitle popup の表示内容を初期化し、位置を決めて辞書/翻訳取得を開始する。
   function showPopup(word, sentence, anchorRect) {
     if (!state.popupShadowRoot) return;
 
