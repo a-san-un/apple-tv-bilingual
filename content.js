@@ -2749,6 +2749,7 @@
       .join("<br>");
   }
 
+  // [render: panel block html] subtitle block 1件分の HTML を組み立てる。
   function buildPanelBlockHtml(block) {
     const isCurrent = block.state === "current";
     const cls = "subtitle-block";
@@ -2773,6 +2774,7 @@
   }
 
 
+  // [wiring: panel word interactions] block 内の単語 hover / click を subtitle popup へ接続する。
   function bindPanelWordInteractions(blockEl) {
     blockEl.querySelectorAll(".atv-word").forEach((span) => {
       span.addEventListener("mouseenter", () => {
@@ -2793,6 +2795,7 @@
     });
   }
 
+  // [wiring: panel block interactions] block click と word click を panel list DOM に接続する。
   function bindPanelBlockInteractions(list) {
     list.querySelectorAll(".subtitle-block").forEach((blockEl) => {
       bindPanelWordInteractions(blockEl);
@@ -2811,6 +2814,7 @@
   }
 
 
+  // [render: panel list blocks - future] current time より後ろの cue から future block 群を組み立てる。
   function collectFuturePanelBlocks(currentTime) {
     const blocks = [];
     if (!state.primaryTrack || !state.primaryTrack.cues) return blocks;
@@ -2833,6 +2837,7 @@
   }
 
 
+  // [render: panel list blocks - current] primary / secondary の現在 cue から current block を組み立てる。
   function buildCurrentPanelBlock(currentTime) {
     const curPrimaryCue = getCurrentCue(state.primaryTrack, currentTime);
     const curSecondaryCue = findCueAt(state.secondaryTrack, currentTime);
@@ -2886,6 +2891,7 @@
     };
   }
 
+  // [render: panel snapshot] current block と primary snapshot の最終描画状態を保持する。
   function updatePanelRenderSnapshot(allBlocks, curPrimaryCue) {
     const currentSubtitleBlock = allBlocks.find((b) => b.state === "current");
     state.lastPanelRenderSnapshot = {
@@ -2937,6 +2943,7 @@
     scrollCurrentPanelBlockIntoView();
   }
 
+  // [render: panel scroll] current block が見切れる場合だけ panel scroll position を補正する。
   function scrollCurrentPanelBlockIntoView() {
     const currentBlock = state.panelShadowRoot?.getElementById("current-block");
     const panelScroll = state.panelShadowRoot?.getElementById("panel-scroll");
