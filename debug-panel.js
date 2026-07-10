@@ -62,6 +62,8 @@
     activeEntry = null;
   }
 
+  // [wiring: debug panel] debug shell の UI イベントを root に接続し、初期表示を同期する。
+  // shell の構造は content.js / buildPanelDebugShellHTML が担い、ここでは debug UI の wiring と update の起動を行う。
   function mount(root, deps = {}) {
     if (!root) return null;
     if (activeEntry?.root && activeEntry.root !== root) {

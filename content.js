@@ -2505,7 +2505,7 @@ function buildPanelShellHTML() {
   }
 
   // [debug mount] debug panel モジュールを panelShadowRoot にマウントする。
-// HTML shell は buildPanelDebugShellHTML が担い、ここでは外部 debugPanel.mount の呼び出しのみを行う。
+// HTML shell は buildPanelDebugShellHTML が担い、UI wiring は debugPanel.mount 側へ委ねる。
 function createDebugPanel() {
     if (!state.panelShadowRoot) return;
     state.debugPanelRoot = state.panelShadowRoot;
