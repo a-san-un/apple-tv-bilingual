@@ -641,6 +641,21 @@
   }
 
   function ensureSecondarySubtitleElement() {
+    const requestedSettings = state.requestedContentSettings || {};
+    const effectiveSettings = {
+      primaryLang:
+        requestedSettings.primaryLang || state.contentSettings.primaryLang || "",
+      secondaryLang:
+        requestedSettings.secondaryLang ||
+        state.requestedSecondaryLang ||
+        state.contentSettings.secondaryLang ||
+        "",
+    };
+
+    if (!isLanguageSelectionReady(effectiveSettings)) {
+      return null;
+    }
+
     ensurePanelSlotLayerStyle();
 
     const allExisting = document.querySelectorAll(
@@ -4035,7 +4050,8 @@
     const requestedSettings = state.requestedContentSettings || {};
     if (!isLanguageSelectionReady(requestedSettings)) {
       state.panelVisible = false;
-      applyPanelVisibility(false);
+      destroyUiHosts();
+      applyLayout(false);
       showLanguageSetupNotice();
       logContentSettings(
         "startBilingual skipped: language selection incomplete",
@@ -4273,7 +4289,6 @@
       teardownForRestart();
       resetRuntimeState();
       startBilingual({ keepPanelVisible: wasPanelVisible });
-      ensureSecondarySubtitleElement();
 
       logContentSettings("restartBilingual done", { reason });
     } finally {
