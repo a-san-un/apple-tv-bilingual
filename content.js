@@ -82,6 +82,7 @@
     video: null,
     dialogEl: null,
     contentSettings: { ...DEFAULT_SETTINGS },
+    requestedContentSettings: {},
     requestedSecondaryLang: "",
     primaryTrack: null,
     secondaryTrack: null,
@@ -281,18 +282,19 @@
   function loadSettingsSnapshot(reason = "unknown") {
     const loadFromStorage = () =>
       new Promise((resolve, reject) => {
-        chrome.storage.sync.get(DEFAULT_SETTINGS, (rawSettings = {}) => {
+        chrome.storage.sync.get(null, (storedSettings = {}) => {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
             return;
           }
 
-          const mergedRequested = { ...DEFAULT_SETTINGS, ...rawSettings };
-          const resolvedSettings = applySecondaryLangFallback(mergedRequested);
+          const requestedSettings = { ...DEFAULT_SETTINGS, ...storedSettings };
+          const effectiveSettings = applySecondaryLangFallback(requestedSettings);
           resolve({
-            requestedSettings: mergedRequested,
-            effectiveSettings: resolvedSettings,
-            requestedSecondaryLang: rawSettings.secondaryLang || "",
+            storedSettings: { ...storedSettings },
+            requestedSettings,
+            effectiveSettings,
+            requestedSecondaryLang: storedSettings.secondaryLang || "",
           });
         });
       });
@@ -309,18 +311,20 @@
       })
       .then(() => {
         const snapshot = settingsBridge.getCurrentSettings?.() || {};
+        const storedSettings = { ...(snapshot.storedSettings || {}) };
         const requestedSettings = {
           ...DEFAULT_SETTINGS,
-          ...(snapshot.requestedSettings || {}),
+          ...(snapshot.requestedSettings || storedSettings),
         };
         const effectiveSettings =
           snapshot.effectiveSettings || snapshot.settings || requestedSettings;
         return {
+          storedSettings,
           requestedSettings,
           effectiveSettings: { ...effectiveSettings },
           requestedSecondaryLang:
             snapshot.requestedSecondaryLang ??
-            requestedSettings.secondaryLang ??
+            storedSettings.secondaryLang ??
             "",
         };
       })
@@ -2100,13 +2104,37 @@
   }
 
   function showRightPanel() {
-    if (!state.panelVisible) togglePanel();
-    else applyLayout(true);
+    if (!state.panelVisible) {
+      togglePanel(true);
+      return;
+    }
+    applyLayout(true);
+    const panelHost = getTarget().querySelector("#atv-panel-host");
+    const overlayHost = getTarget().querySelector("#atv-overlay-host");
+    const toggleBtn = getTarget().querySelector("#atv-toggle-btn");
+    if (panelHost) panelHost.style.display = "";
+    if (overlayHost) {
+      overlayHost.style.width = "70%";
+      overlayHost.style.display = "none";
+    }
+    if (toggleBtn) toggleBtn.style.display = "none";
   }
 
   function hideRightPanel() {
-    if (state.panelVisible) togglePanel();
-    else applyLayout(false);
+    if (state.panelVisible) {
+      togglePanel(false);
+      return;
+    }
+    applyLayout(false);
+    const panelHost = getTarget().querySelector("#atv-panel-host");
+    const overlayHost = getTarget().querySelector("#atv-overlay-host");
+    const toggleBtn = getTarget().querySelector("#atv-toggle-btn");
+    if (panelHost) panelHost.style.display = "none";
+    if (overlayHost) {
+      overlayHost.style.width = "100%";
+      overlayHost.style.display = "";
+    }
+    if (toggleBtn) toggleBtn.style.display = "block";
   }
 
   function pinRightPanel() {}
@@ -2117,7 +2145,9 @@
     const shouldSyncPanelVisibility = options.syncPanelVisibility !== false;
 
     if (shouldSyncPanelVisibility) {
-      if (settings.showSidebar) {
+      if (settings.showSidebar === false) {
+        hideRightPanel();
+      } else if (state.panelVisible) {
         showRightPanel();
       } else {
         hideRightPanel();
@@ -2220,7 +2250,7 @@
 
     root
       .getElementById("close-btn")
-      ?.addEventListener("click", () => togglePanel());
+      ?.addEventListener("click", () => togglePanel(false));
     root.getElementById("settings-btn")?.addEventListener("click", () => {
       try {
         chrome.runtime.sendMessage({ type: "OPEN_OPTIONS_PAGE" });
@@ -2267,6 +2297,98 @@
     ensureSecondarySubtitleElement();
   }
 
+  function isLanguageSelectionReady(settings = {}) {
+    const primaryLang = String(settings.primaryLang || "").trim();
+    const secondaryLang = String(settings.secondaryLang || "").trim();
+    return Boolean(primaryLang && secondaryLang);
+  }
+
+  function hideLanguageSetupNotice() {
+    const existing = getTarget().querySelector("#atv-language-setup-notice");
+    if (existing) existing.remove();
+  }
+
+  function showLanguageSetupNotice() {
+    const target = getTarget();
+    if (!target) return;
+
+    let notice = target.querySelector("#atv-language-setup-notice");
+    if (notice) return;
+
+    notice = document.createElement("div");
+    notice.id = "atv-language-setup-notice";
+    notice.style.cssText = [
+      "position:fixed",
+      "top:72px",
+      "right:16px",
+      "z-index:999999",
+      "max-width:320px",
+      "background:rgba(20,20,20,0.92)",
+      "color:#fff",
+      "border:1px solid rgba(255,255,255,0.16)",
+      "border-radius:12px",
+      "padding:12px 14px",
+      "box-shadow:0 8px 24px rgba(0,0,0,0.28)",
+      "font-size:13px",
+      "line-height:1.5",
+    ].join(";");
+
+    const title = document.createElement("div");
+    title.textContent = "字幕設定が未完了です";
+    title.style.cssText = "font-weight:600;margin-bottom:6px;";
+
+    const body = document.createElement("div");
+    body.textContent =
+      "主言語と副言語の両方を設定すると、二言語字幕を開始できます。";
+    body.style.cssText = "opacity:0.92;";
+
+    const actions = document.createElement("div");
+    actions.style.cssText =
+      "display:flex;gap:8px;margin-top:10px;justify-content:flex-end;";
+
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.textContent = "設定を開く";
+    openBtn.style.cssText = [
+      "background:#fff",
+      "color:#111",
+      "border:none",
+      "border-radius:8px",
+      "padding:6px 10px",
+      "font-size:12px",
+      "font-weight:600",
+      "cursor:pointer",
+    ].join(";");
+    openBtn.addEventListener("click", () => {
+      try {
+        chrome.runtime.sendMessage({ type: "OPEN_OPTIONS_PAGE" });
+      } catch (_) {}
+    });
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.textContent = "閉じる";
+    closeBtn.style.cssText = [
+      "background:transparent",
+      "color:#fff",
+      "border:1px solid rgba(255,255,255,0.24)",
+      "border-radius:8px",
+      "padding:6px 10px",
+      "font-size:12px",
+      "cursor:pointer",
+    ].join(";");
+    closeBtn.addEventListener("click", () => {
+      hideLanguageSetupNotice();
+    });
+
+    actions.appendChild(closeBtn);
+    actions.appendChild(openBtn);
+    notice.appendChild(title);
+    notice.appendChild(body);
+    notice.appendChild(actions);
+    target.appendChild(notice);
+  }
+
   function createToggleButton() {
     if (getTarget().querySelector("#atv-toggle-btn")) return;
 
@@ -2292,7 +2414,7 @@
 
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      togglePanel();
+      togglePanel(true);
     });
 
     getTarget().appendChild(btn);
@@ -3107,8 +3229,10 @@
     console.trace("togglePanel trace");
 
     if (state.panelVisible) {
-      // パネル open 時は設定を再読込し、トラック再解決後に描画を更新する。
-      refreshSettingsOnPanelOpen();
+      // NOTE:
+      // パネル open 時の自動 settings 再読込は、タブ復帰や再適用経路で
+      // 意図せず panel reopen を引き起こすため停止する。
+      // 明示的な設定変更は SETTINGS_CHANGED / restartBilingual 側で反映する。
     }
 
     applyLayout(state.panelVisible);
@@ -3134,7 +3258,45 @@
       scheduleControlSettlingBurst("togglePanel", [180, 420, 900, 1500]);
     }
 
+    persistPanelVisibility();
     logContent("togglePanel", { panelVisible: state.panelVisible });
+  }
+
+  function loadPanelVisibility() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get("panelVisible", (result = {}) => {
+        if (chrome.runtime.lastError) {
+          logContentError("panelVisible load failed", {
+            error: chrome.runtime.lastError.message,
+          });
+          resolve(true);
+          return;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(result, "panelVisible")) {
+          resolve(result.panelVisible !== false);
+          return;
+        }
+
+        resolve(true);
+      });
+    });
+  }
+
+  function persistPanelVisibility() {
+    chrome.storage.local.set({ panelVisible: state.panelVisible }, () => {
+      if (chrome.runtime.lastError) {
+        logContentError("panelVisible persist failed", {
+          error: chrome.runtime.lastError.message,
+          panelVisible: state.panelVisible,
+        });
+        return;
+      }
+
+      logContent("panelVisible persisted", {
+        panelVisible: state.panelVisible,
+      });
+    });
   }
 
   function clearInitialCueRecoveryTimers() {
@@ -3460,20 +3622,43 @@
 
       if (!state.video) return;
 
-      state.lastVideoSrcKey = getCurrentVideoSrcKey(state.video);
-      const result = reinitializeSubtitlePipeline(reason);
+      const run = () => {
+        state.lastVideoSrcKey = getCurrentVideoSrcKey(state.video);
+        const result = reinitializeSubtitlePipeline(reason);
+
+        if (reason === "video_changed") {
+          if (result.ready) {
+            clearTrackResolveRetryTimers();
+          } else {
+            scheduleTrackResolveRetry(reason);
+          }
+        }
+      };
 
       if (reason === "video_changed") {
-        if (result.ready) {
-          clearTrackResolveRetryTimers();
-        } else {
-          scheduleTrackResolveRetry(reason);
-        }
+        loadPanelVisibility()
+          .then((panelVisible) => {
+            state.panelVisible = panelVisible;
+            logContent("panelVisible reloaded before reinitialize", {
+              reason,
+              panelVisible: state.panelVisible,
+            });
+            run();
+          })
+          .catch(() => {
+            run();
+          });
+        return;
       }
+
+      run();
     };
 
     loadSettingsSnapshot(reason)
       .then((snapshot) => {
+        state.requestedContentSettings = {
+          ...(snapshot.storedSettings || {}),
+        };
         state.requestedSecondaryLang = snapshot.requestedSecondaryLang || "";
         state.contentSettings = { ...snapshot.effectiveSettings };
         proceedWithReinitialize();
@@ -3823,7 +4008,7 @@
     }
   }
 
-  function startBilingual(options = {}) {
+  async function startBilingual(options = {}) {
     logContent("startBilingual trace", {
       panelVisible: state.panelVisible,
       keepPanelVisible:
@@ -3833,6 +4018,18 @@
     });
     console.trace("startBilingual trace");
     if (!state.video) return;
+
+    const requestedSettings = state.requestedContentSettings || {};
+    if (!isLanguageSelectionReady(requestedSettings)) {
+      showLanguageSetupNotice();
+      logContentSettings("startBilingual skipped: language selection incomplete", {
+        primaryLang: requestedSettings.primaryLang || "",
+        secondaryLang: requestedSettings.secondaryLang || "",
+      });
+      return;
+    }
+
+    hideLanguageSetupNotice();
 
     if (!isPlaybackPageReady()) {
       logContent("startBilingual skipped: playback not ready", {
@@ -3886,6 +4083,20 @@
         : null,
     });
 
+    if (typeof options.keepPanelVisible === "boolean") {
+      state.panelVisible = options.keepPanelVisible;
+    } else {
+      state.panelVisible = await loadPanelVisibility();
+    }
+    logContent("startBilingual panelVisible applied", {
+      panelVisible: state.panelVisible,
+      keepPanelVisible:
+        typeof options.keepPanelVisible === "boolean"
+          ? options.keepPanelVisible
+          : null,
+    });
+    console.trace("startBilingual panelVisible applied");
+
     buildUi();
     ensureSecondarySubtitleElement();
 
@@ -3896,19 +4107,6 @@
       );
     }
 
-    if (typeof options.keepPanelVisible === "boolean") {
-      state.panelVisible = options.keepPanelVisible;
-    } else {
-      state.panelVisible = true;
-    }
-    logContent("startBilingual panelVisible applied", {
-      panelVisible: state.panelVisible,
-      keepPanelVisible:
-        typeof options.keepPanelVisible === "boolean"
-          ? options.keepPanelVisible
-          : null,
-    });
-    console.trace("startBilingual panelVisible applied");
     applyCurrentStateToPanel("startBilingual_ready");
     scheduleInitialCueRecovery();
     scheduleControlSettlingBurst("startBilingual");
@@ -3941,6 +4139,9 @@
   function loadSettingsFromSync() {
     loadSettingsSnapshot("initial_load")
       .then((snapshot) => {
+        state.requestedContentSettings = {
+          ...(snapshot.storedSettings || {}),
+        };
         state.requestedSecondaryLang = snapshot.requestedSecondaryLang || "";
         state.contentSettings = { ...snapshot.effectiveSettings };
         const effectiveSecondaryLanguage =
@@ -3985,6 +4186,10 @@
     state.restarting = true;
     try {
       if (nextSettings) {
+        state.requestedContentSettings = {
+          ...state.requestedContentSettings,
+          ...nextSettings,
+        };
         state.requestedSecondaryLang = nextSettings.secondaryLang || "";
         state.contentSettings = applySecondaryLangFallback({
           ...state.contentSettings,
@@ -4038,10 +4243,19 @@
 
       let next;
       if (bridgeResult?.handled) {
+        state.requestedContentSettings = {
+          ...(bridgeResult.storedSettings ||
+            bridgeResult.requestedSettings ||
+            updated),
+        };
         state.requestedSecondaryLang =
           bridgeResult.requestedSecondaryLang ?? "";
         next = { ...bridgeResult.settings };
       } else {
+        state.requestedContentSettings = {
+          ...state.requestedContentSettings,
+          ...updated,
+        };
         state.requestedSecondaryLang = updated.secondaryLang ?? "";
         next = applySecondaryLangFallback({
           ...state.contentSettings,

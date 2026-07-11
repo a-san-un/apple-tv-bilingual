@@ -11,6 +11,7 @@
 
   const listeners = new Set();
   let bridgeState = {
+    storedSettings: {},
     requestedSettings: {},
     effectiveSettings: {},
     requestedSecondaryLang: "",
@@ -28,13 +29,15 @@
     return cloneSettings(resolved);
   }
 
-  function setBridgeState(requestedSettings, effectiveSettings) {
+  function setBridgeState(storedSettings, requestedSettings, effectiveSettings) {
+    const nextStored = cloneSettings(storedSettings);
     const nextRequested = cloneSettings(requestedSettings);
     const nextEffective = cloneSettings(effectiveSettings);
     bridgeState = {
+      storedSettings: nextStored,
       requestedSettings: nextRequested,
       effectiveSettings: nextEffective,
-      requestedSecondaryLang: nextRequested.secondaryLang ?? "",
+      requestedSecondaryLang: nextStored.secondaryLang ?? "",
       resolvedSecondaryLanguage: nextEffective.secondaryLang ?? "",
     };
     return getCurrentSettings();
@@ -50,6 +53,7 @@
 
   function getCurrentSettings() {
     return {
+      storedSettings: cloneSettings(bridgeState.storedSettings),
       requestedSettings: cloneSettings(bridgeState.requestedSettings),
       effectiveSettings: cloneSettings(bridgeState.effectiveSettings),
       requestedSecondaryLang: bridgeState.requestedSecondaryLang || "",
@@ -68,20 +72,20 @@
       typeof options.onLoaded === "function" ? options.onLoaded : null;
 
     return new Promise((resolve, reject) => {
-      chrome.storage.sync.get(defaults, (rawSettings = {}) => {
+      chrome.storage.sync.get(null, (storedSettings = {}) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
         }
 
-        const merged = { ...defaults, ...cloneSettings(rawSettings) };
-        const resolved = applyFallbackIfNeeded(merged, applyFallback);
-        const snapshot = setBridgeState(merged, resolved);
+        const requested = { ...defaults, ...cloneSettings(storedSettings) };
+        const resolved = applyFallbackIfNeeded(requested, applyFallback);
+        const snapshot = setBridgeState(storedSettings, requested, resolved);
 
         if (onLoaded) {
           onLoaded(
             cloneSettings(snapshot.effectiveSettings),
-            cloneSettings(rawSettings),
+            cloneSettings(storedSettings),
             snapshot,
           );
         }
@@ -111,15 +115,18 @@
       message.settings && typeof message.settings === "object"
         ? cloneSettings(message.settings)
         : {};
+    const baseStored = cloneSettings(bridgeState.storedSettings);
     const baseRequested = cloneSettings(bridgeState.requestedSettings);
+    const nextStored = { ...baseStored, ...incoming };
     const merged = { ...baseRequested, ...incoming };
     const resolved = applyFallbackIfNeeded(merged, options.applyFallback);
-    const snapshot = setBridgeState(merged, resolved);
+    const snapshot = setBridgeState(nextStored, merged, resolved);
 
     const payload = {
       handled: true,
       reason: message.reason || "unknown",
       settings: cloneSettings(snapshot.effectiveSettings),
+      storedSettings: cloneSettings(snapshot.storedSettings),
       requestedSettings: cloneSettings(snapshot.requestedSettings),
       effectiveSettings: cloneSettings(snapshot.effectiveSettings),
       requestedSecondaryLang: snapshot.requestedSecondaryLang,
