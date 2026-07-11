@@ -1,6 +1,6 @@
 // =============================================================
 // background.js - Service Worker
-// version: 2.6.2
+// version: 2.6.3
 // Issue #4: Debug ログ保存を saveAs ダイアログ経由で扱う
 // 既存の SETTINGS_CHANGED 導線は維持し、最小差分で追加する
 // =============================================================
@@ -289,6 +289,24 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "OPEN_OPTIONS_PAGE") {
+    (async () => {
+      try {
+        await chrome.runtime.openOptionsPage();
+        await logBackground("options page opened", {
+          reason: msg.reason || "settings_button",
+        });
+        sendResponse({ ok: true });
+      } catch (error) {
+        await logBackground("options page open failed", {
+          error: String(error),
+        });
+        sendResponse({ ok: false, error: String(error) });
+      }
+    })();
+    return true;
+  }
+
   // ---------- Unified settings dispatch ----------
   if (msg.type === "APPLY_SETTINGS_TO_APPLE_TV") {
     (async () => {

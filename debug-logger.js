@@ -1,6 +1,6 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - debug-logger.js
-// version: 2.6.2
+// version: 2.6.3
 // 役割: Debug ログの整形・保存・通知を担当する。
 // Phase A: content.js から logger 責務を切り出して window.ATVB.logger で公開する。
 // =============================================================
@@ -10,7 +10,17 @@
   window.ATVB = window.ATVB || {};
 
   const DEBUG_LOGS_KEY = "debugLogs";
-  const DEBUG_LOGS_MAX = 400;
+  const RETAINED_DEBUG_LOGS_LIMIT = 300;
+  const LOG_CATEGORIES = Object.freeze({
+    SETTINGS: "settings",
+    SUBTITLE: "subtitle",
+    UI: "ui",
+    API: "api",
+    ERROR: "error",
+    DEFAULT: "default",
+  });
+  const KNOWN_CATEGORIES = new Set(Object.values(LOG_CATEGORIES));
+  const DEFAULT_CATEGORY = LOG_CATEGORIES.UI;
 
   let onLogUpdated = () => {};
 
@@ -53,11 +63,85 @@
     return walk(cloned);
   }
 
+  function normalizeCategory(category) {
+    const normalized = String(category || "")
+      .trim()
+      .toLowerCase();
+    if (KNOWN_CATEGORIES.has(normalized)) return normalized;
+    return DEFAULT_CATEGORY;
+  }
+
   // [ATVB] 形式で 1 行ログを生成する。
-  function debugLog(scope, message, payload = null) {
+  // 互換性のため debugLog(scope, message, payload) も受け付ける。
+  function debugLog(scope, categoryOrMessage, messageOrPayload, payloadMaybe) {
+    const source = String(scope || "unknown");
+
+    let category = DEFAULT_CATEGORY;
+    let message = "";
+    let payload = null;
+
+    if (
+      typeof categoryOrMessage === "string" &&
+      KNOWN_CATEGORIES.has(String(categoryOrMessage).toLowerCase())
+    ) {
+      category = normalizeCategory(categoryOrMessage);
+      message = String(messageOrPayload || "");
+      payload = payloadMaybe ?? null;
+    } else {
+      message = String(categoryOrMessage || "");
+      payload = messageOrPayload ?? null;
+    }
+
     const time = new Date().toISOString();
-    const safePayload = sanitizeForLog(payload);
-    return { time, scope, message, payload: safePayload };
+    return {
+      time,
+      scope: source,
+      source,
+      category,
+      message,
+      payload: sanitizeForLog(payload),
+    };
+  }
+
+  function ensureLogShape(line) {
+    if (!line || typeof line !== "object") return null;
+    const source = String(line.source || line.scope || "unknown");
+    const message = String(line.message || "");
+    const normalized = {
+      time: line.time || new Date().toISOString(),
+      scope: source,
+      source,
+      category: normalizeCategory(line.category),
+      message,
+      payload: sanitizeForLog(line.payload ?? null),
+    };
+    return normalized;
+  }
+
+  function padNumber(value, width = 2) {
+    return String(value).padStart(width, "0");
+  }
+
+  // 保存済みUTC時刻を、表示時のみローカル時刻へ変換する。
+  function formatLocalTimestamp(timestamp) {
+    const date = timestamp ? new Date(timestamp) : new Date();
+    if (Number.isNaN(date.getTime())) return String(timestamp || "");
+
+    const year = date.getFullYear();
+    const month = padNumber(date.getMonth() + 1);
+    const day = padNumber(date.getDate());
+    const hours = padNumber(date.getHours());
+    const minutes = padNumber(date.getMinutes());
+    const seconds = padNumber(date.getSeconds());
+    const milliseconds = padNumber(date.getMilliseconds(), 3);
+
+    const offsetMinutes = -date.getTimezoneOffset();
+    const sign = offsetMinutes >= 0 ? "+" : "-";
+    const absOffsetMinutes = Math.abs(offsetMinutes);
+    const offsetHours = padNumber(Math.floor(absOffsetMinutes / 60));
+    const offsetRemainder = padNumber(absOffsetMinutes % 60);
+
+    return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${milliseconds}${sign}${offsetHours}:${offsetRemainder}`;
   }
 
   // storage.local にログを追記し、更新 callback を通知する。
@@ -65,9 +149,12 @@
     try {
       const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
         await chrome.storage.local.get(DEBUG_LOGS_KEY);
-      debugLogs.push(line);
-      if (debugLogs.length > DEBUG_LOGS_MAX) {
-        debugLogs.splice(0, debugLogs.length - DEBUG_LOGS_MAX);
+      const normalizedLine = ensureLogShape(line);
+      if (!normalizedLine) return;
+
+      debugLogs.push(normalizedLine);
+      if (debugLogs.length > RETAINED_DEBUG_LOGS_LIMIT) {
+        debugLogs.splice(0, debugLogs.length - RETAINED_DEBUG_LOGS_LIMIT);
       }
       await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
       onLogUpdated();
@@ -77,8 +164,14 @@
   }
 
   // content スコープの標準ログ導線を提供する。
-  function logContent(message, payload = null) {
-    const line = debugLog("content", message, payload);
+  // 互換性のため logContent(message, payload) も受け付ける。
+  function logContent(categoryOrMessage, messageOrPayload, payloadMaybe) {
+    const line = debugLog(
+      "content",
+      categoryOrMessage,
+      messageOrPayload,
+      payloadMaybe,
+    );
     appendDebugLog(line);
   }
 
@@ -86,14 +179,51 @@
   function formatDebugLine(line) {
     const payloadText =
       line.payload != null ? ` ${JSON.stringify(line.payload)}` : "";
-    return `[${line.time}] [${line.scope}] ${line.message}${payloadText}`;
+    const source = line.source || line.scope || "unknown";
+    const category = normalizeCategory(line.category);
+    const localTime = formatLocalTimestamp(line.time);
+    return `[${localTime}] [${category}] [${source}] ${line.message}${payloadText}`;
+  }
+
+  function filterDebugLogs(logs, filter = {}) {
+    const categories = Array.isArray(filter.categories)
+      ? new Set(filter.categories.map((item) => normalizeCategory(item)))
+      : null;
+    const scopes = Array.isArray(filter.scopes)
+      ? new Set(filter.scopes.map((item) => String(item || "").trim()))
+      : null;
+    const contentKey = String(filter.contentKey || "").trim();
+
+    function extractContentKey(payload) {
+      if (!payload || typeof payload !== "object") return "";
+      const candidates = [
+        payload.contentKey,
+        payload.nextContentKey,
+        payload.currentContentKey,
+      ];
+      const found = candidates.find((item) => String(item || "").trim());
+      return found ? String(found).trim() : "";
+    }
+
+    return (logs || []).filter((line) => {
+      const normalized = ensureLogShape(line);
+      if (!normalized) return false;
+      if (categories && !categories.has(normalized.category)) return false;
+      if (scopes && !scopes.has(normalized.source)) return false;
+      if (contentKey) {
+        const lineContentKey = extractContentKey(normalized.payload);
+        if (!lineContentKey) return false;
+        if (lineContentKey !== contentKey) return false;
+      }
+      return true;
+    });
   }
 
   // 保存済みログを結合して全文テキストで返す。
-  async function getDebugLogText() {
+  async function getDebugLogText(filter = {}) {
     const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
       await chrome.storage.local.get(DEBUG_LOGS_KEY);
-    return debugLogs.map(formatDebugLine).join("\n");
+    return filterDebugLogs(debugLogs, filter).map(formatDebugLine).join("\n");
   }
 
   // 保存済みログを全削除して更新 callback を通知する。
@@ -106,11 +236,17 @@
     setOnLogUpdated,
     maskSensitive,
     sanitizeForLog,
+    normalizeCategory,
     debugLog,
+    ensureLogShape,
+    formatLocalTimestamp,
     appendDebugLog,
     logContent,
     formatDebugLine,
+    filterDebugLogs,
     getDebugLogText,
     clearDebugLogs,
+    LOG_CATEGORIES,
+    RETAINED_DEBUG_LOGS_LIMIT,
   };
 })();

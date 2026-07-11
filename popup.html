@@ -32,6 +32,17 @@
         color: #666;
         margin-top: 2px;
       }
+      .notice {
+        display: none;
+        margin: 14px 16px 0;
+        padding: 10px 12px;
+        background: #332b00;
+        border: 1px solid #665200;
+        border-radius: 8px;
+        color: #ffe566;
+        font-size: 12px;
+        line-height: 1.5;
+      }
       .section {
         padding: 14px 16px;
         border-bottom: 1px solid #2a2a2a;
@@ -70,10 +81,16 @@
         font-size: 14px;
         font-weight: 600;
         cursor: pointer;
-        transition: background 0.15s;
+        transition:
+          background 0.15s,
+          opacity 0.15s;
       }
-      .btn-apply:hover {
+      .btn-apply:hover:not(:disabled) {
         background: #ffd633;
+      }
+      .btn-apply:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
       }
       #status {
         text-align: center;
@@ -111,6 +128,10 @@
       <p>Apple TV+ バイリンガル字幕</p>
     </header>
 
+    <div id="language-setup-notice" class="notice">
+      主言語と副言語が未設定です。下の項目を選んで「適用」を押してください。
+    </div>
+
     <div class="section">
       <label for="primary-lang">メイン字幕（上段）</label>
       <select id="primary-lang">
@@ -125,11 +146,13 @@
       </select>
     </div>
 
-    <button class="btn-apply" id="apply-btn" type="button">適用</button>
+    <button class="btn-apply" id="apply-btn" type="button" disabled>
+      適用
+    </button>
     <button class="btn-settings" id="open-options-btn" type="button">
       設定を開く
     </button>
-    <div id="status" aria-live="polite"></div>
+    <div id="status" role="status" aria-live="polite" aria-atomic="true"></div>
 
     <script src="popup.js"></script>
   </body>

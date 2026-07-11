@@ -1,9 +1,12 @@
 // =============================================================
-// popup.js - Popup UI for subtitle language settings (v2.5.2)
+// popup.js - Popup UI for subtitle language settings (v2.6.0)
 // -------------------------------------------------------------
 // Responsibilities:
 // - Show a fixed supported-language list for primary/secondary.
-// - Allow empty secondaryLang as "Browser language".
+// - Allow empty secondaryLang as "Browser language" in stored spec.
+// - Treat raw stored settings as the source of truth for setup completion.
+// - Require primary + secondary selection for initial setup completion.
+// - Disallow selecting the same language for primary and secondary.
 // - Save settings to chrome.storage.sync.
 // - Notify the active Apple TV+ tab immediately after save.
 // - Keep debug logging behavior for troubleshooting.
@@ -37,6 +40,9 @@ const secondarySel = document.getElementById("secondary-lang");
 const applyBtn = document.getElementById("apply-btn");
 const statusEl = document.getElementById("status");
 const openOptionsBtn = document.getElementById("open-options-btn");
+const noticeEl = document.getElementById("language-setup-notice");
+
+let isLanguageSelectionIncomplete = true;
 
 function maskSensitive(value) {
   if (typeof value !== "string") return value;
@@ -123,6 +129,54 @@ function populateSelects(langs, savedPrimary = "en", savedSecondary = "") {
   });
 }
 
+function getValidationResult() {
+  const primaryLang = String(primarySel.value || "").trim();
+  const secondaryLang = String(secondarySel.value || "").trim();
+
+  if (!primaryLang) {
+    return {
+      ok: false,
+      message: "主言語を選択してください。",
+    };
+  }
+
+  if (!secondaryLang) {
+    return {
+      ok: false,
+      message: "副言語を選択してください。",
+    };
+  }
+
+  if (primaryLang === secondaryLang) {
+    return {
+      ok: false,
+      message: "主言語と副言語には別の言語を選択してください。",
+    };
+  }
+
+  return {
+    ok: true,
+    message: "",
+  };
+}
+
+function updatePopupUI() {
+  const validation = getValidationResult();
+
+  applyBtn.disabled = !validation.ok;
+
+  if (noticeEl) {
+    noticeEl.style.display = isLanguageSelectionIncomplete ? "block" : "none";
+  }
+
+  if (!validation.ok) {
+    statusEl.textContent = validation.message;
+    return;
+  }
+
+  statusEl.textContent = "";
+}
+
 async function notifyActiveAppleTvTab(settingsToSend) {
   const lineNotifyStart = debugLog(
     "popup",
@@ -163,6 +217,7 @@ async function notifyActiveAppleTvTab(settingsToSend) {
           },
         );
         await appendDebugLog(lineDispatchFailed);
+
         statusEl.textContent =
           "✓ Saved. Could not apply now, retry on Apple TV+ tab.";
         setTimeout(() => window.close(), 1500);
@@ -190,10 +245,22 @@ async function initPopup() {
   await appendDebugLog(lineInit);
 
   chrome.storage.sync.get(GENERAL_KEYS, async (result) => {
+    const hasStoredPrimaryLang = Boolean(result.primaryLang);
+    const hasStoredSecondaryLang = Boolean(result.secondaryLang);
+
+    isLanguageSelectionIncomplete = !(
+      hasStoredPrimaryLang && hasStoredSecondaryLang
+    );
+
     const savedPrimary = result.primaryLang || "en";
     const savedSecondary = result.secondaryLang ?? "";
 
-    const lineLoaded = debugLog("popup", "Loaded general settings", result);
+    const lineLoaded = debugLog("popup", "Loaded general settings", {
+      ...result,
+      hasStoredPrimaryLang,
+      hasStoredSecondaryLang,
+      isLanguageSelectionIncomplete,
+    });
     await appendDebugLog(lineLoaded);
 
     populateSelects(SUPPORTED_LANGS, savedPrimary, savedSecondary);
@@ -202,12 +269,33 @@ async function initPopup() {
       languageCount: SUPPORTED_LANGS.length,
       primaryLang: savedPrimary,
       secondaryLang: savedSecondary,
+      isLanguageSelectionIncomplete,
     });
     await appendDebugLog(lineFixed);
+
+    updatePopupUI();
   });
 }
 
 applyBtn.addEventListener("click", async () => {
+  const validation = getValidationResult();
+
+  if (!validation.ok) {
+    statusEl.textContent = validation.message;
+
+    const lineBlocked = debugLog(
+      "popup",
+      "Saving popup settings blocked by validation",
+      {
+        primaryLang: primarySel.value,
+        secondaryLang: secondarySel.value,
+        validationMessage: validation.message,
+      },
+    );
+    await appendDebugLog(lineBlocked);
+    return;
+  }
+
   const primaryLang = primarySel.value;
   const secondaryLang = secondarySel.value;
 
@@ -220,6 +308,9 @@ applyBtn.addEventListener("click", async () => {
   await appendDebugLog(lineSave);
 
   chrome.storage.sync.set(settingsToSave, async () => {
+    isLanguageSelectionIncomplete = false;
+    updatePopupUI();
+
     const lineSaved = debugLog(
       "popup",
       "Saved popup settings to sync",
@@ -229,6 +320,14 @@ applyBtn.addEventListener("click", async () => {
 
     await notifyActiveAppleTvTab(settingsToSave);
   });
+});
+
+primarySel.addEventListener("change", () => {
+  updatePopupUI();
+});
+
+secondarySel.addEventListener("change", () => {
+  updatePopupUI();
 });
 
 if (openOptionsBtn) {

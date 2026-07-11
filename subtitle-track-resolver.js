@@ -1,6 +1,6 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - subtitle-track-resolver.js
-// version: 2.6.2
+// version: 2.6.3
 // 役割: 字幕トラック選定（resolver）責務を担当する。
 // Phase B: content.js から resolver 関連関数を切り出して window.ATVB.resolver で公開する。
 // =============================================================
@@ -15,10 +15,31 @@
       .replace(/\s+/g, " ");
   }
 
+  const ISO_639_2_TO_1 = Object.freeze({
+    deu: "de",
+    jpn: "ja",
+    zho: "zh",
+    chi: "zh",
+    kor: "ko",
+    fra: "fr",
+    fre: "fr",
+    spa: "es",
+  });
+
   function normalizeTrackLanguage(value) {
-    return String(value || "")
+    const normalized = String(value || "")
       .trim()
-      .toLowerCase();
+      .toLowerCase()
+      .replace(/_/g, "-");
+
+    if (!normalized) return "";
+
+    const parts = normalized.split("-");
+    const base = parts[0] || "";
+    const mappedBase = ISO_639_2_TO_1[base] || base;
+
+    if (parts.length === 1) return mappedBase;
+    return `${mappedBase}-${parts.slice(1).join("-")}`;
   }
 
   function matchesRequestedLanguage(track, requestedLang) {
