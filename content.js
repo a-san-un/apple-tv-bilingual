@@ -3537,6 +3537,7 @@
 
     logContent("panel state applied", {
       reason,
+      renderedViaApi,
       contentKey: state.currentContentKey,
       panelVisible: state.panelVisible,
       hasPanelHost: Boolean(panelHost),
