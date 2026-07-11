@@ -240,6 +240,8 @@
     window.ATVB?.vtt?.cleanCueText?.(...args) ?? "";
   // vtt API の formatTime へ橋渡しする。
   const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
+  const contentPanelRender = window.ATVB?.contentPanelRender;
+  let panelRenderApi = null;
 
   // resolver API の getUniqueTracks へ橋渡しする。
   const getUniqueTracks = (...args) =>
@@ -2888,8 +2890,46 @@
       .join("<br>");
   }
 
+  function ensurePanelRenderApi() {
+    if (panelRenderApi) return panelRenderApi;
+    panelRenderApi = contentPanelRender?.createContentPanelRender?.({
+      state,
+      makeClickableSpans,
+      formatTime,
+      showPopup,
+      findCueAt,
+      cleanCueText,
+      getCurrentCue,
+      PANEL_PRIMARY_GRACE_MS,
+      DEBUG_PANEL_PROBE,
+      logContent,
+      logSubtitlePanelState,
+      normalizeSubtitleText,
+      renderCurrentSnapshot,
+      renderPanel,
+      getTarget,
+    }) ?? null;
+    return panelRenderApi;
+  }
+
+  function applyCurrentStateToPanelViaApi(reason = "unknown") {
+    const api = ensurePanelRenderApi();
+    if (!api?.applyCurrentStateToPanel) return null;
+    return api.applyCurrentStateToPanel(reason);
+  }
+
+  function tryApplyCurrentStateToPanelViaApi(reason = "unknown") {
+    const result = applyCurrentStateToPanelViaApi(reason);
+    return Boolean(result?.delegated && result?.rendered);
+  }
+
   // [render: panel block html] subtitle block 1件分の HTML を組み立てる。
   function buildPanelBlockHtml(block) {
+    const api = ensurePanelRenderApi();
+    if (api?.buildPanelBlockHtml) {
+      return api.buildPanelBlockHtml(block);
+    }
+
     const isCurrent = block.state === "current";
     const cls = "subtitle-block";
     const mid = isCurrent ? 'id="current-block"' : "";
@@ -2899,17 +2939,17 @@
     const pText = makeClickableSpans(block.primary, block.primary);
     const sText = makeClickableSpans(block.secondary, block.primary);
     return `
-        <div class="${cls}" ${mid} data-time="${block.startTime}">
-          <div class="subtitle-row">
-            <div class="subtitle-mark">${mark}</div>
-            <div class="subtitle-content">
-              <div class="subtitle-time">${formatTime(block.startTime)}</div>
-              <div class="subtitle-primary">${pText}</div>
-              ${sText ? `<div class="subtitle-secondary">${sText}</div>` : ""}
+          <div class="${cls}" ${mid} data-time="${block.startTime}">
+            <div class="subtitle-row">
+              <div class="subtitle-mark">${mark}</div>
+              <div class="subtitle-content">
+                <div class="subtitle-time">${formatTime(block.startTime)}</div>
+                <div class="subtitle-primary">${pText}</div>
+                ${sText ? `<div class="subtitle-secondary">${sText}</div>` : ""}
+              </div>
             </div>
           </div>
-        </div>
-      `;
+        `;
   }
 
   // [wiring: panel word interactions] block 内の単語 hover / click を subtitle popup へ接続する。
@@ -2953,6 +2993,11 @@
 
   // [render: panel list blocks - future] current time より後ろの cue から future block 群を組み立てる。
   function collectFuturePanelBlocks(currentTime) {
+    const api = ensurePanelRenderApi();
+    if (api?.collectFuturePanelBlocks) {
+      return api.collectFuturePanelBlocks(currentTime);
+    }
+
     const blocks = [];
     if (!state.primaryTrack || !state.primaryTrack.cues) return blocks;
 
@@ -2975,6 +3020,11 @@
 
   // [render: panel list blocks - current] primary / secondary の現在 cue から current block を組み立てる。
   function buildCurrentPanelBlock(currentTime) {
+    const api = ensurePanelRenderApi();
+    if (api?.buildCurrentPanelBlock) {
+      return api.buildCurrentPanelBlock(currentTime);
+    }
+
     const curPrimaryCue = getCurrentCue(state.primaryTrack, currentTime);
     const curSecondaryCue = findCueAt(state.secondaryTrack, currentTime);
     if (!curPrimaryCue && !curSecondaryCue) {
@@ -3030,6 +3080,11 @@
 
   // [render: panel snapshot] current block と primary snapshot の最終描画状態を保持する。
   function updatePanelRenderSnapshot(allBlocks, curPrimaryCue) {
+    const api = ensurePanelRenderApi();
+    if (api?.updatePanelRenderSnapshot) {
+      return api.updatePanelRenderSnapshot(allBlocks, curPrimaryCue);
+    }
+
     const currentSubtitleBlock = allBlocks.find((b) => b.state === "current");
     state.lastPanelRenderSnapshot = {
       allBlocksCount: allBlocks.length,
@@ -3085,6 +3140,11 @@
 
   // [render: panel scroll] current block が見切れる場合だけ panel scroll position を補正する。
   function scrollCurrentPanelBlockIntoView() {
+    const api = ensurePanelRenderApi();
+    if (api?.scrollCurrentPanelBlockIntoView) {
+      return api.scrollCurrentPanelBlockIntoView();
+    }
+
     const currentBlock = state.panelShadowRoot?.getElementById("current-block");
     const panelScroll = state.panelShadowRoot?.getElementById("panel-scroll");
     if (!currentBlock || !panelScroll) return;
@@ -3430,6 +3490,11 @@
   // [render: panel secondary recovery]
   // panel shell 適用後、secondary subtitle が空なら直近 history から最小差分で補完する。
   function applySecondarySubtitleFallback(reason = "unknown") {
+    const api = ensurePanelRenderApi();
+    if (api?.applySecondarySubtitleFallback) {
+      return api.applySecondarySubtitleFallback(reason);
+    }
+
     const panelHost = getTarget().querySelector("#atv-panel-host");
     const secondaryEl = panelHost?.querySelector("[data-secondary-subtitle]");
     let secondaryText = normalizeSubtitleText(secondaryEl?.textContent || "");
@@ -3462,8 +3527,11 @@
 
   // [render: panel shell state sync]
   function applyCurrentStateToPanel(reason = "unknown") {
-    renderCurrentSnapshot();
-    renderPanel();
+    const renderedViaApi = tryApplyCurrentStateToPanelViaApi(reason);
+    if (!renderedViaApi) {
+      renderCurrentSnapshot();
+      renderPanel();
+    }
 
     const { panelHost, secondaryText } = applySecondarySubtitleFallback(reason);
 
@@ -4017,6 +4085,11 @@
   // 設定完了時の通常起動入口。
   // 未設定時は notice 表示と panel close のみを行い、通常の track attach / UI build は進めない。
   // track 選択・panelVisible 復元・UI 構築をこの経路でまとめて行う。
+  // Responsibility boundary:
+  // - startBilingual は bilingual 開始の入口。
+  // - track attach / observer 開始 / 初期 render の起動を担当する。
+  // - panel の見た目更新は panel render helper 側に委ねる。
+  // - 未設定 notice の表示判断そのものは settings 状態側の責務。
   async function startBilingual(options = {}) {
     logContent("startBilingual trace", {
       panelVisible: state.panelVisible,
@@ -4154,6 +4227,10 @@
   // 初回ロード時に sync storage / bridge から設定 snapshot を読む入口。
   // requested settings と effective settings を整え、未設定時は DEFAULT_SETTINGS に退避する。
   // 実際の起動は startBilingual に委譲する。
+  // Responsibility boundary:
+  // - loadSettingsFromSync は保存設定の読込と state 反映を担当する。
+  // - 未設定 notice が必要かどうかの判断材料をここで揃える。
+  // - track attach や panel DOM 更新そのものはここでは担当しない。
   function loadSettingsFromSync() {
     loadSettingsSnapshot("initial_load")
       .then((snapshot) => {
@@ -4205,6 +4282,11 @@
   // runtime state と UI を teardown してから起動シーケンスをやり直す。
   // 設定変更反映や大きな再初期化が必要なケースの入口。
 
+  // Responsibility boundary:
+  // - restartBilingual は再開始の調停点。
+  // - 既存 state / timer / observer の張り直しを担当する。
+  // - panel 状態そのものを直接組み立てず、必要時に render を再実行する。
+  // - track attach の実処理は start 系 / attach 系 helper の責務。
   function restartBilingual(nextSettings = null, reason = "unknown") {
     logContent("restartBilingual trace", {
       reason,
@@ -4269,6 +4351,10 @@
     // popup / options からの設定変更を受ける入口。
     // requested settings を更新し、secondaryLang fallback を解決してから restartBilingual に委譲する。
     // playback 未準備時は適用をスキップする。
+    // Responsibility boundary:
+    // - SETTINGS_CHANGED は設定変更イベントの入口。
+    // - state 更新後、必要なら restart / notice 更新 / panel rerender を振り分ける。
+    // - 実際の panel block 組み立ては panel render helper 側の責務。
     if (message.type === "SETTINGS_CHANGED") {
       if (!isPlaybackPageReady()) {
         logContent("SETTINGS_CHANGED skipped: playback not ready", {
