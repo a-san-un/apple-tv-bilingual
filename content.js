@@ -2298,6 +2298,8 @@
     ensureSecondarySubtitleElement();
   }
 
+  const LANGUAGE_SETUP_NOTICE_ID = "atv-language-setup-notice";
+
   function isLanguageSelectionReady(settings = {}) {
     const primaryLang = String(settings.primaryLang || "").trim();
     const secondaryLang = String(settings.secondaryLang || "").trim();
@@ -2305,7 +2307,9 @@
   }
 
   function hideLanguageSetupNotice() {
-    const existing = getTarget().querySelector("#atv-language-setup-notice");
+    const target = getTarget();
+    if (!target) return;
+    const existing = target.querySelector(`#${LANGUAGE_SETUP_NOTICE_ID}`);
     if (existing) existing.remove();
   }
 
@@ -2313,11 +2317,11 @@
     const target = getTarget();
     if (!target) return;
 
-    let notice = target.querySelector("#atv-language-setup-notice");
+    let notice = target.querySelector(`#${LANGUAGE_SETUP_NOTICE_ID}`);
     if (notice) return;
 
     notice = document.createElement("div");
-    notice.id = "atv-language-setup-notice";
+    notice.id = LANGUAGE_SETUP_NOTICE_ID;
     notice.style.cssText = [
       "position:fixed",
       "top:72px",
@@ -4191,6 +4195,14 @@
           requestedSecondaryLang: state.requestedSecondaryLang,
           hasCompleteRequestedSettings,
         });
+
+        if (!hasCompleteRequestedSettings) {
+          logContentSettings("initial load routed to language setup notice", {
+            requestedSettings: { ...state.requestedContentSettings },
+            requestedSecondaryLang: state.requestedSecondaryLang,
+          });
+        }
+
         startBilingual();
       })
       .catch((error) => {
@@ -4234,6 +4246,11 @@
           state.contentSettings = { ...DEFAULT_SETTINGS };
           state.secondaryTrack = null;
           unbindSecondarySubtitleTrack();
+          logContentSettings("restartBilingual routed to language setup notice", {
+            reason,
+            requestedSettings: { ...state.requestedContentSettings },
+            requestedSecondaryLang: state.requestedSecondaryLang,
+          });
         }
       }
 
