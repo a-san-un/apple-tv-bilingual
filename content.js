@@ -289,7 +289,8 @@
           }
 
           const requestedSettings = { ...DEFAULT_SETTINGS, ...storedSettings };
-          const effectiveSettings = applySecondaryLangFallback(requestedSettings);
+          const effectiveSettings =
+            applySecondaryLangFallback(requestedSettings);
           resolve({
             storedSettings: { ...storedSettings },
             requestedSettings,
@@ -2911,7 +2912,6 @@
       `;
   }
 
-
   // [wiring: panel word interactions] block 内の単語 hover / click を subtitle popup へ接続する。
   function bindPanelWordInteractions(blockEl) {
     blockEl.querySelectorAll(".atv-word").forEach((span) => {
@@ -2951,7 +2951,6 @@
     });
   }
 
-
   // [render: panel list blocks - future] current time より後ろの cue から future block 群を組み立てる。
   function collectFuturePanelBlocks(currentTime) {
     const blocks = [];
@@ -2974,7 +2973,6 @@
     return blocks;
   }
 
-
   // [render: panel list blocks - current] primary / secondary の現在 cue から current block を組み立てる。
   function buildCurrentPanelBlock(currentTime) {
     const curPrimaryCue = getCurrentCue(state.primaryTrack, currentTime);
@@ -2992,7 +2990,8 @@
       curSecondaryCue &&
       state.lastPrimaryText
     ) {
-      const elapsedSincePrimarySnapshot = Date.now() - state.lastPrimarySnapshotAt;
+      const elapsedSincePrimarySnapshot =
+        Date.now() - state.lastPrimarySnapshotAt;
       if (
         state.lastPrimarySnapshotAt > 0 &&
         elapsedSincePrimarySnapshot <= PANEL_PRIMARY_GRACE_MS
@@ -3062,7 +3061,8 @@
 
     // [render: panel list blocks - current]
     // primary は state.primaryTrack、secondary は state.secondaryTrack の cue だけを使う。
-    const { block: currentBlock, curPrimaryCue } = buildCurrentPanelBlock(currentTime);
+    const { block: currentBlock, curPrimaryCue } =
+      buildCurrentPanelBlock(currentTime);
     if (currentBlock) {
       allBlocks.push(currentBlock);
     }
@@ -3073,7 +3073,9 @@
     updatePanelRenderSnapshot(allBlocks, curPrimaryCue);
 
     // [render: panel list DOM apply]
-    list.innerHTML = allBlocks.map((block) => buildPanelBlockHtml(block)).join("");
+    list.innerHTML = allBlocks
+      .map((block) => buildPanelBlockHtml(block))
+      .join("");
 
     // [wiring: panel list interactions]
     bindPanelBlockInteractions(list);
@@ -3094,7 +3096,10 @@
     const bottomThresholdY =
       scrollRect.bottom - Math.max(48, currentRect.height * 1.5);
 
-    if (currentRect.top < topThresholdY || currentRect.bottom > bottomThresholdY) {
+    if (
+      currentRect.top < topThresholdY ||
+      currentRect.bottom > bottomThresholdY
+    ) {
       const targetTopOffset = Math.max(28, Math.min(72, currentRect.height));
       const targetTopY = scrollRect.top + targetTopOffset;
       const scrollBy = currentRect.top - targetTopY;
@@ -4008,6 +4013,10 @@
     }
   }
 
+  // [startup path: initial bilingual start]
+  // 設定完了時の通常起動入口。
+  // 未設定時は notice 表示と panel close のみを行い、通常の track attach / UI build は進めない。
+  // track 選択・panelVisible 復元・UI 構築をこの経路でまとめて行う。
   async function startBilingual(options = {}) {
     logContent("startBilingual trace", {
       panelVisible: state.panelVisible,
@@ -4021,11 +4030,16 @@
 
     const requestedSettings = state.requestedContentSettings || {};
     if (!isLanguageSelectionReady(requestedSettings)) {
+      state.panelVisible = false;
+      applyPanelVisibility(false);
       showLanguageSetupNotice();
-      logContentSettings("startBilingual skipped: language selection incomplete", {
-        primaryLang: requestedSettings.primaryLang || "",
-        secondaryLang: requestedSettings.secondaryLang || "",
-      });
+      logContentSettings(
+        "startBilingual skipped: language selection incomplete",
+        {
+          primaryLang: requestedSettings.primaryLang || "",
+          secondaryLang: requestedSettings.secondaryLang || "",
+        },
+      );
       return;
     }
 
@@ -4136,6 +4150,10 @@
     loadSettingsFromSync();
   }
 
+  // [settings load path: initial snapshot]
+  // 初回ロード時に sync storage / bridge から設定 snapshot を読む入口。
+  // requested settings と effective settings を整え、未設定時は DEFAULT_SETTINGS に退避する。
+  // 実際の起動は startBilingual に委譲する。
   function loadSettingsFromSync() {
     loadSettingsSnapshot("initial_load")
       .then((snapshot) => {
@@ -4143,20 +4161,35 @@
           ...(snapshot.storedSettings || {}),
         };
         state.requestedSecondaryLang = snapshot.requestedSecondaryLang || "";
-        state.contentSettings = { ...snapshot.effectiveSettings };
-        const effectiveSecondaryLanguage =
-          state.requestedSecondaryLang || state.contentSettings.secondaryLang;
-        if (state.video && effectiveSecondaryLanguage) {
-          syncSecondarySubtitleTrack(
-            state.video,
-            effectiveSecondaryLanguage,
-            renderSecondarySubtitle,
-          );
-          state.secondaryTrack = secondaryTrackBound;
+
+        const hasCompleteRequestedSettings = isLanguageSelectionReady(
+          state.requestedContentSettings,
+        );
+
+        state.contentSettings = hasCompleteRequestedSettings
+          ? { ...snapshot.effectiveSettings }
+          : { ...DEFAULT_SETTINGS };
+
+        if (hasCompleteRequestedSettings) {
+          const effectiveSecondaryLanguage =
+            state.requestedSecondaryLang || state.contentSettings.secondaryLang;
+          if (state.video && effectiveSecondaryLanguage) {
+            syncSecondarySubtitleTrack(
+              state.video,
+              effectiveSecondaryLanguage,
+              renderSecondarySubtitle,
+            );
+            state.secondaryTrack = secondaryTrackBound;
+          }
+        } else {
+          state.secondaryTrack = null;
+          unbindSecondarySubtitleTrack();
         }
+
         logContentSettings("Loaded settings from sync", {
           ...state.contentSettings,
           requestedSecondaryLang: state.requestedSecondaryLang,
+          hasCompleteRequestedSettings,
         });
         startBilingual();
       })
@@ -4191,10 +4224,17 @@
           ...nextSettings,
         };
         state.requestedSecondaryLang = nextSettings.secondaryLang || "";
-        state.contentSettings = applySecondaryLangFallback({
-          ...state.contentSettings,
-          ...nextSettings,
-        });
+
+        if (isLanguageSelectionReady(state.requestedContentSettings)) {
+          state.contentSettings = applySecondaryLangFallback({
+            ...state.contentSettings,
+            ...nextSettings,
+          });
+        } else {
+          state.contentSettings = { ...DEFAULT_SETTINGS };
+          state.secondaryTrack = null;
+          unbindSecondarySubtitleTrack();
+        }
       }
 
       const found = getVideoAndDialog();
@@ -4225,6 +4265,10 @@
   }
 
   const onRuntimeMessage = (message, sender, sendResponse) => {
+    // [runtime message path: settings changed]
+    // popup / options からの設定変更を受ける入口。
+    // requested settings を更新し、secondaryLang fallback を解決してから restartBilingual に委譲する。
+    // playback 未準備時は適用をスキップする。
     if (message.type === "SETTINGS_CHANGED") {
       if (!isPlaybackPageReady()) {
         logContent("SETTINGS_CHANGED skipped: playback not ready", {
@@ -4250,17 +4294,31 @@
         };
         state.requestedSecondaryLang =
           bridgeResult.requestedSecondaryLang ?? "";
-        next = { ...bridgeResult.settings };
+
+        if (isLanguageSelectionReady(state.requestedContentSettings)) {
+          next = { ...bridgeResult.settings };
+        } else {
+          next = { ...DEFAULT_SETTINGS };
+          state.secondaryTrack = null;
+          unbindSecondarySubtitleTrack();
+        }
       } else {
         state.requestedContentSettings = {
           ...state.requestedContentSettings,
           ...updated,
         };
         state.requestedSecondaryLang = updated.secondaryLang ?? "";
-        next = applySecondaryLangFallback({
-          ...state.contentSettings,
-          ...updated,
-        });
+
+        if (isLanguageSelectionReady(state.requestedContentSettings)) {
+          next = applySecondaryLangFallback({
+            ...state.contentSettings,
+            ...updated,
+          });
+        } else {
+          next = { ...DEFAULT_SETTINGS };
+          state.secondaryTrack = null;
+          unbindSecondarySubtitleTrack();
+        }
       }
       const requestedSecondaryLang = state.requestedSecondaryLang;
       const resolvedSecondaryLanguage = next.secondaryLang;
