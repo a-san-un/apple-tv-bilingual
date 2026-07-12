@@ -3292,15 +3292,15 @@
     return `
       <style>
         #overlay {
-          display: inline-block; background: rgba(0,0,0,0.7);
-          border-radius: 6px; padding: 6px 16px;
-          max-width: 80%; text-align: center; pointer-events: auto;
+          display: inline-block; background: rgba(0,0,0,0.75);
+          border-radius: 8px; padding: 8px 20px;
+          max-width: 90%; text-align: center; pointer-events: auto;
         }
         .sub-line {
           display: block;
           font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
-          font-size: 18px; font-weight: 500; color: #fff;
-          text-shadow: 0 1px 3px rgba(0,0,0,0.9); line-height: 1.4;
+          font-size: 20px; font-weight: 500; color: #fff;
+          text-shadow: 0 1px 2px rgba(0,0,0,0.8); line-height: 1.5;
         }
         .atv-word { cursor: pointer; border-radius: 2px; padding: 0 1px; }
         .atv-word:hover { background: rgba(255,220,80,0.4); }
@@ -3353,9 +3353,11 @@
     host.id = "atv-overlay-host";
     host.style.cssText = [
       "position:fixed",
-      "bottom:80px",
-      "left:0",
-      "width:70%",
+      "bottom:8%",
+      "left:50%",
+      "transform:translateX(-50%)",
+      "width:80%",
+      "max-width:900px",
       "z-index:99998",
       "pointer-events:none",
       "text-align:center",
@@ -3424,7 +3426,6 @@
 
     if (panelHost) panelHost.style.display = state.panelVisible ? "" : "none";
     if (overlayHost) {
-      overlayHost.style.width = state.panelVisible ? "70%" : "100%";
       overlayHost.style.display = state.panelVisible ? "none" : "";
     }
     if (toggleBtn)
