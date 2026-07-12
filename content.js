@@ -2126,6 +2126,10 @@
     if (overlayHost) {
       // Bottom custom subtitle overlay is unnecessary while panel is visible.
       overlayHost.style.display = show ? "none" : "";
+      if (!show) {
+        updateOverlayHostPosition();
+        updateOverlayTypography();
+      }
     }
 
     scheduleAdjustPlaybackControls("applyLayout", show ? [1200] : [], {
@@ -3292,15 +3296,15 @@
     return `
       <style>
         #overlay {
-          display: inline-block; background: rgba(0,0,0,0.75);
-          border-radius: 8px; padding: 8px 20px;
+          display: inline-block; background: rgba(0,0,0,0.58);
+          border-radius: 6px; padding: 6px 14px;
           max-width: 90%; text-align: center; pointer-events: auto;
         }
         .sub-line {
           display: block;
           font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
-          font-size: 20px; font-weight: 500; color: #fff;
-          text-shadow: 0 1px 2px rgba(0,0,0,0.8); line-height: 1.5;
+          font-size: var(--atv-overlay-font-size, 22px); font-weight: 500; color: #fff;
+          text-shadow: 0 1px 2px rgba(0,0,0,0.8); line-height: 1.35;
         }
         .atv-word { cursor: pointer; border-radius: 2px; padding: 0 1px; }
         .atv-word:hover { background: rgba(255,220,80,0.4); }
@@ -3340,6 +3344,66 @@
   }
 
   // [UI shell: overlay host] host 再利用・mount・shadow shell 注入・overlay wiring をまとめて行う。
+  function updateOverlayTypography() {
+    const root = state.overlayRoot;
+    if (!root) return;
+
+    const { video } = getPlaybackControlsLayoutTargets();
+    const videoRect = video?.getBoundingClientRect?.() || null;
+    const basisHeight =
+      videoRect?.height ||
+      window.innerHeight ||
+      document.documentElement.clientHeight ||
+      0;
+
+    let rawFontSizePx = Math.round(basisHeight * 0.036);
+
+    if (basisHeight >= 760) rawFontSizePx += 3;
+    if (basisHeight >= 900) rawFontSizePx += 2;
+
+    const fontSizePx = Math.max(20, Math.min(38, rawFontSizePx));
+
+    root.host.style.setProperty("--atv-overlay-font-size", `${fontSizePx}px`);
+  }
+
+  function updateOverlayHostPosition() {
+    const overlayHost = getTarget().querySelector("#atv-overlay-host");
+    if (!overlayHost) return;
+
+    const progressById = document.querySelector("#playback-progress");
+    const {
+      progress,
+      footer,
+      video,
+    } = getPlaybackControlsLayoutTargets();
+
+    const anchorEl = progressById || progress || footer;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+
+    if (!anchorEl || !viewportHeight) {
+      overlayHost.style.bottom = "96px";
+      return;
+    }
+
+    const anchorRect = anchorEl.getBoundingClientRect();
+    const videoRect = video?.getBoundingClientRect?.() || null;
+    const gapPx = PLAYBACK_CONTROLS_LAYOUT.footerGapPx + 10;
+    const minBottomPx = 96;
+
+    let nextBottom = Math.round(viewportHeight - anchorRect.top + gapPx);
+
+    if (videoRect) {
+      const maxBottom = Math.max(
+        minBottomPx,
+        Math.round(viewportHeight - videoRect.bottom + videoRect.height * 0.22),
+      );
+      nextBottom = Math.min(nextBottom, maxBottom);
+    }
+
+    nextBottom = Math.max(minBottomPx, nextBottom);
+    overlayHost.style.bottom = `${nextBottom}px`;
+  }
+
   function createOverlay() {
     const target = getTarget();
     const existingHost = target.querySelector("#atv-overlay-host");
@@ -3353,7 +3417,7 @@
     host.id = "atv-overlay-host";
     host.style.cssText = [
       "position:fixed",
-      "bottom:8%",
+      "bottom:96px",
       "left:50%",
       "transform:translateX(-50%)",
       "width:80%",
@@ -3364,9 +3428,12 @@
     ].join(";");
     target.appendChild(host);
 
+    updateOverlayHostPosition();
+
     // [shell: overlay shadow mount] shadow root を attach し、overlay shell HTML を注入する。
     state.overlayRoot = host.attachShadow({ mode: "open" });
     state.overlayRoot.innerHTML = buildOverlayShellHTML();
+    updateOverlayTypography();
 
     // [wiring: overlay] overlay click handler を shell に接続する。
     wireOverlayUiEvents();
