@@ -152,14 +152,19 @@
 - overlay の host / shadow / shell / wiring の責務境界は維持する
 - Issue #23 では、overlay の表示 / 非表示条件や binder / resolver / observer の仕様は変更しない
 - Issue #23 では、`buildOverlayShellHTML()` と `createOverlay()` を中心に shell HTML / inline style を調整し、Apple TV+ のネイティブ字幕に近い見た目へ寄せる
+- overlay の見た目調整は shell 側と host 側の責務を分けて行う
+  - shell 側: 背景、padding、border-radius、line-height、text style
+  - host 側: bottom、width、中央寄せ、z-index、pointer-events
 
 ### 3.5.1 overlay の見た目指針
 
-- bottom 位置は、現状よりやや低くし、Apple TV+ ネイティブ字幕に近い下寄せを優先する
-- 幅は固定 `70%` / `left: 0` のような左寄せではなく、中央寄せ前提で扱う
-- 背景は半透明の黒帯を基本とし、適度な border-radius を持たせる
-- primary / secondary の 2 行表示は維持しつつ、行間・上下 padding・行ごとの余白が極端に窮屈または広すぎる状態を避ける
-- 必要に応じて text shadow / outline を使って読みやすさを確保するが、過度な装飾は避ける
+- bottom は固定値だけで決めず、playback progress / footer の位置を基準に動的に調整する
+- overlay host は中央寄せを前提にし、左寄せ固定の見え方を避ける
+- 背景は半透明の黒帯を基本とし、映像を潰しすぎない濃度に調整する
+- primary / secondary の 2 行表示は維持しつつ、line-height と上下 padding は詰めすぎず広げすぎない
+- text shadow は読みやすさの補助として使うが、過度な装飾にはしない
+- font-size は固定値ではなく、video の表示高さに応じて動的に調整する
+- 大きい解像度では字幕が小さく見えやすいため、一定以上の video 高さでは追加の font-size ブーストを許容する
 - z-index / pointer-events の設計は維持し、再生バーや他 UI コンポーネントの操作を阻害しない
 - 目標は Apple TV+ ネイティブ字幕との完全一致ではなく、拡張機能としての 2 行表示を保ったまま **違和感の少ない近似** を作ることとする
 
@@ -176,6 +181,7 @@
 ## 4. スコープ管理の考え方
 
 - UI 見た目調整タスクでは、見た目の調整と挙動変更を同じバッチで混ぜない
-- overlay の見た目調整では、まず位置・幅・背景・padding・line-height・text shadow などの視覚要素を対象にする
+- overlay の見た目調整では、まず位置・幅・背景・padding・line-height・text shadow・font-size などの視覚要素を対象にする
+- overlay の位置調整では、playback controls との相対位置を優先し、resolver / cue / binder / observer / bootstrap の仕様変更とは切り分ける
 - resolver / cue / binder / observer / bootstrap の仕様変更は、別 issue または別フェーズで扱う
 - subtitle popup と overlay は別責務として扱い、同じ「字幕 UI」でも変更対象を混ぜない

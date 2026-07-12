@@ -80,6 +80,19 @@
 - render 系は shell の新規生成ではなく、既存 shell への反映責務に留める
 - 未設定状態では panel / secondary host / notice の関係が破綻しないよう、生成条件を UI shell 側で追えるようにする
 
+#### overlay shell 補足
+
+overlay は UI shell の一部だが、panel と同じ表示条件・同じ見た目責務で扱わない。
+
+- `buildOverlayShellHTML()` は overlay 本体の HTML / CSS を持つ
+- shell 側では背景、padding、border-radius、line-height、text-shadow、font-size の受け口を持つ
+- `createOverlay()` と関連更新処理は host 側の fixed 配置・width・中央寄せ・z-index を持つ
+- overlay の bottom は固定値だけで決めず、playback progress / footer を基準に動的に更新する
+- font-size は host に CSS 変数として設定し、video 高さに応じて更新する
+- primary / secondary の 2 行表示と単語クリック可能な DOM 構造は維持する
+
+この整理により、overlay の見た目調整は shell 側、位置調整と解像度追従は host 側へ寄せて扱う。[cite:2]
+
 ### 3.2 binder / cue logic
 
 対象:
@@ -127,10 +140,10 @@
 
 #### Phase E の完了状況
 
-- [x] [#20](../../issues/20) Phase E (1): panel / overlay セクションの責務分離
-- [x] [#21](../../issues/21) Phase E (2): binder / cue ロジックの整理と分割準備
-- [ ] [#24](../../issues/24) `attachTracks` / observer 周辺の安定化
-- [x] [#26](../../issues/26) unconfigured flow と panel / notice / secondary host 生成条件の整理
+- [x] [#20](../issues/20) Phase E (1): panel / overlay セクションの責務分離
+- [x] [#21](../issues/21) Phase E (2): binder / cue ロジックの整理と分割準備
+- [ ] [#24](../issues/24) `attachTracks` / observer 周辺の安定化
+- [x] [#26](../issues/26) unconfigured flow と panel / notice / secondary host 生成条件の整理
 
 #### #20 完了メモ
 
@@ -142,7 +155,17 @@
 - DOM の `id` / `class` / `data-*`、見た目、close 動作、current 行や threshold-scroll の挙動は変えていない
 - この整理により、overlay の見た目調整は `buildOverlayShellHTML()` / `createOverlay()` を中心に局所修正しやすい状態になった
 
+#### #23 補足メモ
+
+- [#23](../issues/23) は `content.js` 分割そのものではなく、overlay の UI 見た目調整 issue として扱う
+- 変更範囲は overlay shell / host 周辺に限定し、resolver / binder / observer / bootstrap の仕様変更は含めない
+- shell 側では背景、padding、line-height、text-shadow、font-size の受け口を調整した
+- host 側では中央寄せを前提にしつつ、bottom を playback progress / footer 基準で動的更新する形に寄せた
+- font-size は固定値ではなく、video 高さ基準 + 大画面ブーストで動的に調整する形へ移行した
+- これにより、overlay の見た目調整を UI shell の局所修正として扱いやすくしつつ、Phase E の主線は [#24](../issues/24) に維持する
+
 #### 注意
 
-- #23 は `content.js` 分割そのものではなく UI 見た目調整の issue である
-- #23 の詳細な設計方針は `docs/atv-design.md` と `docs/dev-roadmap.md` に寄せる
+- #23 の詳細な見た目方針は `docs/atv-design.md` に寄せる
+- #23 の進捗・完了状態は `docs/dev-roadmap.md` を正本とする
+- この文書では、#23 は分割主線ではなく「UI shell 側で局所調整しやすくなった補足事例」として扱う
