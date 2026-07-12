@@ -106,6 +106,8 @@
     popupShadowRoot: null,
     debugPanelRoot: null,
     popupDocClickHandler: null,
+    popupResizeObserver: null,
+    popupLastContext: null,
     messageListenerAttached: false,
     playbackControlsRafId: 0,
     playbackControlsMutationObserver: null,
@@ -137,6 +139,16 @@
   // logger API の logContent へ橋渡しする。
   // 既存の logContent(message, payload) 互換を維持しつつ contentKey を付与する。
   function logContent(...args) {
+    try {
+      const buffer = (window.__atvDebugLogs = window.__atvDebugLogs || []);
+      const entry = {
+        ts: new Date().toISOString(),
+        message: String(args[0] ?? ""),
+        payload: args[1] ?? null,
+      };
+      buffer.push(entry);
+      if (buffer.length > 400) buffer.splice(0, buffer.length - 400);
+    } catch (_) {}
     const logger = window.ATVB?.logger;
     if (!logger?.logContent) return;
 
@@ -644,7 +656,9 @@
     const requestedSettings = state.requestedContentSettings || {};
     const effectiveSettings = {
       primaryLang:
-        requestedSettings.primaryLang || state.contentSettings.primaryLang || "",
+        requestedSettings.primaryLang ||
+        state.contentSettings.primaryLang ||
+        "",
       secondaryLang:
         requestedSettings.secondaryLang ||
         state.requestedSecondaryLang ||
@@ -2484,6 +2498,10 @@
           min-height: 60px; max-height: 300px;
           overflow-y: auto; display: none;
         }
+        #popup-body {
+          overflow-y: auto;
+          overscroll-behavior: contain;
+        }
         .popup-pane.active { display: block; }
         .dict-section {
           padding: 10px 14px;
@@ -2564,8 +2582,10 @@
           <button class="popup-tab active" data-tab="dict">📖 辞書</button>
           <button class="popup-tab" data-tab="ai">🤖 AI翻訳</button>
         </div>
-        <div class="popup-pane active" id="pane-dict"><span class="loading">検索中...</span></div>
-        <div class="popup-pane" id="pane-ai"><span class="loading">翻訳中...</span></div>
+        <div id="popup-body">
+          <div class="popup-pane active" id="pane-dict"><span class="loading">検索中...</span></div>
+          <div class="popup-pane" id="pane-ai"><span class="loading">翻訳中...</span></div>
+        </div>
       </div>
     `;
   }
@@ -2613,7 +2633,7 @@
       if (!word) return;
 
       const rect = target.getBoundingClientRect();
-      showPopup(word, word, rect);
+      showPopup(word, word, rect, { source: "panel" });
     });
   }
 
@@ -2678,8 +2698,112 @@
     }
   }
 
+  function repositionPopup(reason = "manual") {
+    if (!state.popupShadowRoot || !state.popupLastContext) return;
+    const popup = state.popupShadowRoot.getElementById("popup");
+    if (!popup || popup.style.display === "none") return;
+
+    popup.style.maxHeight =
+      Math.max(220, Math.min(window.innerHeight * 0.7, 520)) + "px";
+    popup.style.overflow = "hidden";
+
+    const popupBody = state.popupShadowRoot.getElementById("popup-body");
+    if (popupBody) {
+      popupBody.style.maxHeight =
+        Math.max(120, Math.min(window.innerHeight * 0.7, 520) - 96) + "px";
+      popupBody.style.overflowY = "auto";
+      popupBody.style.overscrollBehavior = "contain";
+    }
+
+    const { anchorRect, popupSource, word, sentenceLength } = state.popupLastContext;
+    if (!anchorRect) return;
+
+    const pw = 340;
+    const ph = popup.offsetHeight || 360;
+    const margin = 8;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const videoRect =
+      popupSource === "overlay"
+        ? state.video?.getBoundingClientRect?.() ||
+          document.querySelector("video")?.getBoundingClientRect?.() ||
+          null
+        : null;
+
+    const minLeft = videoRect ? videoRect.left + margin : margin;
+    const maxRight = videoRect ? videoRect.right - margin : vw - margin;
+    const minTop = videoRect ? videoRect.top + margin : margin;
+    const maxBottom = videoRect ? videoRect.bottom - margin : vh - margin;
+
+    const topAbove = anchorRect.top - ph - margin;
+    const topBelow = anchorRect.bottom + margin;
+
+    let top = topAbove;
+    let placement = "above";
+    if (topAbove >= minTop) {
+      top = topAbove;
+      placement = "above";
+    } else if (topBelow + ph <= maxBottom) {
+      top = topBelow;
+      placement = "below";
+    } else {
+      top = Math.max(minTop, maxBottom - ph);
+      placement = "clamped";
+    }
+
+    let left = anchorRect.left;
+    left = Math.min(left, maxRight - pw);
+    left = Math.max(left, minLeft);
+
+    popup.style.left = left + "px";
+    popup.style.top = top + "px";
+
+    logContent("showPopup position", {
+      word,
+      sentenceLength,
+      popupSource,
+      reason,
+      placement,
+      popupWidth: pw,
+      popupHeight: ph,
+      finalLeft: left,
+      finalTop: top,
+      anchorRect: anchorRect
+        ? {
+            left: anchorRect.left,
+            top: anchorRect.top,
+            right: anchorRect.right,
+            bottom: anchorRect.bottom,
+            width: anchorRect.width,
+            height: anchorRect.height,
+          }
+        : null,
+      videoRect: videoRect
+        ? {
+            left: videoRect.left,
+            top: videoRect.top,
+            right: videoRect.right,
+            bottom: videoRect.bottom,
+            width: videoRect.width,
+            height: videoRect.height,
+          }
+        : null,
+    });
+  }
+
+  function ensurePopupResizeObserver() {
+    if (state.popupResizeObserver || typeof ResizeObserver === "undefined") return;
+    const popup = state.popupShadowRoot?.getElementById("popup");
+    if (!popup) return;
+    state.popupResizeObserver = new ResizeObserver(() => {
+      if (!state.popupLastContext) return;
+      repositionPopup("resize_observer");
+    });
+    state.popupResizeObserver.observe(popup);
+  }
+
   // [render: subtitle popup display] subtitle popup の表示内容を初期化し、位置を決めて辞書/翻訳取得を開始する。
-  function showPopup(word, sentence, anchorRect) {
+  function showPopup(word, sentence, anchorRect, options = {}) {
     if (!state.popupShadowRoot) return;
 
     const clean = word.replace(
@@ -2688,10 +2812,39 @@
     );
     if (!clean) return;
 
+    const popupSource = options.source || "unknown";
+
     logContent("showPopup", {
       word: clean,
       sentenceLength: (sentence || "").length,
+      popupSource,
+      anchorRect: anchorRect
+        ? {
+            left: anchorRect.left,
+            top: anchorRect.top,
+            right: anchorRect.right,
+            bottom: anchorRect.bottom,
+            width: anchorRect.width,
+            height: anchorRect.height,
+          }
+        : null,
     });
+
+    state.popupLastContext = {
+      word: clean,
+      sentenceLength: (sentence || "").length,
+      popupSource,
+      anchorRect: anchorRect
+        ? {
+            left: anchorRect.left,
+            top: anchorRect.top,
+            right: anchorRect.right,
+            bottom: anchorRect.bottom,
+            width: anchorRect.width,
+            height: anchorRect.height,
+          }
+        : null,
+    };
 
     const popup = state.popupShadowRoot.getElementById("popup");
     state.popupShadowRoot.getElementById("popup-word").textContent = clean;
@@ -2714,13 +2867,8 @@
     state.popupShadowRoot.getElementById("pane-dict").classList.add("active");
 
     popup.style.display = "block";
-    const pw = 340;
-    let left = anchorRect.left;
-    let top = anchorRect.top - 200;
-    if (left + pw > window.innerWidth) left = window.innerWidth - pw - 8;
-    if (top < 8) top = anchorRect.bottom + 8;
-    popup.style.left = left + "px";
-    popup.style.top = top + "px";
+    ensurePopupResizeObserver();
+    repositionPopup("initial");
 
     fetchDictionary(clean);
     fetchTranslation(sentence || clean);
@@ -2763,6 +2911,8 @@
           word,
           error: res?.error ?? "unknown",
         });
+
+        repositionPopup("dictionary_failed");
 
         jishoEl.innerHTML =
           res?.error === "not_found"
@@ -2814,6 +2964,7 @@
         jlpt: res.jlpt || "",
         isCommon: !!res.isCommon,
       });
+      repositionPopup("dictionary_loaded");
     });
 
     sendToBackground({ type: "FETCH_TATOEBA", word }, (res) => {
@@ -2827,6 +2978,7 @@
           ok: !!res?.ok,
           resultCount: res?.results?.length ?? 0,
         });
+        repositionPopup("tatoeba_empty");
         return;
       }
 
@@ -2859,6 +3011,7 @@
         word,
         resultCount: res.results.length,
       });
+      repositionPopup("tatoeba_loaded");
     });
   }
 
@@ -2877,11 +3030,13 @@
         logContent("fetchTranslation UI success", {
           translatedLength: (res.translated || "").length,
         });
+        repositionPopup("translation_loaded");
       } else {
         el.innerHTML = `<span class="error">エラー: ${res?.error ?? "unknown"}</span>`;
         logContent("fetchTranslation UI error", {
           error: res?.error ?? "unknown",
         });
+        repositionPopup("translation_failed");
       }
     });
   }
@@ -2947,6 +3102,7 @@
           span.dataset.word,
           decodeURIComponent(span.dataset.sentence),
           span.getBoundingClientRect(),
+          { source: "panel" },
         );
       });
     });
@@ -3178,6 +3334,7 @@
         word,
         decodeURIComponent(sentence),
         wordEl.getBoundingClientRect(),
+        { source: "overlay" },
       );
     });
   }
@@ -4262,11 +4419,14 @@
           state.contentSettings = { ...DEFAULT_SETTINGS };
           state.secondaryTrack = null;
           unbindSecondarySubtitleTrack();
-          logContentSettings("restartBilingual routed to language setup notice", {
-            reason,
-            requestedSettings: { ...state.requestedContentSettings },
-            requestedSecondaryLang: state.requestedSecondaryLang,
-          });
+          logContentSettings(
+            "restartBilingual routed to language setup notice",
+            {
+              reason,
+              requestedSettings: { ...state.requestedContentSettings },
+              requestedSecondaryLang: state.requestedSecondaryLang,
+            },
+          );
         }
       }
 
