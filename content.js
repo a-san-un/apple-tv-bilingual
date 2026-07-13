@@ -266,15 +266,10 @@
   const {
     normalizeSubtitleText,
     cleanCueText,
-    formatTime,
   } = vttDeps;
 
   const {
-    getUniqueTracks,
-    getTrackCuesLength,
     getTrackActiveCuesLength,
-    pickBestSubtitleTrack,
-    resolveSecondarySubtitleTrack,
   } = resolverDeps;
 
   // logger の更新通知を Debug パネル更新へ接続する。
@@ -533,7 +528,7 @@
     return {
       effectiveSecondaryLanguage: effectiveSecondaryLanguage || "",
       selectedTrackLanguage: track?.language || "",
-      cuesLength: getTrackCuesLength(track),
+      cuesLength: resolverDeps.getTrackCuesLength(track),
       activeCuesLength: getTrackActiveCuesLength(track),
     };
   }
@@ -2886,7 +2881,7 @@
     let primaryListenerBound = false;
 
     // [attach: primary] primary resolver → mode 設定 → cuechange bind
-    state.primaryTrack = pickBestSubtitleTrack(tracks, primaryLang);
+    state.primaryTrack = resolverDeps.pickBestSubtitleTrack(tracks, primaryLang);
     if (state.primaryTrack) {
       try {
         // 非英語 primary track の cue 可用性を上げるため secondary と同じ showing にする。
