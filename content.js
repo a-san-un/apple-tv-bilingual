@@ -1721,79 +1721,79 @@
     }
   }
 
+  function clearLayoutRetryTimers() {
+    if (!layoutRetryTimers.length) return;
+    layoutRetryTimers.forEach((timerId) => clearTimeout(timerId));
+    layoutRetryTimers = [];
+  }
+
+  function getLayoutTargets() {
+    const opaqueVideoContainer =
+      document.querySelector(".video-container.svelte-1psbnd5.is-opaque") ||
+      document.querySelector(".video-container.is-opaque") ||
+      document.querySelector(".video-container");
+    return {
+      vc: document.querySelector(".video-player__video-container"),
+      content: document.querySelector(".video-player__content"),
+      htmlVideo: document.querySelector("video"),
+      opaqueVideoContainer,
+      backgroundVideo: document.querySelector(".background-video"),
+    };
+  }
+
+  function applyLayoutToTargets(targets, visible) {
+    const { vc, content, htmlVideo, opaqueVideoContainer, backgroundVideo } =
+      targets;
+
+    if (visible) {
+      if (vc) {
+        vc.style.width = "70%";
+        vc.style.maxWidth = "70%";
+        vc.style.flexShrink = "0";
+        vc.style.marginRight = "";
+      }
+      if (content) {
+        content.style.width = "";
+        content.style.maxWidth = "";
+        content.style.flexShrink = "";
+        content.style.marginRight = "";
+      }
+      if (htmlVideo) {
+        htmlVideo.style.maxWidth = "100%";
+      }
+      if (opaqueVideoContainer) {
+        opaqueVideoContainer.style.right = "30%";
+      }
+      if (backgroundVideo) {
+        backgroundVideo.style.right = "30%";
+      }
+    } else {
+      if (vc) {
+        vc.style.width = "";
+        vc.style.maxWidth = "";
+        vc.style.flexShrink = "";
+        vc.style.marginRight = "";
+      }
+      if (content) {
+        content.style.width = "";
+        content.style.maxWidth = "";
+        content.style.flexShrink = "";
+        content.style.marginRight = "";
+      }
+      if (htmlVideo) {
+        htmlVideo.style.maxWidth = "";
+      }
+      if (opaqueVideoContainer) {
+        opaqueVideoContainer.style.right = "";
+      }
+      if (backgroundVideo) {
+        backgroundVideo.style.right = "";
+      }
+    }
+  }
+
   // [observer/layout]
   function applyLayout(show) {
-    const clearLayoutRetryTimers = () => {
-      if (!layoutRetryTimers.length) return;
-      layoutRetryTimers.forEach((timerId) => clearTimeout(timerId));
-      layoutRetryTimers = [];
-    };
-
-    const getLayoutTargets = () => {
-      const opaqueVideoContainer =
-        document.querySelector(".video-container.svelte-1psbnd5.is-opaque") ||
-        document.querySelector(".video-container.is-opaque") ||
-        document.querySelector(".video-container");
-      return {
-        vc: document.querySelector(".video-player__video-container"),
-        content: document.querySelector(".video-player__content"),
-        htmlVideo: document.querySelector("video"),
-        opaqueVideoContainer,
-        backgroundVideo: document.querySelector(".background-video"),
-      };
-    };
-
-    const applyLayoutToTargets = (targets, visible) => {
-      const { vc, content, htmlVideo, opaqueVideoContainer, backgroundVideo } =
-        targets;
-
-      if (visible) {
-        if (vc) {
-          vc.style.width = "70%";
-          vc.style.maxWidth = "70%";
-          vc.style.flexShrink = "0";
-          vc.style.marginRight = "";
-        }
-        if (content) {
-          content.style.width = "";
-          content.style.maxWidth = "";
-          content.style.flexShrink = "";
-          content.style.marginRight = "";
-        }
-        if (htmlVideo) {
-          htmlVideo.style.maxWidth = "100%";
-        }
-        if (opaqueVideoContainer) {
-          opaqueVideoContainer.style.right = "30%";
-        }
-        if (backgroundVideo) {
-          backgroundVideo.style.right = "30%";
-        }
-      } else {
-        if (vc) {
-          vc.style.width = "";
-          vc.style.maxWidth = "";
-          vc.style.flexShrink = "";
-          vc.style.marginRight = "";
-        }
-        if (content) {
-          content.style.width = "";
-          content.style.maxWidth = "";
-          content.style.flexShrink = "";
-          content.style.marginRight = "";
-        }
-        if (htmlVideo) {
-          htmlVideo.style.maxWidth = "";
-        }
-        if (opaqueVideoContainer) {
-          opaqueVideoContainer.style.right = "";
-        }
-        if (backgroundVideo) {
-          backgroundVideo.style.right = "";
-        }
-      }
-    };
-
     clearLayoutRetryTimers();
     applyLayoutToTargets(getLayoutTargets(), show);
 
