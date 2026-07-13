@@ -2537,13 +2537,7 @@
     repositionPopup("tatoeba_loaded");
   }
 
-  function fetchDictionary(word) {
-    const paneDict = state.popupShadowRoot.getElementById("pane-dict");
-    const badgesEl = state.popupShadowRoot.getElementById("popup-badges");
-    const readingEl = state.popupShadowRoot.getElementById("popup-reading");
-
-    logContent("fetchDictionary UI start", { word });
-
+  function buildDictionaryLoadingHtml(word) {
     const ejGloss = ejdictLookup(word);
     const ejHtml = ejGloss
       ? `<div class="dict-section">
@@ -2560,10 +2554,21 @@
          </div>`
       : "";
 
-    paneDict.innerHTML =
+    return (
       ejHtml +
       `<div class="dict-section" id="jisho-section"><span class="loading">Jisho 検索中...</span></div>` +
-      `<div class="dict-section" id="tatoeba-section"><span class="loading">例文取得中...</span></div>`;
+      `<div class="dict-section" id="tatoeba-section"><span class="loading">例文取得中...</span></div>`
+    );
+  }
+
+  function fetchDictionary(word) {
+    const paneDict = state.popupShadowRoot.getElementById("pane-dict");
+    const badgesEl = state.popupShadowRoot.getElementById("popup-badges");
+    const readingEl = state.popupShadowRoot.getElementById("popup-reading");
+
+    logContent("fetchDictionary UI start", { word });
+
+    paneDict.innerHTML = buildDictionaryLoadingHtml(word);
 
     sendToBackground({ type: "FETCH_DICT", word }, (res) => {
       applyJishoDictionaryResult(word, res, badgesEl, readingEl);
