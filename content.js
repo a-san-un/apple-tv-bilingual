@@ -128,11 +128,6 @@
   let lastSecondaryText = "";
   let lastSecondaryTextAt = 0;
 
-  // logger API の debugLog へ橋渡しする。
-  const debugLog = (...args) => window.ATVB?.logger?.debugLog?.(...args);
-  // logger API の appendDebugLog へ橋渡しする。
-  const appendDebugLog = (...args) =>
-    window.ATVB?.logger?.appendDebugLog?.(...args);
   // logger API の logContent へ橋渡しする。
   // 既存の logContent(message, payload) 互換を維持しつつ contentKey を付与する。
   function logContent(...args) {
