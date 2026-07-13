@@ -1,0 +1,101 @@
+(() => {
+  const root = (window.ATVB = window.ATVB || {});
+
+  function createCueController({
+    logContent,
+    DEBUG_SECONDARY_SUBS,
+    getSecondaryTrackDebugPayload,
+    resolveSecondarySubtitleTrack,
+    getCurrentCueText,
+    renderSecondarySubtitle,
+    updateCueOverlay,
+    appendCueHistory,
+    renderCuePanel,
+  }) {
+    let secondaryTrackCleanup = null;
+    let secondaryTrackBound = null;
+
+    function getBoundSecondaryTrack() {
+      return secondaryTrackBound;
+    }
+
+    function unbindSecondarySubtitleTrack() {
+      if (secondaryTrackCleanup) {
+        secondaryTrackCleanup();
+        secondaryTrackCleanup = null;
+      }
+      secondaryTrackBound = null;
+    }
+
+    function onCueChange(track) {
+      updateCueOverlay();
+      appendCueHistory();
+      renderCuePanel();
+
+      if (track) {
+        renderSecondarySubtitle(getCurrentCueText(track), track);
+      }
+    }
+
+    function bindSecondarySubtitleTrack(track) {
+      if (!track) return;
+
+      unbindSecondarySubtitleTrack();
+
+      const handler = () => onCueChange(track);
+      track.addEventListener("cuechange", handler);
+
+      secondaryTrackCleanup = () => {
+        track.removeEventListener("cuechange", handler);
+      };
+
+      secondaryTrackBound = track;
+      onCueChange(track);
+    }
+
+    function syncSecondarySubtitleTrack(
+      video,
+      requestedLang,
+      renderSecondarySubtitleOverride,
+    ) {
+      if (!video) return;
+
+      if (DEBUG_SECONDARY_SUBS) {
+        logContent(
+          "secondary sync",
+          getSecondaryTrackDebugPayload(requestedLang, secondaryTrackBound),
+        );
+      }
+
+      const track = resolveSecondarySubtitleTrack(video, requestedLang);
+
+      if (!track) {
+        unbindSecondarySubtitleTrack();
+        (renderSecondarySubtitleOverride || renderSecondarySubtitle)("", null);
+        return;
+      }
+
+      if (secondaryTrackBound !== track) {
+        bindSecondarySubtitleTrack(track);
+        return;
+      }
+
+      (renderSecondarySubtitleOverride || renderSecondarySubtitle)(
+        getCurrentCueText(track),
+        track,
+      );
+    }
+
+    return {
+      getBoundSecondaryTrack,
+      unbindSecondarySubtitleTrack,
+      bindSecondarySubtitleTrack,
+      syncSecondarySubtitleTrack,
+      onCueChange,
+    };
+  }
+
+  root.cueController = {
+    createCueController,
+  };
+})();

@@ -913,7 +913,7 @@
     const track = resolveSecondarySubtitleTrack(video, requestedLang);
 
     if (!track) {
-      unbindSecondarySubtitleTrack();
+      cueController.unbindSecondarySubtitleTrack();
       renderSecondarySubtitle("", null);
       return;
     }
@@ -981,12 +981,12 @@
       if (!state.video || !effectiveSecondaryLanguage) return;
 
       const previousSecondaryTrack = state.secondaryTrack;
-      syncSecondarySubtitleTrack(
+      cueController.syncSecondarySubtitleTrack(
         state.video,
         effectiveSecondaryLanguage,
         renderSecondarySubtitle,
       );
-      state.secondaryTrack = secondaryTrackBound;
+      state.secondaryTrack = cueController.getBoundSecondaryTrack();
 
       const secondaryActiveCues = getTrackActiveCuesLength(
         state.secondaryTrack,
@@ -2936,9 +2936,15 @@
 
   const createPanelRenderer =
     window.ATVB?.panelRenderer?.createPanelRenderer;
+  const createCueController =
+    window.ATVB?.cueController?.createCueController;
 
   if (typeof createPanelRenderer !== "function") {
     throw new Error("ATVB panelRenderer.createPanelRenderer is not available");
+  }
+
+  if (typeof createCueController !== "function") {
+    throw new Error("ATVB cueController.createCueController is not available");
   }
 
   const { renderPanel } = createPanelRenderer({
@@ -2952,6 +2958,18 @@
     logContent,
     PANEL_PRIMARY_GRACE_MS,
     DEBUG_PANEL_PROBE,
+  });
+
+  const cueController = createCueController({
+    logContent,
+    DEBUG_SECONDARY_SUBS,
+    getSecondaryTrackDebugPayload,
+    resolveSecondarySubtitleTrack,
+    getCurrentCueText,
+    renderSecondarySubtitle,
+    updateCueOverlay,
+    appendCueHistory,
+    renderCuePanel,
   });
 
   const panelUi = createPanelUi({
@@ -3258,13 +3276,13 @@
 
     // [attach: secondary] secondary resolver / binder は sync helper 側へ委譲する。
     if (secondaryLang) {
-      syncSecondarySubtitleTrack(video, secondaryLang, renderSecondarySubtitle);
+      cueController.syncSecondarySubtitleTrack(video, secondaryLang, renderSecondarySubtitle);
     } else {
-      unbindSecondarySubtitleTrack();
+      cueController.unbindSecondarySubtitleTrack();
       renderSecondarySubtitle("", null);
     }
 
-    state.secondaryTrack = secondaryTrackBound;
+    state.secondaryTrack = cueController.getBoundSecondaryTrack();
 
     return {
       reason,
@@ -3561,9 +3579,10 @@
     // 初回 cue 到着時は delay ではなくイベントで回復描画を確定させる。
     attachRecoveryListener(state.primaryTrack, "cuechange", "primary");
     attachRecoveryListener(state.secondaryTrack, "cuechange", "secondary");
-    if (secondaryTrackBound && secondaryTrackBound !== state.secondaryTrack) {
+    const secondaryBoundTrack = cueController.getBoundSecondaryTrack();
+    if (secondaryBoundTrack && secondaryBoundTrack !== state.secondaryTrack) {
       attachRecoveryListener(
-        secondaryTrackBound,
+        secondaryBoundTrack,
         "cuechange",
         "secondaryBound",
       );
@@ -3749,7 +3768,7 @@
     clearTrackResolveRetryTimers();
     clearInitialCueRecoveryTimers();
     clearInitialCueRecoveryCleanup();
-    unbindSecondarySubtitleTrack();
+    cueController.unbindSecondarySubtitleTrack();
 
     // [attach: detach primary listener] primary cuechange listener を解除する。
     if (state.primaryTrack) {
@@ -3857,10 +3876,11 @@
     }
 
     applySettingsToUI(state.contentSettings, { syncPanelVisibility: false });
-    if (secondaryTrackBound) {
+    const secondaryBoundTrack = cueController.getBoundSecondaryTrack();
+    if (secondaryBoundTrack) {
       renderSecondarySubtitle(
-        getCurrentCueText(secondaryTrackBound),
-        secondaryTrackBound,
+        getCurrentCueText(secondaryBoundTrack),
+        secondaryBoundTrack,
       );
     }
   }
@@ -3911,12 +3931,12 @@
     const effectiveSecondaryLanguage =
       state.requestedSecondaryLang || state.contentSettings.secondaryLang;
     if (state.video && effectiveSecondaryLanguage) {
-      syncSecondarySubtitleTrack(
+      cueController.syncSecondarySubtitleTrack(
         state.video,
         effectiveSecondaryLanguage,
         renderSecondarySubtitle,
       );
-      state.secondaryTrack = secondaryTrackBound;
+      state.secondaryTrack = cueController.getBoundSecondaryTrack();
     }
 
     logContentSubtitle("Selected tracks detail", {
@@ -4029,16 +4049,16 @@
           const effectiveSecondaryLanguage =
             state.requestedSecondaryLang || state.contentSettings.secondaryLang;
           if (state.video && effectiveSecondaryLanguage) {
-            syncSecondarySubtitleTrack(
+            cueController.syncSecondarySubtitleTrack(
               state.video,
               effectiveSecondaryLanguage,
               renderSecondarySubtitle,
             );
-            state.secondaryTrack = secondaryTrackBound;
+            state.secondaryTrack = cueController.getBoundSecondaryTrack();
           }
         } else {
           state.secondaryTrack = null;
-          unbindSecondarySubtitleTrack();
+          cueController.unbindSecondarySubtitleTrack();
         }
 
         logContentSettings("Loaded settings from sync", {
@@ -4096,7 +4116,7 @@
         } else {
           state.contentSettings = { ...DEFAULT_SETTINGS };
           state.secondaryTrack = null;
-          unbindSecondarySubtitleTrack();
+          cueController.unbindSecondarySubtitleTrack();
           logContentSettings(
             "restartBilingual routed to language setup notice",
             {
@@ -4170,7 +4190,7 @@
         } else {
           next = { ...DEFAULT_SETTINGS };
           state.secondaryTrack = null;
-          unbindSecondarySubtitleTrack();
+          cueController.unbindSecondarySubtitleTrack();
         }
       } else {
         state.requestedContentSettings = {
@@ -4187,7 +4207,7 @@
         } else {
           next = { ...DEFAULT_SETTINGS };
           state.secondaryTrack = null;
-          unbindSecondarySubtitleTrack();
+          cueController.unbindSecondarySubtitleTrack();
         }
       }
       const requestedSecondaryLang = state.requestedSecondaryLang;
@@ -4204,12 +4224,12 @@
       });
 
       if (state.video && resolvedSecondaryLanguage) {
-        syncSecondarySubtitleTrack(
+        cueController.syncSecondarySubtitleTrack(
           state.video,
           resolvedSecondaryLanguage,
           renderSecondarySubtitle,
         );
-        state.secondaryTrack = secondaryTrackBound;
+        state.secondaryTrack = cueController.getBoundSecondaryTrack();
       }
 
       restartBilingual(next, "SETTINGS_CHANGED");
