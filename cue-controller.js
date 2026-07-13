@@ -17,7 +17,7 @@
     getCurrentTime,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
-    updateCueOverlay,
+    updateOverlay,
     appendCueHistory,
     renderCuePanel,
   }) {
@@ -44,7 +44,7 @@
         );
       }
 
-      updateCueOverlay();
+      updateOverlay();
       appendCueHistory();
       renderCuePanel();
 
@@ -132,7 +132,7 @@
         });
       }
 
-      updateCueOverlay(pText, sText);
+      updateOverlay(pText, sText);
       appendCueHistory(pCue, pText, sText);
       renderCuePanel(sText);
     }

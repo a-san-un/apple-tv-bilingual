@@ -2958,7 +2958,7 @@
     getCurrentTime: () => state.video?.currentTime ?? 0,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
-    updateCueOverlay,
+    updateOverlay,
     appendCueHistory,
     renderCuePanel,
   });
@@ -3639,9 +3639,6 @@
   }
 
   // [binder/cue: attach] secondary track binder
-  function updateCueOverlay(pText, sText) {
-    updateOverlay(pText, sText);
-  }
 
   // [binder/cue: fan-out] binder から subtitle history への配信。
   function appendCueHistory(pCue, pText, sText) {
