@@ -2173,15 +2173,7 @@
     });
   }
 
-  // [UI shell: subtitle popup host] host 再利用・mount・shadow shell 注入・popup wiring をまとめて行う。
-  function createPopupHost() {
-    const target = getTarget();
-    const existingHost = target.querySelector("#atv-popup-host");
-    if (existingHost) {
-      state.popupShadowRoot = existingHost.shadowRoot || state.popupShadowRoot;
-      return;
-    }
-
+  function mountPopupHost(target) {
     // [shell: subtitle popup host mount] popup host を生成して playback target に追加する。
     const host = document.createElement("div");
     host.id = "atv-popup-host";
@@ -2192,6 +2184,18 @@
     // [shell: subtitle popup shadow mount] shadow root を attach し、subtitle popup shell HTML を注入する。
     state.popupShadowRoot = host.attachShadow({ mode: "open" });
     state.popupShadowRoot.innerHTML = buildPopupShellHTML();
+  }
+
+  // [UI shell: subtitle popup host] host 再利用・mount・shadow shell 注入・popup wiring をまとめて行う。
+  function createPopupHost() {
+    const target = getTarget();
+    const existingHost = target.querySelector("#atv-popup-host");
+    if (existingHost) {
+      state.popupShadowRoot = existingHost.shadowRoot || state.popupShadowRoot;
+      return;
+    }
+
+    mountPopupHost(target);
 
     // [wiring: subtitle popup] popup UI event handlers を shell に接続する。
     wireSubtitlePopupUiEvents();
