@@ -2373,36 +2373,9 @@
     return popup;
   }
 
-  // [render: subtitle popup display] subtitle popup の表示内容を初期化し、位置を決めて辞書/翻訳取得を開始する。
-  function showPopup(word, sentence, anchorRect, options = {}) {
-    if (!state.popupShadowRoot) return;
-
-    const clean = word.replace(
-      /[^a-zA-Z\u3040-\u9FFF\uFF00-\uFFEF\u4E00-\u9FFF]/g,
-      "",
-    );
-    if (!clean) return;
-
-    const popupSource = options.source || "unknown";
-
-    logContent("showPopup", {
-      word: clean,
-      sentenceLength: (sentence || "").length,
-      popupSource,
-      anchorRect: anchorRect
-        ? {
-            left: anchorRect.left,
-            top: anchorRect.top,
-            right: anchorRect.right,
-            bottom: anchorRect.bottom,
-            width: anchorRect.width,
-            height: anchorRect.height,
-          }
-        : null,
-    });
-
-    state.popupLastContext = {
-      word: clean,
+  function buildPopupDisplayContext(word, sentence, anchorRect, popupSource) {
+    return {
+      word,
       sentenceLength: (sentence || "").length,
       popupSource,
       anchorRect: anchorRect
@@ -2416,6 +2389,28 @@
           }
         : null,
     };
+  }
+
+  // [render: subtitle popup display] subtitle popup の表示内容を初期化し、位置を決めて辞書/翻訳取得を開始する。
+  function showPopup(word, sentence, anchorRect, options = {}) {
+    if (!state.popupShadowRoot) return;
+
+    const clean = word.replace(
+      /[^a-zA-Z\u3040-\u9FFF\uFF00-\uFFEF\u4E00-\u9FFF]/g,
+      "",
+    );
+    if (!clean) return;
+
+    const popupSource = options.source || "unknown";
+    const popupContext = buildPopupDisplayContext(
+      clean,
+      sentence,
+      anchorRect,
+      popupSource,
+    );
+
+    logContent("showPopup", popupContext);
+    state.popupLastContext = popupContext;
 
     const popup = resetPopupDisplayState(clean);
     if (!popup) return;
