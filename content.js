@@ -3142,16 +3142,20 @@
     }
   }
 
+  function applySettingsSnapshotToState(snapshot) {
+    state.requestedContentSettings = {
+      ...(snapshot.storedSettings || {}),
+    };
+    state.requestedSecondaryLang = snapshot.requestedSecondaryLang || "";
+    state.contentSettings = { ...snapshot.effectiveSettings };
+  }
+
   function reloadSettingsAndReinitialize(reason = "unknown") {
     if (state.restarting) return;
 
     loadSettingsSnapshot(reason)
       .then((snapshot) => {
-        state.requestedContentSettings = {
-          ...(snapshot.storedSettings || {}),
-        };
-        state.requestedSecondaryLang = snapshot.requestedSecondaryLang || "";
-        state.contentSettings = { ...snapshot.effectiveSettings };
+        applySettingsSnapshotToState(snapshot);
 
         const result = runReinitializeFromCurrentPlayback(reason);
         applyReinitializeResult(result, reason);
