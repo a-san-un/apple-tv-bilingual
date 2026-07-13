@@ -2794,6 +2794,11 @@
     state.initialCueRecoveryCleanup = [];
   }
 
+  function clearInitialCueRecovery() {
+    clearInitialCueRecoveryTimers();
+    clearInitialCueRecoveryCleanup();
+  }
+
   // [binder/cue: attach] primary / secondary track の選択・bind・unbind を扱うセクション。
   // attach 軸では track selection と listener binding の境界をコメントで追える状態に保つ。
   function clearTrackResolveRetryTimers() {
@@ -3184,15 +3189,13 @@
 
   // [binder/cue: recovery] 初回 cue recovery の event-driven / delayed retry を束ねる。
   function scheduleInitialCueRecovery() {
-    clearInitialCueRecoveryTimers();
-    clearInitialCueRecoveryCleanup();
+    clearInitialCueRecovery();
 
     let recovered = false;
     const completeRecovery = () => {
       if (recovered) return;
       recovered = true;
-      clearInitialCueRecoveryTimers();
-      clearInitialCueRecoveryCleanup();
+      clearInitialCueRecovery();
     };
     const isRecovered = () => recovered;
 
@@ -3278,8 +3281,7 @@
 
   function teardownForRestart() {
     clearTrackBindings();
-    clearInitialCueRecoveryTimers();
-    clearInitialCueRecoveryCleanup();
+    clearInitialCueRecovery();
     clearPlaybackControlRetryTimers();
     clearControlSettlingTimers();
     stopPlaybackControlLayoutObservers();
