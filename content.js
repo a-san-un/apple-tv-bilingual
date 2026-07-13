@@ -2490,6 +2490,53 @@
     repositionPopup("dictionary_loaded");
   }
 
+  function applyTatoebaExamplesResult(word, res) {
+    const tatEl = state.popupShadowRoot?.getElementById("tatoeba-section");
+    if (!tatEl) return;
+
+    if (!res?.ok || !res.results?.length) {
+      tatEl.innerHTML = "";
+      logContent("fetchTatoeba UI empty", {
+        word,
+        ok: !!res?.ok,
+        resultCount: res?.results?.length ?? 0,
+      });
+      repositionPopup("tatoeba_empty");
+      return;
+    }
+
+    const sentencesHtml = res.results
+      .map((r) => {
+        const enEsc = r.text
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+        const jaEsc = (r.translation || "")
+          .replace(/"/g, "&quot;")
+          .replace(/&/g, "&amp;");
+        const tokenized = enEsc.replace(
+          /\b([a-zA-Z']+)\b/g,
+          '<span class="atv-word-link">$1</span>',
+        );
+        return `<div class="example-sentence" data-ja="${jaEsc}">${tokenized}</div>`;
+      })
+      .join("");
+
+    tatEl.innerHTML = `
+      <div class="dict-section-title">
+        💬 例文
+        <a class="tatoeba-link" href="https://tatoeba.org/ja/sentences/search?query=${encodeURIComponent(word)}" target="_blank" rel="noopener">Tatoeba ↗</a>
+      </div>
+      ${sentencesHtml}
+    `;
+
+    logContent("fetchTatoeba UI success", {
+      word,
+      resultCount: res.results.length,
+    });
+    repositionPopup("tatoeba_loaded");
+  }
+
   function fetchDictionary(word) {
     const paneDict = state.popupShadowRoot.getElementById("pane-dict");
     const badgesEl = state.popupShadowRoot.getElementById("popup-badges");
@@ -2523,50 +2570,7 @@
     });
 
     sendToBackground({ type: "FETCH_TATOEBA", word }, (res) => {
-      const tatEl = state.popupShadowRoot?.getElementById("tatoeba-section");
-      if (!tatEl) return;
-
-      if (!res?.ok || !res.results?.length) {
-        tatEl.innerHTML = "";
-        logContent("fetchTatoeba UI empty", {
-          word,
-          ok: !!res?.ok,
-          resultCount: res?.results?.length ?? 0,
-        });
-        repositionPopup("tatoeba_empty");
-        return;
-      }
-
-      const sentencesHtml = res.results
-        .map((r) => {
-          const enEsc = r.text
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
-          const jaEsc = (r.translation || "")
-            .replace(/"/g, "&quot;")
-            .replace(/&/g, "&amp;");
-          const tokenized = enEsc.replace(
-            /\b([a-zA-Z']+)\b/g,
-            '<span class="atv-word-link">$1</span>',
-          );
-          return `<div class="example-sentence" data-ja="${jaEsc}">${tokenized}</div>`;
-        })
-        .join("");
-
-      tatEl.innerHTML = `
-        <div class="dict-section-title">
-          💬 例文
-          <a class="tatoeba-link" href="https://tatoeba.org/ja/sentences/search?query=${encodeURIComponent(word)}" target="_blank" rel="noopener">Tatoeba ↗</a>
-        </div>
-        ${sentencesHtml}
-      `;
-
-      logContent("fetchTatoeba UI success", {
-        word,
-        resultCount: res.results.length,
-      });
-      repositionPopup("tatoeba_loaded");
+      applyTatoebaExamplesResult(word, res);
     });
   }
 
