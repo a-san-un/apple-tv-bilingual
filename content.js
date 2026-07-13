@@ -3066,228 +3066,25 @@
       .join("<br>");
   }
 
-  // [render: panel block html] subtitle block 1件分の HTML を組み立てる。
-  function buildPanelBlockHtml(block) {
-    const isCurrent = block.state === "current";
-    const cls = "subtitle-block";
-    const mid = isCurrent ? 'id="current-block"' : "";
-    const mark = isCurrent
-      ? `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" /><polygon class="play-core" points="10,8 17,12 10,16" /></svg>`
-      : "";
-    const pText = makeClickableSpans(block.primary, block.primary);
-    const sText = makeClickableSpans(block.secondary, block.primary);
-    return `
-        <div class="${cls}" ${mid} data-time="${block.startTime}">
-          <div class="subtitle-row">
-            <div class="subtitle-mark">${mark}</div>
-            <div class="subtitle-content">
-              <div class="subtitle-time">${formatTime(block.startTime)}</div>
-              <div class="subtitle-primary">${pText}</div>
-              ${sText ? `<div class="subtitle-secondary">${sText}</div>` : ""}
-            </div>
-          </div>
-        </div>
-      `;
+  const createPanelRenderer =
+    window.ATVB?.panelRenderer?.createPanelRenderer;
+
+  if (typeof createPanelRenderer !== "function") {
+    throw new Error("ATVB panelRenderer.createPanelRenderer is not available");
   }
 
-  // [wiring: panel word interactions] block 内の単語 hover / click を subtitle popup へ接続する。
-  function bindPanelWordInteractions(blockEl) {
-    blockEl.querySelectorAll(".atv-word").forEach((span) => {
-      span.addEventListener("mouseenter", () => {
-        span.style.background = "rgba(255,220,80,0.3)";
-      });
-      span.addEventListener("mouseleave", () => {
-        span.style.background = "";
-      });
-      span.addEventListener("click", (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        showPopup(
-          span.dataset.word,
-          decodeURIComponent(span.dataset.sentence),
-          span.getBoundingClientRect(),
-          { source: "panel" },
-        );
-      });
-    });
-  }
-
-  // [wiring: panel block interactions] block click と word click を panel list DOM に接続する。
-  function bindPanelBlockInteractions(list) {
-    list.querySelectorAll(".subtitle-block").forEach((blockEl) => {
-      bindPanelWordInteractions(blockEl);
-
-      blockEl.addEventListener("click", (e) => {
-        if (e.target.classList.contains("atv-word")) return;
-        e.stopPropagation();
-        e.preventDefault();
-        const t = parseFloat(blockEl.dataset.time);
-        if (state.video && !Number.isNaN(t)) {
-          state.video.currentTime = t;
-          setTimeout(() => renderPanel(), 100);
-        }
-      });
-    });
-  }
-
-  // [render: panel list blocks - future] current time より後ろの cue から future block 群を組み立てる。
-  function collectFuturePanelBlocks(currentTime) {
-    const blocks = [];
-    if (!state.primaryTrack || !state.primaryTrack.cues) return blocks;
-
-    for (let i = 0; i < state.primaryTrack.cues.length; i++) {
-      const c = state.primaryTrack.cues[i];
-      if (c.startTime > currentTime + 0.1) {
-        const sc = findCueAt(state.secondaryTrack, c.startTime + 0.05);
-        blocks.push({
-          startTime: c.startTime,
-          endTime: c.endTime,
-          primary: cleanCueText(c),
-          secondary: cleanCueText(sc),
-          state: "future",
-        });
-      }
-    }
-
-    return blocks;
-  }
-
-  // [render: panel list blocks - current] primary / secondary の現在 cue から current block を組み立てる。
-  function buildCurrentPanelBlock(currentTime) {
-    const curPrimaryCue = getCurrentCue(state.primaryTrack, currentTime);
-    const curSecondaryCue = findCueAt(state.secondaryTrack, currentTime);
-    if (!curPrimaryCue && !curSecondaryCue) {
-      return { block: null, curPrimaryCue: null };
-    }
-
-    const currentCue = curPrimaryCue || curSecondaryCue;
-    let currentPrimaryText = curPrimaryCue ? cleanCueText(curPrimaryCue) : "";
-
-    if (
-      !currentPrimaryText &&
-      state.primaryTrack &&
-      curSecondaryCue &&
-      state.lastPrimaryText
-    ) {
-      const elapsedSincePrimarySnapshot =
-        Date.now() - state.lastPrimarySnapshotAt;
-      if (
-        state.lastPrimarySnapshotAt > 0 &&
-        elapsedSincePrimarySnapshot <= PANEL_PRIMARY_GRACE_MS
-      ) {
-        currentPrimaryText = state.lastPrimaryText;
-      }
-    }
-
-    const currentSecondaryText = cleanCueText(curSecondaryCue);
-    if (DEBUG_PANEL_PROBE) {
-      logContent("panel render current block probe", {
-        currentTime,
-        settingsPrimaryLang: state.contentSettings.primaryLang,
-        primaryTrackLanguage: state.primaryTrack?.language,
-        primaryTrackLabel: state.primaryTrack?.label,
-        secondaryTrackLanguage: state.secondaryTrack?.language,
-        secondaryTrackLabel: state.secondaryTrack?.label,
-        curPrimaryCueText: cleanCueText(curPrimaryCue).slice(0, 40),
-        curSecondaryCueText: currentSecondaryText.slice(0, 40),
-        resolvedPrimary: currentPrimaryText.slice(0, 40),
-        currentBlockSecondary: currentSecondaryText.slice(0, 40),
-      });
-    }
-
-    return {
-      curPrimaryCue,
-      block: {
-        startTime: currentCue.startTime,
-        endTime: currentCue.endTime,
-        primary: currentPrimaryText,
-        secondary: currentSecondaryText,
-        state: "current",
-      },
-    };
-  }
-
-  // [render: panel snapshot] current block と primary snapshot の最終描画状態を保持する。
-  function updatePanelRenderSnapshot(allBlocks, curPrimaryCue) {
-    const currentSubtitleBlock = allBlocks.find((b) => b.state === "current");
-    state.lastPanelRenderSnapshot = {
-      allBlocksCount: allBlocks.length,
-      currentSubtitleBlock: currentSubtitleBlock
-        ? {
-            primaryText: currentSubtitleBlock.primary || "",
-            secondaryText: currentSubtitleBlock.secondary || "",
-          }
-        : null,
-    };
-
-    if (curPrimaryCue && currentSubtitleBlock?.primary) {
-      state.lastPrimarySnapshotAt = Date.now();
-    }
-  }
-
-  // [render: panel list apply]
-  function renderPanel() {
-    if (!state.panelShadowRoot) return;
-    const list = state.panelShadowRoot.getElementById("subtitle-list");
-    if (!list) return;
-
-    const currentTime = state.video ? state.video.currentTime : 0;
-    const allBlocks = [];
-
-    state.subtitleHistory.forEach((h) => {
-      if (h.endTime <= currentTime) allBlocks.push({ ...h, state: "past" });
-    });
-
-    // [render: panel list blocks - current]
-    // primary は state.primaryTrack、secondary は state.secondaryTrack の cue だけを使う。
-    const { block: currentBlock, curPrimaryCue } =
-      buildCurrentPanelBlock(currentTime);
-    if (currentBlock) {
-      allBlocks.push(currentBlock);
-    }
-
-    // [render: panel list blocks - future / snapshot]
-    allBlocks.push(...collectFuturePanelBlocks(currentTime));
-
-    updatePanelRenderSnapshot(allBlocks, curPrimaryCue);
-
-    // [render: panel list DOM apply]
-    list.innerHTML = allBlocks
-      .map((block) => buildPanelBlockHtml(block))
-      .join("");
-
-    // [wiring: panel list interactions]
-    bindPanelBlockInteractions(list);
-
-    scrollCurrentPanelBlockIntoView();
-  }
-
-  // [render: panel scroll] current block が見切れる場合だけ panel scroll position を補正する。
-  function scrollCurrentPanelBlockIntoView() {
-    const currentBlock = state.panelShadowRoot?.getElementById("current-block");
-    const panelScroll = state.panelShadowRoot?.getElementById("panel-scroll");
-    if (!currentBlock || !panelScroll) return;
-
-    const scrollRect = panelScroll.getBoundingClientRect();
-    const currentRect = currentBlock.getBoundingClientRect();
-    const topThresholdY =
-      scrollRect.top + Math.max(32, currentRect.height * 0.8);
-    const bottomThresholdY =
-      scrollRect.bottom - Math.max(48, currentRect.height * 1.5);
-
-    if (
-      currentRect.top < topThresholdY ||
-      currentRect.bottom > bottomThresholdY
-    ) {
-      const targetTopOffset = Math.max(28, Math.min(72, currentRect.height));
-      const targetTopY = scrollRect.top + targetTopOffset;
-      const scrollBy = currentRect.top - targetTopY;
-      panelScroll.scrollTo({
-        top: Math.max(0, panelScroll.scrollTop + scrollBy),
-        behavior: "smooth",
-      });
-    }
-  }
+  const { renderPanel } = createPanelRenderer({
+    state,
+    makeClickableSpans,
+    formatTime,
+    showPopup,
+    findCueAt,
+    getCurrentCue,
+    cleanCueText,
+    logContent,
+    PANEL_PRIMARY_GRACE_MS,
+    DEBUG_PANEL_PROBE,
+  });
 
   // [UI shell: overlay/panel anchor]
 
