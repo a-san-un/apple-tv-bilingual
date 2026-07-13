@@ -3342,11 +3342,15 @@
     applyLayout(false);
   }
 
-  function teardownForRestart() {
+  function teardownRuntimeBindingsForRestart() {
     clearTrackBindings();
     clearInitialCueRecovery();
     clearPlaybackControlRetryTimers();
     clearControlSettlingTimers();
+  }
+
+  function teardownForRestart() {
+    teardownRuntimeBindingsForRestart();
     teardownPlaybackControlsUi();
     teardownUiHostsAndListeners();
   }
