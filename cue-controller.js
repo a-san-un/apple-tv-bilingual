@@ -7,6 +7,9 @@
     getSecondaryTrackDebugPayload,
     resolveSecondarySubtitleTrack,
     getCurrentCueText,
+    getTrackCuesLength,
+    getTrackActiveCuesLength,
+    getRequestedSecondaryLanguage,
     renderSecondarySubtitle,
     updateCueOverlay,
     appendCueHistory,
@@ -28,6 +31,13 @@
     }
 
     function onCueChange(track) {
+      if (track && DEBUG_SECONDARY_SUBS) {
+        logContent(
+          "secondary cuechange render",
+          getSecondaryTrackDebugPayload(getRequestedSecondaryLanguage(), track),
+        );
+      }
+
       updateCueOverlay();
       appendCueHistory();
       renderCuePanel();
@@ -41,6 +51,18 @@
       if (!track) return;
 
       unbindSecondarySubtitleTrack();
+
+      try {
+        track.mode = "showing";
+      } catch (_) {}
+
+      if (DEBUG_SECONDARY_SUBS) {
+        logContent("secondary track forced to showing", {
+          trackLanguage: track?.language || "",
+          cuesLength: getTrackCuesLength(track),
+          activeCuesLength: getTrackActiveCuesLength(track),
+        });
+      }
 
       const handler = () => onCueChange(track);
       track.addEventListener("cuechange", handler);

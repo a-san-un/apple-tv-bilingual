@@ -2966,6 +2966,10 @@
     getSecondaryTrackDebugPayload,
     resolveSecondarySubtitleTrack,
     getCurrentCueText,
+    getTrackCuesLength,
+    getTrackActiveCuesLength,
+    getRequestedSecondaryLanguage: () =>
+      state.requestedSecondaryLang || state.contentSettings.secondaryLang,
     renderSecondarySubtitle,
     updateCueOverlay,
     appendCueHistory,
