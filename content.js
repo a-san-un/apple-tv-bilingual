@@ -2428,6 +2428,68 @@
     fetchTranslation(sentence || clean);
   }
 
+  function applyJishoDictionaryResult(word, res, badgesEl, readingEl) {
+    const jishoEl = state.popupShadowRoot?.getElementById("jisho-section");
+    if (!jishoEl) return;
+
+    if (!res?.ok) {
+      logContent("fetchDictionary Jisho failed", {
+        word,
+        error: res?.error ?? "unknown",
+      });
+
+      repositionPopup("dictionary_failed");
+
+      jishoEl.innerHTML =
+        res?.error === "not_found"
+          ? ""
+          : `<span class="error">Jisho エラー: ${res?.error ?? "unknown"}</span>`;
+      return;
+    }
+
+    const badges = [
+      res.isCommon ? '<span class="badge badge-common">よく使われる語</span>' : "",
+      res.jlpt ? `<span class="badge badge-jlpt">${res.jlpt}</span>` : "",
+    ]
+      .filter(Boolean)
+      .join("");
+
+    if (badgesEl) badgesEl.innerHTML = badges;
+    if (readingEl) readingEl.textContent = res.reading ? `/${res.reading}/` : "";
+
+    const sensesHtml = (res.meanings ?? [])
+      .map((sense, i) => {
+        const pos = sense.partsOfSpeech?.join(", ") ?? "";
+        const defs = sense.definitions ?? [];
+        if (defs.length === 0) return "";
+        return `
+          <div class="dict-sense">
+            ${pos ? `<div class="dict-pos">${pos}</div>` : ""}
+            ${defs
+              .map(
+                (d, j) =>
+                  `<div class="dict-def"><span class="dict-def-num">${i * defs.length + j + 1}.</span>${d}</div>`,
+              )
+              .join("")}
+          </div>
+        `;
+      })
+      .join("");
+
+    jishoEl.innerHTML = sensesHtml
+      ? `<div class="dict-section-title" style="margin-bottom:8px">🔤 Jisho</div>${sensesHtml}`
+      : "";
+
+    logContent("fetchDictionary Jisho success", {
+      word,
+      reading: res.reading || "",
+      meaningsCount: (res.meanings ?? []).length,
+      jlpt: res.jlpt || "",
+      isCommon: !!res.isCommon,
+    });
+    repositionPopup("dictionary_loaded");
+  }
+
   function fetchDictionary(word) {
     const paneDict = state.popupShadowRoot.getElementById("pane-dict");
     const badgesEl = state.popupShadowRoot.getElementById("popup-badges");
@@ -2457,68 +2519,7 @@
       `<div class="dict-section" id="tatoeba-section"><span class="loading">例文取得中...</span></div>`;
 
     sendToBackground({ type: "FETCH_DICT", word }, (res) => {
-      const jishoEl = state.popupShadowRoot?.getElementById("jisho-section");
-      if (!jishoEl) return;
-
-      if (!res?.ok) {
-        logContent("fetchDictionary Jisho failed", {
-          word,
-          error: res?.error ?? "unknown",
-        });
-
-        repositionPopup("dictionary_failed");
-
-        jishoEl.innerHTML =
-          res?.error === "not_found"
-            ? ""
-            : `<span class="error">Jisho エラー: ${res?.error ?? "unknown"}</span>`;
-        return;
-      }
-
-      const badges = [
-        res.isCommon
-          ? '<span class="badge badge-common">よく使われる語</span>'
-          : "",
-        res.jlpt ? `<span class="badge badge-jlpt">${res.jlpt}</span>` : "",
-      ]
-        .filter(Boolean)
-        .join("");
-
-      if (badgesEl) badgesEl.innerHTML = badges;
-      if (readingEl)
-        readingEl.textContent = res.reading ? `/${res.reading}/` : "";
-
-      const sensesHtml = (res.meanings ?? [])
-        .map((sense, i) => {
-          const pos = sense.partsOfSpeech?.join(", ") ?? "";
-          const defs = sense.definitions ?? [];
-          if (defs.length === 0) return "";
-          return `
-          <div class="dict-sense">
-            ${pos ? `<div class="dict-pos">${pos}</div>` : ""}
-            ${defs
-              .map(
-                (d, j) =>
-                  `<div class="dict-def"><span class="dict-def-num">${i * defs.length + j + 1}.</span>${d}</div>`,
-              )
-              .join("")}
-          </div>
-        `;
-        })
-        .join("");
-
-      jishoEl.innerHTML = sensesHtml
-        ? `<div class="dict-section-title" style="margin-bottom:8px">🔤 Jisho</div>${sensesHtml}`
-        : "";
-
-      logContent("fetchDictionary Jisho success", {
-        word,
-        reading: res.reading || "",
-        meaningsCount: (res.meanings ?? []).length,
-        jlpt: res.jlpt || "",
-        isCommon: !!res.isCommon,
-      });
-      repositionPopup("dictionary_loaded");
+      applyJishoDictionaryResult(word, res, badgesEl, readingEl);
     });
 
     sendToBackground({ type: "FETCH_TATOEBA", word }, (res) => {
