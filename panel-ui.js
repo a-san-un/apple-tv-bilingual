@@ -23,6 +23,8 @@
 
     const PANEL_SLOT_LAYER_STYLE_ID = "atv-panel-slot-layer-style";
 
+    // panel host / shell / debug mount
+
     function ensurePanelSlotLayerStyle() {
       if (document.getElementById(PANEL_SLOT_LAYER_STYLE_ID)) return;
       const style = document.createElement("style");
@@ -155,6 +157,8 @@
       });
     }
 
+    // panel visibility / toggle / persistence
+
     function showRightPanel() {
       const panelHost = getTarget().querySelector("#atv-panel-host");
       const overlayHost = getTarget().querySelector("#atv-overlay-host");
@@ -222,6 +226,8 @@
       }
     }
 
+    // panel state sync / secondary fallback
+
     function applyPanelState(reason = "unknown") {
       if (typeof renderCurrentSnapshot === "function") {
         renderCurrentSnapshot();
@@ -251,6 +257,8 @@
         });
       }
     }
+
+    // panel visibility storage
 
     function loadPanelVisibility() {
       return new Promise((resolve) => {
