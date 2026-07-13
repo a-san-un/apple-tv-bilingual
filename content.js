@@ -901,30 +901,11 @@
     requestedLang,
     renderSecondarySubtitle,
   ) {
-    if (!video) return;
-
-    if (DEBUG_SECONDARY_SUBS) {
-      logContent(
-        "secondary sync",
-        getSecondaryTrackDebugPayload(requestedLang, secondaryTrackBound),
-      );
-    }
-
-    const track = resolveSecondarySubtitleTrack(video, requestedLang);
-
-    if (!track) {
-      cueController.unbindSecondarySubtitleTrack();
-      renderSecondarySubtitle("", null);
-      return;
-    }
-
-    if (secondaryTrackBound !== track) {
-      bindSecondarySubtitleTrack(track, renderSecondarySubtitle);
-      return;
-    }
-
-    // Same track, just refresh.
-    renderSecondarySubtitle(getCurrentCueText(track), track);
+    cueController.syncSecondarySubtitleTrack(
+      video,
+      requestedLang,
+      renderSecondarySubtitle,
+    );
   }
 
   function ensureSecondaryTrackSyncInterval() {
@@ -3652,64 +3633,6 @@
   }
 
   // [binder/cue: attach] secondary track binder
-  // [binder/cue: attach] secondary cuechange listener を detach し、bound track 参照を外す。
-  function unbindSecondarySubtitleTrack() {
-    // [attach: secondary detach] secondary binder cleanup を実行する。
-    if (secondaryTrackCleanup) {
-      secondaryTrackCleanup();
-      secondaryTrackCleanup = null;
-    }
-    secondaryTrackBound = null;
-  }
-
-  // [binder/cue: attach] secondary track を bind し、cuechange を panel render 側へ接続する。
-  function bindSecondarySubtitleTrack(track, renderSecondarySubtitle) {
-    if (!track || typeof renderSecondarySubtitle !== "function") return;
-
-    // [attach: secondary rebind] 既存 secondary binding を解除してから今回の track を bind する。
-    unbindSecondarySubtitleTrack();
-
-    try {
-      track.mode = "showing";
-    } catch (_) {}
-
-    if (DEBUG_SECONDARY_SUBS) {
-      logContent("secondary track forced to showing", {
-        trackLanguage: track?.language || "",
-        cuesLength: getTrackCuesLength(track),
-        activeCuesLength: getTrackActiveCuesLength(track),
-      });
-    }
-
-    // [attach: secondary cuechange -> render] secondary cuechange を secondary render / panel render へ配信する。
-    const onSecondaryCueChange = () => {
-      if (DEBUG_SECONDARY_SUBS) {
-        const effectiveSecondaryLanguage =
-          state.requestedSecondaryLang || state.contentSettings.secondaryLang;
-        logContent(
-          "secondary cuechange render",
-          getSecondaryTrackDebugPayload(effectiveSecondaryLanguage, track),
-        );
-      }
-      renderSecondarySubtitle(getCurrentCueText(track), track);
-      renderPanel();
-    };
-
-    track.addEventListener("cuechange", onSecondaryCueChange);
-
-    // [attach: secondary detach handle] detach 時に使う cleanup を保持する。
-    secondaryTrackCleanup = () => {
-      track.removeEventListener("cuechange", onSecondaryCueChange);
-    };
-
-    secondaryTrackBound = track;
-
-    // [attach: secondary initial paint] bind 直後に current cue で初期描画する。
-    renderSecondarySubtitle(getCurrentCueText(track), track);
-  }
-
-  // [binder/cue: fan-out] primary cuechange fan-out
-  // [binder/cue: fan-out] binder から overlay render への配信。
   function updateCueOverlay(pText, sText) {
     updateOverlay(pText, sText);
   }
