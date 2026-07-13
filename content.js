@@ -3126,21 +3126,24 @@
   // 設定を再読込し、現在の video / track に対して subtitle pipeline を再解決する。
   // UI 全体の teardown / rebuild までは行わない軽量な再初期化入口。
 
+  function applyVideoChangedReinitializeResult(result) {
+    if (!result) return;
+
+    if (result.ready) {
+      clearTrackResolveRetryTimers();
+    } else {
+      scheduleTrackResolveRetry("video_changed");
+    }
+  }
+
+  function applyReinitializeResult(result, reason = "unknown") {
+    if (reason === "video_changed") {
+      applyVideoChangedReinitializeResult(result);
+    }
+  }
+
   function reloadSettingsAndReinitialize(reason = "unknown") {
     if (state.restarting) return;
-
-    const proceedWithReinitialize = () => {
-      const result = runReinitializeFromCurrentPlayback(reason);
-      if (!result) return;
-
-      if (reason === "video_changed") {
-        if (result.ready) {
-          clearTrackResolveRetryTimers();
-        } else {
-          scheduleTrackResolveRetry(reason);
-        }
-      }
-    };
 
     loadSettingsSnapshot(reason)
       .then((snapshot) => {
@@ -3149,7 +3152,9 @@
         };
         state.requestedSecondaryLang = snapshot.requestedSecondaryLang || "";
         state.contentSettings = { ...snapshot.effectiveSettings };
-        proceedWithReinitialize();
+
+        const result = runReinitializeFromCurrentPlayback(reason);
+        applyReinitializeResult(result, reason);
       })
       .catch((error) => {
         logContentError("settings load failed", {
