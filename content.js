@@ -2956,11 +2956,15 @@
     getCurrentCue,
     cleanCueText,
     getCurrentTime: () => state.video?.currentTime ?? 0,
+    getLastPrimaryText: () => state.lastPrimaryText,
+    setLastPrimaryText: (text) => {
+      state.lastPrimaryText = text;
+    },
+    appendSubtitleHistory,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     updateOverlay,
-    appendCueHistory,
-    renderCuePanel,
+    renderPanel,
   });
 
   const panelUi = createPanelUi({
@@ -3482,28 +3486,6 @@
   }
 
   // [binder/cue: attach] secondary track binder
-
-  // [binder/cue: fan-out] binder から subtitle history への配信。
-  function appendCueHistory(pCue, pText, sText) {
-    if (!pText || pText === state.lastPrimaryText || !pCue) return;
-
-    state.lastPrimaryText = pText;
-    appendSubtitleHistory({
-      startTime: pCue.startTime,
-      endTime: pCue.endTime,
-      primary: pText,
-      secondary: sText,
-    });
-  }
-
-  // [binder/cue: fan-out] binder から panel render への配信。
-  function renderCuePanel(sText) {
-    if (state.secondaryTrack) {
-      renderSecondarySubtitle(sText, state.secondaryTrack);
-    }
-
-    renderPanel();
-  }
 
   // [binder/cue: fan-out] cuechange fan-out:
   // track(primary/secondary) → binder → overlay/history/panel render

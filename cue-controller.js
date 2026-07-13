@@ -15,11 +15,13 @@
     getCurrentCue,
     cleanCueText,
     getCurrentTime,
+    getLastPrimaryText,
+    setLastPrimaryText,
+    appendSubtitleHistory,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     updateOverlay,
-    appendCueHistory,
-    renderCuePanel,
+    renderPanel,
   }) {
     let secondaryTrackCleanup = null;
     let secondaryTrackBound = null;
@@ -45,8 +47,7 @@
       }
 
       updateOverlay();
-      appendCueHistory();
-      renderCuePanel();
+      renderPanel();
 
       if (track) {
         renderSecondarySubtitle(getCurrentCueText(track), track);
@@ -133,8 +134,22 @@
       }
 
       updateOverlay(pText, sText);
-      appendCueHistory(pCue, pText, sText);
-      renderCuePanel(sText);
+
+      if (pText && pText !== getLastPrimaryText() && pCue) {
+        setLastPrimaryText(pText);
+        appendSubtitleHistory({
+          startTime: pCue.startTime,
+          endTime: pCue.endTime,
+          primary: pText,
+          secondary: sText,
+        });
+      }
+
+      if (secondaryTrack) {
+        renderSecondarySubtitle(sText, secondaryTrack);
+      }
+
+      renderPanel();
     }
 
     return {
