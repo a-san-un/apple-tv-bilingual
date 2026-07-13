@@ -5,10 +5,25 @@
 
   function createRuntimeObservers({
     state,
+    logContent,
+    getPlaybackContext,
     getPlaybackControlsLayoutTargets,
     scheduleAdjustPlaybackControls,
     scheduleControlSettlingBurst,
   }) {
+    function getVideoAndDialog() {
+      const ctx = getPlaybackContext();
+      if (!ctx.isPlaybackReady) return null;
+
+      const resolvedDialog =
+        ctx.playbackDialog || ctx.playbackView?.closest("dialog") || null;
+
+      return {
+        video: ctx.video,
+        dialog: resolvedDialog,
+      };
+    }
+
     function refreshPlaybackControlResizeObserverTargets() {
       const ro = state.playbackControlsResizeObserver;
       if (!ro) return;
@@ -29,6 +44,30 @@
         state.playbackControlsResizeTargets.delete(prev);
       }
     }
+    function waitForVideo(cb) {
+      const check = () => {
+        const found = getVideoAndDialog();
+        if (found) {
+          state.dialogEl = found.dialog;
+          logContent("waitForVideo resolved", {
+            hasVideo: true,
+            trackCount: found.video.textTracks.length,
+            injectedIntoDialog: Boolean(found.dialog),
+          });
+          cb(found.video);
+          return;
+        }
+
+        state.waitTimer = window.setTimeout(check, 500);
+      };
+
+      if (state.waitTimer) {
+        clearTimeout(state.waitTimer);
+      }
+
+      check();
+    }
+
 
     function stopPlaybackControlLayoutObservers() {
       if (state.playbackControlsMutationObserver) {
@@ -158,6 +197,7 @@
     }
 
     return {
+      waitForVideo,
       refreshPlaybackControlResizeObserverTargets,
       startPlaybackControlLayoutObservers,
       stopPlaybackControlLayoutObservers,

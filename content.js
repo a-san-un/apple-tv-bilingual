@@ -592,25 +592,6 @@
     saveHistoryForContentKey(state.currentContentKey, nextHistory);
   }
 
-  function waitForVideo(cb) {
-    const check = () => {
-      const found = getVideoAndDialog();
-      if (found) {
-        state.dialogEl = found.dialog;
-        logContent("waitForVideo resolved", {
-          hasVideo: true,
-          trackCount: found.video.textTracks.length,
-          injectedIntoDialog: Boolean(found.dialog),
-        });
-        cb(found.video);
-        return;
-      }
-      state.waitTimer = window.setTimeout(check, 500);
-    };
-    if (state.waitTimer) clearTimeout(state.waitTimer);
-    check();
-  }
-
   function getSecondaryTrackDebugPayload(effectiveSecondaryLanguage, track) {
     return {
       effectiveSecondaryLanguage: effectiveSecondaryLanguage || "",
@@ -2783,6 +2764,8 @@
   const { createRuntimeObservers } = root.runtimeObservers;
   const runtimeObservers = createRuntimeObservers({
     state,
+    logContent,
+    getPlaybackContext,
     getPlaybackControlsLayoutTargets,
     scheduleAdjustPlaybackControls,
     scheduleControlSettlingBurst,
@@ -2798,6 +2781,7 @@
   } = overlayController;
 
   const {
+    waitForVideo,
     refreshPlaybackControlResizeObserverTargets,
     startPlaybackControlLayoutObservers,
     stopPlaybackControlLayoutObservers,
@@ -3146,20 +3130,16 @@
 
       if (!state.video) return;
 
-      const run = () => {
-        state.lastVideoSrcKey = getCurrentVideoSrcKey(state.video);
-        const result = reinitializeSubtitlePipeline(reason);
+      state.lastVideoSrcKey = getCurrentVideoSrcKey(state.video);
+      const result = reinitializeSubtitlePipeline(reason);
 
-        if (reason === "video_changed") {
-          if (result.ready) {
-            clearTrackResolveRetryTimers();
-          } else {
-            scheduleTrackResolveRetry(reason);
-          }
+      if (reason === "video_changed") {
+        if (result.ready) {
+          clearTrackResolveRetryTimers();
+        } else {
+          scheduleTrackResolveRetry(reason);
         }
-      };
-
-      run();
+      }
     };
 
     loadSettingsSnapshot(reason)
@@ -3289,12 +3269,15 @@
   }
 
   // [binder/cue: attach] primary / secondary の listener・timer・mode をまとめて解除する。
-  function clearTrackBindings() {
-    // [attach: detach timers] retry / recovery timer 群を先に解除する。
-    clearTrackResolveRetryTimers();
-    clearInitialCueRecoveryTimers();
-    clearInitialCueRecoveryCleanup();
+  function clearSecondaryTrackState() {
+    state.secondaryTrack = null;
     cueController.unbindSecondarySubtitleTrack();
+  }
+
+  function clearTrackBindings() {
+    // [attach: detach timers] track resolve retry timer を解除する。
+    clearTrackResolveRetryTimers();
+    clearSecondaryTrackState();
 
     // [attach: detach primary listener] primary cuechange listener を解除する。
     if (state.primaryTrack) {
@@ -3320,7 +3303,6 @@
 
     // [attach: detach state reset] binder が保持する track 参照をクリアする。
     state.primaryTrack = null;
-    state.secondaryTrack = null;
   }
 
   function resetRuntimeState(options = {}) {
@@ -3335,9 +3317,10 @@
 
   function teardownForRestart() {
     clearTrackBindings();
+    clearInitialCueRecoveryTimers();
+    clearInitialCueRecoveryCleanup();
     clearPlaybackControlRetryTimers();
     clearControlSettlingTimers();
-    clearInitialCueRecoveryTimers();
     stopPlaybackControlLayoutObservers();
 
     if (state.playbackControlsRafId) {
@@ -3583,8 +3566,7 @@
             state.secondaryTrack = cueController.getBoundSecondaryTrack();
           }
         } else {
-          state.secondaryTrack = null;
-          cueController.unbindSecondarySubtitleTrack();
+          clearSecondaryTrackState();
         }
 
         logContentSettings("Loaded settings from sync", {
@@ -3641,8 +3623,7 @@
           });
         } else {
           state.contentSettings = { ...DEFAULT_SETTINGS };
-          state.secondaryTrack = null;
-          cueController.unbindSecondarySubtitleTrack();
+          clearSecondaryTrackState();
           logContentSettings(
             "restartBilingual routed to language setup notice",
             {
@@ -3715,8 +3696,7 @@
           next = { ...bridgeResult.settings };
         } else {
           next = { ...DEFAULT_SETTINGS };
-          state.secondaryTrack = null;
-          cueController.unbindSecondarySubtitleTrack();
+          clearSecondaryTrackState();
         }
       } else {
         state.requestedContentSettings = {
@@ -3732,8 +3712,7 @@
           });
         } else {
           next = { ...DEFAULT_SETTINGS };
-          state.secondaryTrack = null;
-          cueController.unbindSecondarySubtitleTrack();
+          clearSecondaryTrackState();
         }
       }
       const requestedSecondaryLang = state.requestedSecondaryLang;
