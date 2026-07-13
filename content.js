@@ -1874,14 +1874,8 @@
     if (existing) existing.remove();
   }
 
-  function showLanguageSetupNotice() {
-    const target = getTarget();
-    if (!target) return;
-
-    let notice = target.querySelector(`#${LANGUAGE_SETUP_NOTICE_ID}`);
-    if (notice) return;
-
-    notice = document.createElement("div");
+  function createLanguageSetupNotice() {
+    const notice = document.createElement("div");
     notice.id = LANGUAGE_SETUP_NOTICE_ID;
     notice.style.cssText = [
       "position:fixed",
@@ -1952,7 +1946,17 @@
     notice.appendChild(title);
     notice.appendChild(body);
     notice.appendChild(actions);
-    target.appendChild(notice);
+    return notice;
+  }
+
+  function showLanguageSetupNotice() {
+    const target = getTarget();
+    if (!target) return;
+
+    const existing = target.querySelector(`#${LANGUAGE_SETUP_NOTICE_ID}`);
+    if (existing) return;
+
+    target.appendChild(createLanguageSetupNotice());
   }
 
   function createToggleButton() {
