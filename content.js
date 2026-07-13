@@ -712,7 +712,7 @@
 
     let panelHost = getTarget().querySelector("#atv-panel-host");
     if (!panelHost) {
-      createRightPanel();
+      panelUi.createRightPanel();
       panelHost = getTarget().querySelector("#atv-panel-host");
     }
     if (!panelHost) return null;
@@ -973,7 +973,7 @@
         : null;
 
       if (largeSeekDetected) {
-        applyCurrentStateToPanel("sync_interval_large_seek_resync");
+        panelUi.applyPanelState("sync_interval_large_seek_resync");
       }
 
       const effectiveSecondaryLanguage =
@@ -2137,39 +2137,7 @@
     });
   }
 
-  function showRightPanel() {
-    if (!state.panelVisible) {
-      togglePanel(true);
-      return;
-    }
-    applyLayout(true);
-    const panelHost = getTarget().querySelector("#atv-panel-host");
-    const overlayHost = getTarget().querySelector("#atv-overlay-host");
-    const toggleBtn = getTarget().querySelector("#atv-toggle-btn");
-    if (panelHost) panelHost.style.display = "";
-    if (overlayHost) {
-      overlayHost.style.width = "70%";
-      overlayHost.style.display = "none";
-    }
-    if (toggleBtn) toggleBtn.style.display = "none";
-  }
 
-  function hideRightPanel() {
-    if (state.panelVisible) {
-      togglePanel(false);
-      return;
-    }
-    applyLayout(false);
-    const panelHost = getTarget().querySelector("#atv-panel-host");
-    const overlayHost = getTarget().querySelector("#atv-overlay-host");
-    const toggleBtn = getTarget().querySelector("#atv-toggle-btn");
-    if (panelHost) panelHost.style.display = "none";
-    if (overlayHost) {
-      overlayHost.style.width = "100%";
-      overlayHost.style.display = "";
-    }
-    if (toggleBtn) toggleBtn.style.display = "block";
-  }
 
   function pinRightPanel() {}
 
@@ -2180,11 +2148,11 @@
 
     if (shouldSyncPanelVisibility) {
       if (settings.showSidebar === false) {
-        hideRightPanel();
+        panelUi.hideRightPanel();
       } else if (state.panelVisible) {
-        showRightPanel();
+        panelUi.showRightPanel();
       } else {
-        hideRightPanel();
+        panelUi.hideRightPanel();
       }
     }
 
@@ -2224,112 +2192,6 @@
     state.overlayRoot = null;
   }
 
-  // [UI shell: panel/debug]
-
-  // [UI shell: debug] パネル内 debug セクションの HTML 骨格を返す。
-  // wiring・mount は行わない。buildPanelShellHTML から呼ばれる。
-  function buildPanelDebugShellHTML() {
-    return `
-      <div id="debug-section" class="debug-section">
-        <div class="debug-section__header">
-          <span class="debug-section__title">デバッグログ（開発者向け）</span>
-          <button
-            id="debugSectionToggle"
-            class="debug-toggle-button"
-            type="button"
-            aria-expanded="false"
-            aria-controls="debugSectionBody"
-          >▶</button>
-        </div>
-        <div id="debugSectionBody" class="debug-section__body" hidden>
-          <div class="debug-toolbar">
-            <button id="debugCopyBtn" class="debug-btn" type="button">Copy</button>
-            <button id="debugDownloadBtn" class="debug-btn" type="button">Download</button>
-            <button id="debugClearBtn" class="debug-btn" type="button">Clear</button>
-          </div>
-          <textarea id="debug-log" readonly></textarea>
-        </div>
-      </div>
-    `;
-  }
-
-  // [UI shell: panel] パネル全体の HTML 骨格（CSS link・header・debug shell・scroll area）を返す。
-  // DOM への挿入・wiring・mount は createRightPanel / wirePanelHeaderActions が担う。
-  function buildPanelShellHTML() {
-    const panelCssUrl = chrome.runtime.getURL("panel.css");
-    return `
-      <link rel="stylesheet" href="${panelCssUrl}">
-      <div id="panel" class="dual-subtitles-panel" data-dual-subtitles-panel>
-        <div id="panel-header">
-          <span>📋 字幕履歴</span>
-          <div class="panel-header-actions">
-            <button id="settings-btn" type="button" title="設定">⚙️</button>
-            <button id="close-btn" type="button">✕ 閉じる</button>
-          </div>
-        </div>
-        ${buildPanelDebugShellHTML()}
-        <div id="panel-scroll">
-          <slot name="secondary-subtitle-slot"></slot>
-          <div id="subtitle-list"></div>
-        </div>
-      </div>
-    `;
-  }
-
-  // [wiring: panel header] パネルヘッダー（設定/閉じるボタン）の UI イベントを panel shell に接続する。
-  // shell の構造自体は buildPanelShellHTML が担い、ここではヘッダー操作の wiring のみを行う。
-  function wirePanelHeaderActions() {
-    const root = state.panelShadowRoot;
-    if (!root) return;
-
-    root
-      .getElementById("close-btn")
-      ?.addEventListener("click", () => togglePanel(false));
-    root.getElementById("settings-btn")?.addEventListener("click", () => {
-      try {
-        chrome.runtime.sendMessage({ type: "OPEN_OPTIONS_PAGE" });
-      } catch (_) {}
-    });
-  }
-
-  // [UI shell: panel host] host 再利用・mount・shadow shell 注入・header wiring をまとめて行う。
-  function createRightPanel() {
-    const target = getTarget();
-    const existingHost = target.querySelector("#atv-panel-host");
-    if (existingHost) {
-      state.panelShadowRoot = existingHost.shadowRoot || state.panelShadowRoot;
-      ensureSecondarySubtitleElement();
-      return;
-    }
-
-    // [shell: panel host mount] panel host を生成して playback target に追加する。
-    const host = document.createElement("div");
-    host.id = "atv-panel-host";
-    host.style.cssText = [
-      "position:fixed",
-      "top:0",
-      "right:0",
-      "width:30%",
-      "height:100vh",
-      "z-index:999997",
-      "pointer-events:auto",
-      "box-sizing:border-box",
-    ].join(";");
-    target.appendChild(host);
-
-    // [shell: panel slot layer] secondary subtitle slot 用の light DOM style を確保する。
-    ensurePanelSlotLayerStyle();
-
-    // [shell: panel shadow mount] shadow root を attach し、panel shell HTML を注入する。
-    state.panelShadowRoot = host.attachShadow({ mode: "open" });
-    state.panelShadowRoot.innerHTML = buildPanelShellHTML();
-
-    // [wiring: panel header] header action ボタンを shell に接続する。
-    wirePanelHeaderActions();
-
-    // [render: panel secondary slot] panel shell 内の secondary subtitle 要素を確保する。
-    ensureSecondarySubtitleElement();
-  }
 
   const LANGUAGE_SETUP_NOTICE_ID = "atv-language-setup-notice";
 
@@ -2452,7 +2314,7 @@
 
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      togglePanel(true);
+      panelUi.togglePanel(true);
     });
 
     getTarget().appendChild(btn);
@@ -3066,6 +2928,12 @@
       .join("<br>");
   }
 
+  const createPanelUi = window.ATVB?.panelUi?.createPanelUi;
+
+  if (typeof createPanelUi !== "function") {
+    throw new Error("ATVB panelUi.createPanelUi is not available");
+  }
+
   const createPanelRenderer =
     window.ATVB?.panelRenderer?.createPanelRenderer;
 
@@ -3086,7 +2954,27 @@
     DEBUG_PANEL_PROBE,
   });
 
-  // [UI shell: overlay/panel anchor]
+  const panelUi = createPanelUi({
+    state,
+    getTarget,
+    ensureSecondarySubtitleElement,
+    getLiveDebugLogFilter,
+    getDebugLogText,
+    clearDebugLogs,
+    sendToBackground,
+    onClosePanel: () => panelUi.togglePanel(false),
+    applyLayout,
+    persistPanelVisibility,
+    scheduleAdjustPlaybackControls,
+    scheduleControlSettlingBurst,
+    logContent,
+    renderCurrentSnapshot,
+    renderPanel,
+    applySecondarySubtitleFallback,
+  });
+
+
+  // panel UI は別モジュールで組み立て、content 側では呼び出しと連携だけを持つ。
 
   // [UI shell: overlay] overlay の style と primary / secondary line の HTML 骨格を返す。
   function buildOverlayShellHTML() {
@@ -3264,49 +3152,6 @@
     s.textContent = secondaryText || "";
   }
 
-  function togglePanel(force) {
-    const previousPanelVisible = state.panelVisible;
-    if (typeof force === "boolean") state.panelVisible = force;
-    else state.panelVisible = !state.panelVisible;
-    logContent("togglePanel trace", {
-      previousPanelVisible,
-      nextPanelVisible: state.panelVisible,
-      force: typeof force === "boolean" ? force : null,
-    });
-    console.trace("togglePanel trace");
-
-    if (state.panelVisible) {
-      // NOTE:
-      // パネル open 時の自動 settings 再読込は、タブ復帰や再適用経路で
-      // 意図せず panel reopen を引き起こすため停止する。
-      // 明示的な設定変更は SETTINGS_CHANGED / restartBilingual 側で反映する。
-    }
-
-    applyLayout(state.panelVisible);
-
-    const panelHost = getTarget().querySelector("#atv-panel-host");
-    const overlayHost = getTarget().querySelector("#atv-overlay-host");
-    const toggleBtn = getTarget().querySelector("#atv-toggle-btn");
-
-    if (panelHost) panelHost.style.display = state.panelVisible ? "" : "none";
-    if (overlayHost) {
-      overlayHost.style.display = state.panelVisible ? "none" : "";
-    }
-    if (toggleBtn)
-      toggleBtn.style.display = state.panelVisible ? "none" : "block";
-
-    scheduleAdjustPlaybackControls(
-      "togglePanel",
-      state.panelVisible ? [700, 1600] : [],
-      { immediate: !state.panelVisible },
-    );
-    if (state.panelVisible) {
-      scheduleControlSettlingBurst("togglePanel", [180, 420, 900, 1500]);
-    }
-
-    persistPanelVisibility();
-    logContent("togglePanel", { panelVisible: state.panelVisible });
-  }
 
   function loadPanelVisibility() {
     return new Promise((resolve) => {
@@ -3468,8 +3313,7 @@
     return false;
   }
 
-  // [render: panel secondary recovery]
-  // panel shell 適用後、secondary subtitle が空なら直近 history から最小差分で補完する。
+  // panel secondary が空のときだけ、直近 history から最小差分で補完する。
   function applySecondarySubtitleFallback(reason = "unknown") {
     const panelHost = getTarget().querySelector("#atv-panel-host");
     const secondaryEl = panelHost?.querySelector("[data-secondary-subtitle]");
@@ -3499,23 +3343,6 @@
       panelHost,
       secondaryText,
     };
-  }
-
-  // [render: panel shell state sync]
-  function applyCurrentStateToPanel(reason = "unknown") {
-    renderCurrentSnapshot();
-    renderPanel();
-
-    const { panelHost, secondaryText } = applySecondarySubtitleFallback(reason);
-
-    logContent("panel state applied", {
-      reason,
-      contentKey: state.currentContentKey,
-      panelVisible: state.panelVisible,
-      hasPanelHost: Boolean(panelHost),
-      secondaryTextLength: secondaryText.length,
-      historySize: state.subtitleHistory.length,
-    });
   }
 
   function clearInternalSubtitleState(reason = "unknown") {
@@ -3574,7 +3401,7 @@
       secondaryTrackBound: secondaryListenerBound,
     });
 
-    applyCurrentStateToPanel(reason);
+    panelUi.applyPanelState(reason);
     logContent("panel state reapplied", {
       reason,
       contentKey: state.currentContentKey,
@@ -3681,22 +3508,6 @@
         }
       };
 
-      if (reason === "video_changed") {
-        loadPanelVisibility()
-          .then((panelVisible) => {
-            state.panelVisible = panelVisible;
-            logContent("panelVisible reloaded before reinitialize", {
-              reason,
-              panelVisible: state.panelVisible,
-            });
-            run();
-          })
-          .catch(() => {
-            run();
-          });
-        return;
-      }
-
       run();
     };
 
@@ -3720,7 +3531,7 @@
   function runInitialCueRecoveryRender(reason = "unknown") {
     if (!hasRecoverableInitialCue()) return false;
 
-    applyCurrentStateToPanel(`initial_recovery:${reason}`);
+    panelUi.applyPanelState(`initial_recovery:${reason}`);
     logContent("initial cue recovery render", {
       reason,
       primaryActiveCues: getTrackActiveCuesLength(state.primaryTrack),
@@ -4014,11 +3825,11 @@
 
   function buildUi() {
     createOverlay();
-    createRightPanel();
+    panelUi.createRightPanel();
     ensureSecondarySubtitleElement();
     createPopupHost();
     createToggleButton();
-    createDebugPanel();
+    panelUi.createDebugPanel();
     startPlaybackControlLayoutObservers();
     scheduleAdjustPlaybackControls("buildUi", [700, 1600], {
       immediate: false,
@@ -4142,7 +3953,7 @@
     if (typeof options.keepPanelVisible === "boolean") {
       state.panelVisible = options.keepPanelVisible;
     } else {
-      state.panelVisible = await loadPanelVisibility();
+      state.panelVisible = await panelUi.loadPanelVisibility();
     }
     logContent("startBilingual panelVisible applied", {
       panelVisible: state.panelVisible,
@@ -4155,6 +3966,8 @@
 
     buildUi();
     ensureSecondarySubtitleElement();
+    if (state.panelVisible) panelUi.showRightPanel();
+    else panelUi.hideRightPanel();
 
     if (state.secondaryTrack) {
       renderSecondarySubtitle(
@@ -4163,7 +3976,7 @@
       );
     }
 
-    applyCurrentStateToPanel("startBilingual_ready");
+    panelUi.applyPanelState("startBilingual_ready");
     scheduleInitialCueRecovery();
     scheduleControlSettlingBurst("startBilingual");
 

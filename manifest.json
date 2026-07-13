@@ -24,6 +24,7 @@
         "settings-bridge.js",
         "debug-panel.js",
         "panel-renderer.js",
+        "panel-ui.js",
         "content.js"
       ],
       "css": ["overlay.css"],
