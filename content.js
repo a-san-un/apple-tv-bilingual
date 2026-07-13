@@ -2150,6 +2150,22 @@
     });
   }
 
+  function registerPopupWordLinkHandler(root) {
+    // subtitle popup 内の動的単語リンククリックを拾う listener 登録
+    root.addEventListener("click", (e) => {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      if (!target.classList.contains("atv-word-link")) return;
+
+      e.stopPropagation();
+      const word = target.textContent.trim();
+      if (!word) return;
+
+      const rect = target.getBoundingClientRect();
+      showPopup(word, word, rect, { source: "panel" });
+    });
+  }
+
   // [wiring: subtitle popup] close / tab / dynamic word link の UI イベントを subtitle popup shell に接続する。
   function wireSubtitlePopupUiEvents() {
     const root = state.popupShadowRoot;
@@ -2164,20 +2180,7 @@
 
     wirePopupTabEvents(root);
     registerPopupOutsideClickHandler(popup);
-
-    // subtitle popup 内の動的単語リンククリックを拾う listener 登録
-    root.addEventListener("click", (e) => {
-      const target = e.target;
-      if (!(target instanceof Element)) return;
-      if (!target.classList.contains("atv-word-link")) return;
-
-      e.stopPropagation();
-      const word = target.textContent.trim();
-      if (!word) return;
-
-      const rect = target.getBoundingClientRect();
-      showPopup(word, word, rect, { source: "panel" });
-    });
+    registerPopupWordLinkHandler(root);
   }
 
   function mountPopupHost(target) {
