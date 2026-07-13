@@ -3010,6 +3010,19 @@
     };
   }
 
+  function refreshPlaybackContextForReinitialize() {
+    const found = getVideoAndDialog();
+    if (found) {
+      state.video = found.video;
+      state.dialogEl = found.dialog;
+    }
+
+    if (!state.video) return false;
+
+    state.lastVideoSrcKey = getCurrentVideoSrcKey(state.video);
+    return true;
+  }
+
   // [binder/cue: recovery] track resolve retry タイマーを管理する。
   function scheduleTrackResolveRetry(reason = "video_changed") {
     clearTrackResolveRetryTimers();
@@ -3030,12 +3043,7 @@
           delayMs,
         });
 
-        const found = getVideoAndDialog();
-        if (found) {
-          state.video = found.video;
-          state.dialogEl = found.dialog;
-          state.lastVideoSrcKey = getCurrentVideoSrcKey(found.video);
-        }
+        if (!refreshPlaybackContextForReinitialize()) return;
 
         const retryResult = reinitializeSubtitlePipeline(
           `${reason}:retry_${attempt}`,
@@ -3075,15 +3083,8 @@
     if (state.restarting) return;
 
     const proceedWithReinitialize = () => {
-      const found = getVideoAndDialog();
-      if (found) {
-        state.video = found.video;
-        state.dialogEl = found.dialog;
-      }
+      if (!refreshPlaybackContextForReinitialize()) return;
 
-      if (!state.video) return;
-
-      state.lastVideoSrcKey = getCurrentVideoSrcKey(state.video);
       const result = reinitializeSubtitlePipeline(reason);
 
       if (reason === "video_changed") {
@@ -3124,6 +3125,12 @@
     return true;
   }
 
+  function tryCompleteInitialCueRecovery(reason, completeRecovery) {
+    if (!runInitialCueRecoveryRender(reason)) return false;
+    completeRecovery();
+    return true;
+  }
+
   function bindInitialCueRecoveryListeners(completeRecovery) {
     // [initial cue recovery: event-driven path]
     // cuechange / timeupdate を一時的に監視し、初回 cue が取れた瞬間に
@@ -3132,8 +3139,10 @@
       if (!target || typeof target.addEventListener !== "function") return;
 
       const onRecoveryEvent = () => {
-        if (!runInitialCueRecoveryRender(`${eventName}:${label}`)) return;
-        completeRecovery();
+        tryCompleteInitialCueRecovery(
+          `${eventName}:${label}`,
+          completeRecovery,
+        );
       };
 
       target.addEventListener(eventName, onRecoveryEvent);
@@ -3167,8 +3176,7 @@
         if (isRecovered()) return;
 
         if (!hasRecoverableInitialCue()) return;
-        if (!runInitialCueRecoveryRender(`delay:${delayMs}`)) return;
-        completeRecovery();
+        tryCompleteInitialCueRecovery(`delay:${delayMs}`, completeRecovery);
       }, delayMs);
       state.initialCueRecoveryTimers.push(timerId);
     });
