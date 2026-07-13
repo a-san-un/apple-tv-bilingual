@@ -33,6 +33,7 @@
         "panel-renderer.js",
         "panel-ui.js",
         "cue-controller.js",
+        "overlay-controller.js",
         "content.js"
       ],
       "css": [
