@@ -10,6 +10,12 @@
     getTrackCuesLength,
     getTrackActiveCuesLength,
     getRequestedSecondaryLanguage,
+    getPrimaryTrack,
+    getSecondaryTrack,
+    getCurrentCue,
+    cleanCueText,
+    getCurrentTime,
+    DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     updateCueOverlay,
     appendCueHistory,
@@ -108,12 +114,36 @@
       );
     }
 
+    function onPrimaryCueChange() {
+      const currentTime = getCurrentTime();
+      const primaryTrack = getPrimaryTrack();
+      const secondaryTrack = getSecondaryTrack();
+      const pCue = getCurrentCue(primaryTrack, currentTime);
+      const pText = cleanCueText(pCue);
+      const sCue = getCurrentCue(secondaryTrack, currentTime);
+      const sText = cleanCueText(sCue);
+
+      if (DEBUG_PANEL_PROBE) {
+        logContent("cuechange track probe", {
+          primaryTrackLanguage: primaryTrack?.language,
+          secondaryTrackLanguage: secondaryTrack?.language,
+          pText: pText.slice(0, 40),
+          sText: sText.slice(0, 40),
+        });
+      }
+
+      updateCueOverlay(pText, sText);
+      appendCueHistory(pCue, pText, sText);
+      renderCuePanel(sText);
+    }
+
     return {
       getBoundSecondaryTrack,
       unbindSecondarySubtitleTrack,
       bindSecondarySubtitleTrack,
       syncSecondarySubtitleTrack,
       onCueChange,
+      onPrimaryCueChange,
     };
   }
 

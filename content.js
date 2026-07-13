@@ -2951,6 +2951,12 @@
     getTrackActiveCuesLength,
     getRequestedSecondaryLanguage: () =>
       state.requestedSecondaryLang || state.contentSettings.secondaryLang,
+    getPrimaryTrack: () => state.primaryTrack,
+    getSecondaryTrack: () => state.secondaryTrack,
+    getCurrentCue,
+    cleanCueText,
+    getCurrentTime: () => state.video?.currentTime ?? 0,
+    DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     updateCueOverlay,
     appendCueHistory,
@@ -3662,31 +3668,7 @@
   // [binder/cue: fan-out] cuechange fan-out:
   // track(primary/secondary) → binder → overlay/history/panel render
   function onCueChange() {
-    // [fan-out: track -> binder] primary / secondary の current cue を取得する。
-    const currentTime = state.video?.currentTime ?? 0;
-    const pCue = getCurrentCue(state.primaryTrack, currentTime);
-    const pText = cleanCueText(pCue);
-    const sCue = getCurrentCue(state.secondaryTrack, currentTime);
-    const sText = cleanCueText(sCue);
-
-    if (DEBUG_PANEL_PROBE) {
-      // Probe cuechange source tracks/texts when reproducing #19 symptoms.
-      logContent("cuechange track probe", {
-        primaryTrackLanguage: state.primaryTrack?.language,
-        secondaryTrackLanguage: state.secondaryTrack?.language,
-        pText: pText.slice(0, 40),
-        sText: sText.slice(0, 40),
-      });
-    }
-
-    // [fan-out: binder -> overlay render]
-    updateCueOverlay(pText, sText);
-
-    // [fan-out: binder -> history]
-    appendCueHistory(pCue, pText, sText);
-
-    // [fan-out: binder -> panel render]
-    renderCuePanel(sText);
+    cueController.onPrimaryCueChange();
   }
 
   // [binder/cue: attach] primary / secondary の listener・timer・mode をまとめて解除する。
