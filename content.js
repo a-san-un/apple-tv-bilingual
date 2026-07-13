@@ -2561,6 +2561,16 @@
     );
   }
 
+  function requestPopupDictionaryData(word, badgesEl, readingEl) {
+    sendToBackground({ type: "FETCH_DICT", word }, (res) => {
+      applyJishoDictionaryResult(word, res, badgesEl, readingEl);
+    });
+
+    sendToBackground({ type: "FETCH_TATOEBA", word }, (res) => {
+      applyTatoebaExamplesResult(word, res);
+    });
+  }
+
   function fetchDictionary(word) {
     const paneDict = state.popupShadowRoot.getElementById("pane-dict");
     const badgesEl = state.popupShadowRoot.getElementById("popup-badges");
@@ -2569,14 +2579,7 @@
     logContent("fetchDictionary UI start", { word });
 
     paneDict.innerHTML = buildDictionaryLoadingHtml(word);
-
-    sendToBackground({ type: "FETCH_DICT", word }, (res) => {
-      applyJishoDictionaryResult(word, res, badgesEl, readingEl);
-    });
-
-    sendToBackground({ type: "FETCH_TATOEBA", word }, (res) => {
-      applyTatoebaExamplesResult(word, res);
-    });
+    requestPopupDictionaryData(word, badgesEl, readingEl);
   }
 
   function applyTranslationResult(el, res) {
