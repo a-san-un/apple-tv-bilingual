@@ -3282,19 +3282,18 @@
     state.lastObservedVideoTime = null;
   }
 
-  function teardownForRestart() {
-    clearTrackBindings();
-    clearInitialCueRecovery();
-    clearPlaybackControlRetryTimers();
-    clearControlSettlingTimers();
+  function teardownPlaybackControlsUi() {
     stopPlaybackControlLayoutObservers();
 
     if (state.playbackControlsRafId) {
       window.cancelAnimationFrame(state.playbackControlsRafId);
       state.playbackControlsRafId = 0;
     }
-    clearPlaybackControlsTransforms();
 
+    clearPlaybackControlsTransforms();
+  }
+
+  function teardownUiHostsAndListeners() {
     if (state.popupDocClickHandler) {
       // createPopupHost で登録した document listener の解除
       document.removeEventListener("click", state.popupDocClickHandler);
@@ -3303,6 +3302,15 @@
 
     destroyUiHosts();
     applyLayout(false);
+  }
+
+  function teardownForRestart() {
+    clearTrackBindings();
+    clearInitialCueRecovery();
+    clearPlaybackControlRetryTimers();
+    clearControlSettlingTimers();
+    teardownPlaybackControlsUi();
+    teardownUiHostsAndListeners();
   }
 
   // [binder/cue: attach] bootstrap から呼ばれる track bind の薄い入口。
