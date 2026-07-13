@@ -1395,6 +1395,14 @@
     state.playbackControlsRetryTimers = [];
   }
 
+  function requestPlaybackControlsAdjustment(reason = "unknown") {
+    if (state.playbackControlsRafId) return;
+    state.playbackControlsRafId = window.requestAnimationFrame(() => {
+      state.playbackControlsRafId = 0;
+      adjustPlaybackControlsForPanel(reason);
+    });
+  }
+
   function scheduleAdjustPlaybackControls(
     reason = "unknown",
     retryDelays = [],
@@ -1402,20 +1410,12 @@
   ) {
     const immediate = options.immediate !== false;
 
-    const runOnce = (runReason) => {
-      if (state.playbackControlsRafId) return;
-      state.playbackControlsRafId = window.requestAnimationFrame(() => {
-        state.playbackControlsRafId = 0;
-        adjustPlaybackControlsForPanel(runReason);
-      });
-    };
-
     clearPlaybackControlRetryTimers();
-    if (immediate) runOnce(reason);
+    if (immediate) requestPlaybackControlsAdjustment(reason);
 
     retryDelays.forEach((delayMs) => {
       const timerId = window.setTimeout(() => {
-        runOnce(`${reason}-retry-${delayMs}`);
+        requestPlaybackControlsAdjustment(`${reason}-retry-${delayMs}`);
       }, delayMs);
       state.playbackControlsRetryTimers.push(timerId);
     });
