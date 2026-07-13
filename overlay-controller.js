@@ -1,5 +1,8 @@
 (() => {
   const root = (window.ATVB = window.ATVB || {});
+  const PLAYBACK_SKIP_BASE_LEFT_ATTR = "data-atvb-skip-base-left";
+  const PLAYBACK_SKIP_BASE_RIGHT_ATTR = "data-atvb-skip-base-right";
+  const PLAYBACK_SKIP_BASE_TRANSFORM_ATTR = "data-atvb-skip-base-transform";
 
   function createOverlayController({
     getOverlayRoot,
@@ -8,6 +11,7 @@
     showPopup,
     getPlaybackControlsLayoutTargets,
     PLAYBACK_CONTROLS_LAYOUT,
+    setStyleIfChanged,
   }) {
     function buildOverlayShellHTML() {
       return `
@@ -81,8 +85,12 @@
       rootNode.host.style.setProperty("--atv-overlay-font-size", `${fontSizePx}px`);
     }
 
+    function getOverlayHost() {
+      return getTarget().querySelector("#atv-overlay-host");
+    }
+
     function updateOverlayHostPosition() {
-      const overlayHost = getTarget().querySelector("#atv-overlay-host");
+      const overlayHost = getOverlayHost();
       if (!overlayHost) return;
 
       const progressById = document.querySelector("#playback-progress");
@@ -117,6 +125,80 @@
 
       nextBottom = Math.max(minBottomPx, nextBottom);
       overlayHost.style.bottom = `${nextBottom}px`;
+    }
+
+    function setOverlayVisible(visible) {
+      const overlayHost = getOverlayHost();
+      if (!overlayHost) return;
+      overlayHost.style.display = visible ? "" : "none";
+      if (visible) {
+        updateOverlayHostPosition();
+        updateOverlayTypography();
+      }
+    }
+
+    function applyManagedSkipPosition(skipOverlay, safeAreaRight) {
+      if (!skipOverlay) return;
+
+      if (!skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR)) {
+        skipOverlay.setAttribute(
+          PLAYBACK_SKIP_BASE_LEFT_ATTR,
+          skipOverlay.style.left || "",
+        );
+      }
+      if (!skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR)) {
+        skipOverlay.setAttribute(
+          PLAYBACK_SKIP_BASE_RIGHT_ATTR,
+          skipOverlay.style.right || "",
+        );
+      }
+      if (!skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR)) {
+        skipOverlay.setAttribute(
+          PLAYBACK_SKIP_BASE_TRANSFORM_ATTR,
+          skipOverlay.style.transform || "",
+        );
+      }
+
+      const rect = skipOverlay.getBoundingClientRect();
+      const left = safeAreaRight - rect.width;
+      setStyleIfChanged(skipOverlay, "left", `${left.toFixed(2)}px`);
+      setStyleIfChanged(skipOverlay, "right", "auto");
+      setStyleIfChanged(skipOverlay, "transform", "none");
+    }
+
+    function clearManagedSkipPosition(skipOverlay) {
+      if (!skipOverlay) return;
+
+      if (skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR)) {
+        setStyleIfChanged(
+          skipOverlay,
+          "left",
+          skipOverlay.getAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR) || "",
+        );
+        skipOverlay.removeAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR);
+      }
+      if (skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR)) {
+        setStyleIfChanged(
+          skipOverlay,
+          "right",
+          skipOverlay.getAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR) || "",
+        );
+        skipOverlay.removeAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR);
+      }
+      if (skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR)) {
+        setStyleIfChanged(
+          skipOverlay,
+          "transform",
+          skipOverlay.getAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR) || "",
+        );
+        skipOverlay.removeAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR);
+      }
+    }
+
+    function destroyOverlay() {
+      const overlayHost = getOverlayHost();
+      if (overlayHost) overlayHost.remove();
+      setOverlayRoot(null);
     }
 
     function createOverlay() {
@@ -179,10 +261,10 @@
     }
 
     return {
-      buildOverlayShellHTML,
-      wireOverlayUiEvents,
-      updateOverlayTypography,
-      updateOverlayHostPosition,
+      setOverlayVisible,
+      applyManagedSkipPosition,
+      clearManagedSkipPosition,
+      destroyOverlay,
       createOverlay,
       updateOverlay,
     };
