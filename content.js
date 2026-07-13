@@ -2574,6 +2574,23 @@
     });
   }
 
+  function applyTranslationResult(el, res) {
+    if (res?.ok) {
+      el.innerHTML = `<div class="ai-label" style="padding:12px 14px 0">翻訳：</div><div class="ai-result" style="padding:4px 14px 12px">${res.translated}</div>`;
+      logContent("fetchTranslation UI success", {
+        translatedLength: (res.translated || "").length,
+      });
+      repositionPopup("translation_loaded");
+      return;
+    }
+
+    el.innerHTML = `<span class="error">エラー: ${res?.error ?? "unknown"}</span>`;
+    logContent("fetchTranslation UI error", {
+      error: res?.error ?? "unknown",
+    });
+    repositionPopup("translation_failed");
+  }
+
   function fetchTranslation(text) {
     const el = state.popupShadowRoot.getElementById("pane-ai");
 
@@ -2583,20 +2600,7 @@
 
     sendToBackground({ type: "FETCH_TRANSLATE", text }, (res) => {
       if (!state.popupShadowRoot) return;
-
-      if (res?.ok) {
-        el.innerHTML = `<div class="ai-label" style="padding:12px 14px 0">翻訳：</div><div class="ai-result" style="padding:4px 14px 12px">${res.translated}</div>`;
-        logContent("fetchTranslation UI success", {
-          translatedLength: (res.translated || "").length,
-        });
-        repositionPopup("translation_loaded");
-      } else {
-        el.innerHTML = `<span class="error">エラー: ${res?.error ?? "unknown"}</span>`;
-        logContent("fetchTranslation UI error", {
-          error: res?.error ?? "unknown",
-        });
-        repositionPopup("translation_failed");
-      }
+      applyTranslationResult(el, res);
     });
   }
 
