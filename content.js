@@ -2134,18 +2134,7 @@
     document.addEventListener("click", state.popupDocClickHandler);
   }
 
-  // [wiring: subtitle popup] close / tab / dynamic word link の UI イベントを subtitle popup shell に接続する。
-  function wireSubtitlePopupUiEvents() {
-    const root = state.popupShadowRoot;
-    if (!root) return;
-
-    const popup = root.getElementById("popup");
-    if (!popup) return;
-
-    root.getElementById("popup-close")?.addEventListener("click", () => {
-      popup.style.display = "none";
-    });
-
+  function wirePopupTabEvents(root) {
     root.querySelectorAll(".popup-tab").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -2159,7 +2148,21 @@
         root.getElementById("pane-" + btn.dataset.tab)?.classList.add("active");
       });
     });
+  }
 
+  // [wiring: subtitle popup] close / tab / dynamic word link の UI イベントを subtitle popup shell に接続する。
+  function wireSubtitlePopupUiEvents() {
+    const root = state.popupShadowRoot;
+    if (!root) return;
+
+    const popup = root.getElementById("popup");
+    if (!popup) return;
+
+    root.getElementById("popup-close")?.addEventListener("click", () => {
+      popup.style.display = "none";
+    });
+
+    wirePopupTabEvents(root);
     registerPopupOutsideClickHandler(popup);
 
     // subtitle popup 内の動的単語リンククリックを拾う listener 登録
