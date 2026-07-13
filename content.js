@@ -2126,6 +2126,14 @@
     `;
   }
 
+  function registerPopupOutsideClickHandler(popup) {
+    // subtitle popup 外クリックで閉じるための document listener 登録
+    state.popupDocClickHandler = () => {
+      popup.style.display = "none";
+    };
+    document.addEventListener("click", state.popupDocClickHandler);
+  }
+
   // [wiring: subtitle popup] close / tab / dynamic word link の UI イベントを subtitle popup shell に接続する。
   function wireSubtitlePopupUiEvents() {
     const root = state.popupShadowRoot;
@@ -2152,11 +2160,7 @@
       });
     });
 
-    // subtitle popup 外クリックで閉じるための document listener 登録
-    state.popupDocClickHandler = () => {
-      popup.style.display = "none";
-    };
-    document.addEventListener("click", state.popupDocClickHandler);
+    registerPopupOutsideClickHandler(popup);
 
     // subtitle popup 内の動的単語リンククリックを拾う listener 登録
     root.addEventListener("click", (e) => {
