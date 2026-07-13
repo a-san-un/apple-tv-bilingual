@@ -3330,25 +3330,28 @@
     });
   }
 
-  // [binder/cue: recovery] initial snapshot apply
-  // [binder/cue: recovery] 起動時に取得済み cue を即時適用し、未取得なら recovery 経路へ委譲する。
-  function renderCurrentSnapshot() {
-    ensureSecondarySubtitleElement();
-
+  function applyInitialCueSnapshotOrWait() {
     // [initial snapshot policy]
     // 起動時に cue が既に読めるなら通常の cuechange 経路を即時実行する。
     // まだ cue が無ければ recovery 側に任せ、ここでは待機ログだけ出す。
 
-    const hasInitialCue = hasRecoverableInitialCue();
-    if (hasInitialCue) {
+    if (hasRecoverableInitialCue()) {
       onCueChange();
-    } else {
-      // 初回 activeCues=0 は空描画で確定せず、cuechange 回復導線へ委譲する。
-      logContent("initial snapshot waiting for first cue", {
-        primaryActiveCues: getTrackActiveCuesLength(state.primaryTrack),
-        secondaryActiveCues: getTrackActiveCuesLength(state.secondaryTrack),
-      });
+      return;
     }
+
+    // 初回 activeCues=0 は空描画で確定せず、cuechange 回復導線へ委譲する。
+    logContent("initial snapshot waiting for first cue", {
+      primaryActiveCues: getTrackActiveCuesLength(state.primaryTrack),
+      secondaryActiveCues: getTrackActiveCuesLength(state.secondaryTrack),
+    });
+  }
+
+  // [binder/cue: recovery] initial snapshot apply
+  // [binder/cue: recovery] 起動時に取得済み cue を即時適用し、未取得なら recovery 経路へ委譲する。
+  function renderCurrentSnapshot() {
+    ensureSecondarySubtitleElement();
+    applyInitialCueSnapshotOrWait();
 
     applySettingsToUI(state.contentSettings, { syncPanelVisibility: false });
     const secondaryBoundTrack = cueController.getBoundSecondaryTrack();
