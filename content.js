@@ -2391,6 +2391,12 @@
     };
   }
 
+  function openPopupDisplay(popup) {
+    popup.style.display = "block";
+    ensurePopupResizeObserver();
+    repositionPopup("initial");
+  }
+
   // [render: subtitle popup display] subtitle popup の表示内容を初期化し、位置を決めて辞書/翻訳取得を開始する。
   function showPopup(word, sentence, anchorRect, options = {}) {
     if (!state.popupShadowRoot) return;
@@ -2415,9 +2421,7 @@
     const popup = resetPopupDisplayState(clean);
     if (!popup) return;
 
-    popup.style.display = "block";
-    ensurePopupResizeObserver();
-    repositionPopup("initial");
+    openPopupDisplay(popup);
 
     fetchDictionary(clean);
     fetchTranslation(sentence || clean);
