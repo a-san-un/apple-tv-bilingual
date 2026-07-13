@@ -241,30 +241,41 @@
     return filter;
   }
 
-  // vtt API の normalizeSubtitleText へ橋渡しする。
-  const normalizeSubtitleText = (...args) =>
-    window.ATVB?.vtt?.normalizeSubtitleText?.(...args) ?? "";
-  // vtt API の cleanCueText へ橋渡しする。
-  const cleanCueText = (...args) =>
-    window.ATVB?.vtt?.cleanCueText?.(...args) ?? "";
-  // vtt API の formatTime へ橋渡しする。
-  const formatTime = (...args) => window.ATVB?.vtt?.formatTime?.(...args) ?? "";
+  const vttApi = window.ATVB?.vtt || {};
+  const resolverApi = window.ATVB?.resolver || {};
 
-  // resolver API の getUniqueTracks へ橋渡しする。
-  const getUniqueTracks = (...args) =>
-    window.ATVB?.resolver?.getUniqueTracks?.(...args) ?? [];
-  // resolver API の getTrackCuesLength へ橋渡しする。
-  const getTrackCuesLength = (...args) =>
-    window.ATVB?.resolver?.getTrackCuesLength?.(...args) ?? 0;
-  // resolver API の getTrackActiveCuesLength へ橋渡しする。
-  const getTrackActiveCuesLength = (...args) =>
-    window.ATVB?.resolver?.getTrackActiveCuesLength?.(...args) ?? 0;
-  // resolver API の pickBestSubtitleTrack へ橋渡しする。
-  const pickBestSubtitleTrack = (...args) =>
-    window.ATVB?.resolver?.pickBestSubtitleTrack?.(...args) ?? null;
-  // resolver API の resolveSecondarySubtitleTrack へ橋渡しする。
-  const resolveSecondarySubtitleTrack = (...args) =>
-    window.ATVB?.resolver?.resolveSecondarySubtitleTrack?.(...args) ?? null;
+  const vttDeps = {
+    normalizeSubtitleText: (...args) =>
+      vttApi.normalizeSubtitleText?.(...args) ?? "",
+    cleanCueText: (...args) => vttApi.cleanCueText?.(...args) ?? "",
+    formatTime: (...args) => vttApi.formatTime?.(...args) ?? "",
+  };
+
+  const resolverDeps = {
+    getUniqueTracks: (...args) => resolverApi.getUniqueTracks?.(...args) ?? [],
+    getTrackCuesLength: (...args) =>
+      resolverApi.getTrackCuesLength?.(...args) ?? 0,
+    getTrackActiveCuesLength: (...args) =>
+      resolverApi.getTrackActiveCuesLength?.(...args) ?? 0,
+    pickBestSubtitleTrack: (...args) =>
+      resolverApi.pickBestSubtitleTrack?.(...args) ?? null,
+    resolveSecondarySubtitleTrack: (...args) =>
+      resolverApi.resolveSecondarySubtitleTrack?.(...args) ?? null,
+  };
+
+  const {
+    normalizeSubtitleText,
+    cleanCueText,
+    formatTime,
+  } = vttDeps;
+
+  const {
+    getUniqueTracks,
+    getTrackCuesLength,
+    getTrackActiveCuesLength,
+    pickBestSubtitleTrack,
+    resolveSecondarySubtitleTrack,
+  } = resolverDeps;
 
   // logger の更新通知を Debug パネル更新へ接続する。
   function registerDebugLogUpdateCallback() {
