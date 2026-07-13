@@ -3398,16 +3398,6 @@
     syncHistoryContextWithPlayback("startBilingual");
 
     bindTracks();
-    const effectiveSecondaryLanguage =
-      state.requestedSecondaryLang || state.contentSettings.secondaryLang;
-    if (state.video && effectiveSecondaryLanguage) {
-      cueController.syncSecondarySubtitleTrack(
-        state.video,
-        effectiveSecondaryLanguage,
-        renderSecondarySubtitle,
-      );
-      state.secondaryTrack = cueController.getBoundSecondaryTrack();
-    }
 
     logContentSubtitle("Selected tracks detail", {
       requestedPrimaryLang: state.contentSettings.primaryLang,
