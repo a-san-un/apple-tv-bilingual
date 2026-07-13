@@ -3028,6 +3028,11 @@
     return true;
   }
 
+  function runReinitializeFromCurrentPlayback(reason = "unknown") {
+    if (!refreshPlaybackContextForReinitialize()) return null;
+    return reinitializeSubtitlePipeline(reason);
+  }
+
   // [binder/cue: recovery] track resolve retry タイマーを管理する。
   function scheduleTrackResolveRetry(reason = "video_changed") {
     clearTrackResolveRetryTimers();
@@ -3048,11 +3053,10 @@
           delayMs,
         });
 
-        if (!refreshPlaybackContextForReinitialize()) return;
-
-        const retryResult = reinitializeSubtitlePipeline(
+        const retryResult = runReinitializeFromCurrentPlayback(
           `${reason}:retry_${attempt}`,
         );
+        if (!retryResult) return;
 
         if (retryResult.ready) {
           logContentSubtitle("track resolve retry success", {
@@ -3088,9 +3092,8 @@
     if (state.restarting) return;
 
     const proceedWithReinitialize = () => {
-      if (!refreshPlaybackContextForReinitialize()) return;
-
-      const result = reinitializeSubtitlePipeline(reason);
+      const result = runReinitializeFromCurrentPlayback(reason);
+      if (!result) return;
 
       if (reason === "video_changed") {
         if (result.ready) {
