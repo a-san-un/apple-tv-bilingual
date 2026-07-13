@@ -2746,7 +2746,7 @@
     logContentSettings,
     getVideoAndDialog,
     teardownForRestart,
-    resetRuntimeState,
+    prepareForRestart,
     startBilingual,
     isPlaybackPageReady,
     getPlaybackContextLogPayload,
@@ -3353,6 +3353,11 @@
     teardownRuntimeBindingsForRestart();
     teardownPlaybackControlsUi();
     teardownUiHostsAndListeners();
+  }
+
+  function prepareForRestart() {
+    teardownForRestart();
+    resetRuntimeState();
   }
 
   // [binder/cue: attach] bootstrap から呼ばれる track bind の薄い入口。

@@ -10,7 +10,7 @@
       logContentSettings,
       getVideoAndDialog,
       teardownForRestart,
-      resetRuntimeState,
+      prepareForRestart,
       startBilingual,
       isPlaybackPageReady,
       getPlaybackContextLogPayload,
@@ -238,8 +238,7 @@
         });
 
         const wasPanelVisible = state.panelVisible;
-        teardownForRestart();
-        resetRuntimeState();
+        prepareForRestart();
         startBilingual({ keepPanelVisible: wasPanelVisible });
 
         logContentSettings("restartBilingual done", { reason });
