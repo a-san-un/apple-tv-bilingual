@@ -2352,6 +2352,27 @@
     state.popupResizeObserver.observe(popup);
   }
 
+  function resetPopupDisplayState(clean) {
+    const root = state.popupShadowRoot;
+    const popup = root?.getElementById("popup");
+    if (!root || !popup) return null;
+
+    root.getElementById("popup-word").textContent = clean;
+    root.getElementById("popup-reading").textContent = "";
+    root.getElementById("popup-badges").innerHTML = "";
+    root.getElementById("pane-dict").innerHTML =
+      '<span class="loading">検索中...</span>';
+    root.getElementById("pane-ai").innerHTML =
+      '<span class="loading">翻訳中...</span>';
+
+    root.querySelectorAll(".popup-tab").forEach((b) => b.classList.remove("active"));
+    root.querySelectorAll(".popup-pane").forEach((b) => b.classList.remove("active"));
+    root.querySelector('[data-tab="dict"]')?.classList.add("active");
+    root.getElementById("pane-dict")?.classList.add("active");
+
+    return popup;
+  }
+
   // [render: subtitle popup display] subtitle popup の表示内容を初期化し、位置を決めて辞書/翻訳取得を開始する。
   function showPopup(word, sentence, anchorRect, options = {}) {
     if (!state.popupShadowRoot) return;
@@ -2396,25 +2417,8 @@
         : null,
     };
 
-    const popup = state.popupShadowRoot.getElementById("popup");
-    state.popupShadowRoot.getElementById("popup-word").textContent = clean;
-    state.popupShadowRoot.getElementById("popup-reading").textContent = "";
-    state.popupShadowRoot.getElementById("popup-badges").innerHTML = "";
-    state.popupShadowRoot.getElementById("pane-dict").innerHTML =
-      '<span class="loading">検索中...</span>';
-    state.popupShadowRoot.getElementById("pane-ai").innerHTML =
-      '<span class="loading">翻訳中...</span>';
-
-    state.popupShadowRoot
-      .querySelectorAll(".popup-tab")
-      .forEach((b) => b.classList.remove("active"));
-    state.popupShadowRoot
-      .querySelectorAll(".popup-pane")
-      .forEach((b) => b.classList.remove("active"));
-    state.popupShadowRoot
-      .querySelector('[data-tab="dict"]')
-      .classList.add("active");
-    state.popupShadowRoot.getElementById("pane-dict").classList.add("active");
+    const popup = resetPopupDisplayState(clean);
+    if (!popup) return;
 
     popup.style.display = "block";
     ensurePopupResizeObserver();
