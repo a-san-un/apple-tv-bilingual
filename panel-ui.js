@@ -159,28 +159,32 @@
 
     // panel visibility / toggle / persistence
 
-    function showRightPanel() {
-      const panelHost = getTarget().querySelector("#atv-panel-host");
-      const overlayHost = getTarget().querySelector("#atv-overlay-host");
-      const toggleBtn = getTarget().querySelector("#atv-toggle-btn");
-      if (panelHost) panelHost.style.display = "";
+    function getPanelUiElements() {
+      const target = getTarget();
+      return {
+        panelHost: target.querySelector("#atv-panel-host"),
+        overlayHost: target.querySelector("#atv-overlay-host"),
+        toggleBtn: target.querySelector("#atv-toggle-btn"),
+      };
+    }
+
+    function applyPanelVisibility(show) {
+      const { panelHost, overlayHost, toggleBtn } = getPanelUiElements();
+
+      if (panelHost) panelHost.style.display = show ? "" : "none";
       if (overlayHost) {
-        overlayHost.style.width = "70%";
-        overlayHost.style.display = "none";
+        overlayHost.style.width = show ? "70%" : "100%";
+        overlayHost.style.display = show ? "none" : "";
       }
-      if (toggleBtn) toggleBtn.style.display = "none";
+      if (toggleBtn) toggleBtn.style.display = show ? "none" : "block";
+    }
+
+    function showRightPanel() {
+      applyPanelVisibility(true);
     }
 
     function hideRightPanel() {
-      const panelHost = getTarget().querySelector("#atv-panel-host");
-      const overlayHost = getTarget().querySelector("#atv-overlay-host");
-      const toggleBtn = getTarget().querySelector("#atv-toggle-btn");
-      if (panelHost) panelHost.style.display = "none";
-      if (overlayHost) {
-        overlayHost.style.width = "100%";
-        overlayHost.style.display = "";
-      }
-      if (toggleBtn) toggleBtn.style.display = "block";
+      applyPanelVisibility(false);
     }
 
     function togglePanel(force) {
@@ -188,19 +192,7 @@
       else state.panelVisible = !state.panelVisible;
 
       applyLayout(state.panelVisible);
-
-      const panelHost = getTarget().querySelector("#atv-panel-host");
-      const overlayHost = getTarget().querySelector("#atv-overlay-host");
-      const toggleBtn = getTarget().querySelector("#atv-toggle-btn");
-
-      if (panelHost) panelHost.style.display = state.panelVisible ? "" : "none";
-      if (overlayHost) {
-        overlayHost.style.display = state.panelVisible ? "none" : "";
-        overlayHost.style.width = state.panelVisible ? "70%" : "100%";
-      }
-      if (toggleBtn) {
-        toggleBtn.style.display = state.panelVisible ? "none" : "block";
-      }
+      applyPanelVisibility(state.panelVisible);
 
       if (typeof scheduleAdjustPlaybackControls === "function") {
         scheduleAdjustPlaybackControls(
