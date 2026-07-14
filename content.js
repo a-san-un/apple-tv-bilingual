@@ -1528,21 +1528,7 @@
   }
 
   function clearPlaybackControlsTransforms() {
-    const { header, controls, progress, skipOverlay, footer, unified, volume } =
-      getPlaybackControlsLayoutTargets();
-    const { bar, remaining } = getShadowProgressTargets();
-    clearManagedHeaderSizing(header);
-    clearManagedTranslateX(controls);
-    clearManagedProgressInset(progress);
-    clearManagedTranslateX(bar);
-    clearManagedTranslateX(remaining);
-    clearManagedSkipPosition(skipOverlay);
-    clearManagedTranslateX(skipOverlay);
-    clearManagedTranslateX(footer);
-    clearManagedFooterSizing(footer);
-    clearManagedFooterChildSizing(footer);
-    clearManagedTranslateX(unified);
-    clearManagedTranslateX(volume);
+    return clearPlaybackControlsTransformsFromModule();
   }
 
   function clearPlaybackControlsLayoutState({
@@ -1574,207 +1560,7 @@
 
     state.playbackControlsApplying = true;
     try {
-      const {
-        panel,
-        header,
-        controls,
-        progress,
-        skipOverlay,
-        footer,
-        unified,
-        volume,
-        video,
-      } = getPlaybackControlsLayoutTargets();
-      const { bar: shadowProgressBar, remaining: shadowRemainingTime } =
-        getShadowProgressTargets();
-      if (
-        !header &&
-        !controls &&
-        !progress &&
-        !skipOverlay &&
-        !footer &&
-        !unified &&
-        !volume &&
-        !shadowProgressBar &&
-        !shadowRemainingTime
-      ) {
-        return;
-      }
-
-      const visibleArea = computePlaybackVisibleArea(panel, video);
-      if (!visibleArea) {
-        clearManagedTranslateX(footer);
-        clearPlaybackControlsLayoutState({
-          header,
-          controls,
-          progress,
-          skipOverlay,
-          footer,
-          unified,
-          volume,
-          shadowProgressBar,
-          shadowRemainingTime,
-        });
-        return;
-      }
-
-      const { panelRect, safeAreaLeft, safeAreaRight, safeAreaWidth } =
-        visibleArea;
-      const visibleRight = safeAreaRight;
-      const visibleWidth = safeAreaWidth;
-
-      if (header) {
-        if (visibleWidth > 0) {
-          applyManagedHeaderSizing(header, visibleWidth, safeAreaLeft);
-        } else {
-          clearManagedHeaderSizing(header);
-        }
-      }
-
-      clearManagedTranslateX(footer);
-      if (footer) {
-        if (visibleWidth > 0) {
-          applyManagedFooterSizing(footer, visibleWidth, safeAreaLeft);
-          applyManagedFooterChildSizing(footer, visibleWidth);
-        } else {
-          clearManagedFooterSizing(footer);
-          clearManagedFooterChildSizing(footer);
-        }
-      }
-
-      clearManagedProgressInset(progress);
-
-      if (visibleWidth <= 0) {
-        clearPlaybackControlsLayoutState({
-          header,
-          controls,
-          progress,
-          skipOverlay,
-          footer,
-          unified,
-          volume,
-          shadowProgressBar,
-          shadowRemainingTime,
-        });
-        return;
-      }
-
-      const targetCenterX = safeAreaLeft + visibleWidth / 2;
-      const unifiedMaxRight = panelRect.left - 16;
-      const unifiedMinLeft = safeAreaLeft + 16;
-      const controlsTargetRight = panelRect.left - 40;
-      const controlsMinLeft = safeAreaLeft + 16;
-      const volumeTargetRight = panelRect.left - 60;
-      const volumeMinLeft = safeAreaLeft + 16;
-      const progressTargetRight = panelRect.left - 40;
-      const progressMinLeft = safeAreaLeft + 24;
-      const remainingTargetRight = panelRect.left - 60;
-      const remainingMinLeft = safeAreaLeft + 24;
-
-      if (unified) {
-        const unifiedRect = unified.getBoundingClientRect();
-        const unifiedExistingShiftX = getManagedShiftX(unified);
-        const unifiedCenterX = unifiedRect.left + unifiedRect.width / 2;
-        let unifiedShiftX =
-          unifiedExistingShiftX + (targetCenterX - unifiedCenterX);
-
-        unifiedShiftX = clampManagedShiftX(
-          unifiedRect,
-          unifiedExistingShiftX,
-          unifiedShiftX,
-          unifiedMinLeft,
-          unifiedMaxRight,
-        );
-
-        applyManagedTranslateX(unified, unifiedShiftX);
-
-        if (DEBUG_SECONDARY_SUBS) {
-          logContent("unified controls recentered", {
-            reason,
-            unifiedShiftX: Number(unifiedShiftX.toFixed(2)),
-            visibleRight: Number(visibleRight.toFixed(2)),
-            targetCenterX: Number(targetCenterX.toFixed(2)),
-          });
-        }
-      }
-
-      if (
-        volume &&
-        !(unified && (volume === unified || unified.contains(volume)))
-      ) {
-        const volumeRect = volume.getBoundingClientRect();
-        const volumeExistingShiftX = getManagedShiftX(volume);
-        let volumeShiftX = volumeExistingShiftX;
-        if (volumeRect.right > volumeTargetRight) {
-          volumeShiftX += volumeTargetRight - volumeRect.right;
-        }
-        volumeShiftX = clampManagedShiftX(
-          volumeRect,
-          volumeExistingShiftX,
-          volumeShiftX,
-          volumeMinLeft,
-          volumeTargetRight,
-        );
-        applyManagedTranslateX(volume, volumeShiftX);
-      }
-
-      if (controls) {
-        const controlsRect = controls.getBoundingClientRect();
-        const controlsExistingShiftX = getManagedShiftX(controls);
-        let controlsShiftX = controlsExistingShiftX;
-        if (controlsRect.right > controlsTargetRight) {
-          controlsShiftX += controlsTargetRight - controlsRect.right;
-        }
-        controlsShiftX = clampManagedShiftX(
-          controlsRect,
-          controlsExistingShiftX,
-          controlsShiftX,
-          controlsMinLeft,
-          controlsTargetRight,
-        );
-        applyManagedTranslateX(controls, controlsShiftX);
-      }
-
-      if (shadowProgressBar) {
-        const progressRect = shadowProgressBar.getBoundingClientRect();
-        const progressExistingShiftX = getManagedShiftX(shadowProgressBar);
-        let progressShiftX = progressExistingShiftX;
-        if (progressRect.right > progressTargetRight) {
-          progressShiftX += progressTargetRight - progressRect.right;
-        }
-
-        progressShiftX = clampManagedShiftX(
-          progressRect,
-          progressExistingShiftX,
-          progressShiftX,
-          progressMinLeft,
-          progressTargetRight,
-        );
-
-        applyManagedTranslateX(shadowProgressBar, progressShiftX);
-      }
-
-      if (shadowRemainingTime) {
-        const remainingRect = shadowRemainingTime.getBoundingClientRect();
-        const remainingExistingShiftX = getManagedShiftX(shadowRemainingTime);
-        let remainingShiftX = remainingExistingShiftX;
-        if (remainingRect.right > remainingTargetRight) {
-          remainingShiftX += remainingTargetRight - remainingRect.right;
-        }
-        remainingShiftX = clampManagedShiftX(
-          remainingRect,
-          remainingExistingShiftX,
-          remainingShiftX,
-          remainingMinLeft,
-          remainingTargetRight,
-        );
-        applyManagedTranslateX(shadowRemainingTime, remainingShiftX);
-      }
-
-      if (skipOverlay) {
-        clearManagedTranslateX(skipOverlay);
-        applyManagedSkipPosition(skipOverlay, safeAreaRight);
-      }
+      return adjustPlaybackControlsForPanelFromModule(reason);
     } finally {
       state.playbackControlsApplying = false;
     }
@@ -2784,6 +2570,32 @@
     PLAYBACK_CONTROLS_LAYOUT,
     setStyleIfChanged,
   });
+
+  const { createPlaybackControlsLayout } = root.playbackControlsLayout;
+  const playbackControlsLayout = createPlaybackControlsLayout({
+    PLAYBACK_CONTROLS_LAYOUT,
+    PLAYBACK_CONTROLS_MANAGED_ATTR,
+    PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR,
+    PLAYBACK_CONTROLS_SHIFT_X_ATTR,
+    PLAYBACK_HEADER_BASE_WIDTH_ATTR,
+    PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR,
+    PLAYBACK_FOOTER_BASE_WIDTH_ATTR,
+    PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR,
+    PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR,
+    PLAYBACK_PROGRESS_BASE_WIDTH_ATTR,
+    PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR,
+    PLAYBACK_SKIP_BASE_LEFT_ATTR,
+    PLAYBACK_SKIP_BASE_RIGHT_ATTR,
+    PLAYBACK_SKIP_BASE_TRANSFORM_ATTR,
+    DEBUG_SECONDARY_SUBS,
+    logContent,
+    getPlaybackControlsLayoutTargets,
+  });
+
+  const {
+    clearPlaybackControlsTransforms: clearPlaybackControlsTransformsFromModule,
+    adjustPlaybackControlsForPanel: adjustPlaybackControlsForPanelFromModule,
+  } = playbackControlsLayout;
 
   const { createRuntimeObservers } = root.runtimeObservers;
   const runtimeObservers = createRuntimeObservers({
