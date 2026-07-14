@@ -37,6 +37,7 @@
   ];
   const TRACK_RESOLVE_RETRY_DELAYS_MS = [120, 260, 420, 680];
   const SECONDARY_SUBTITLE_GRACE_MS = 1200;
+  const SECONDARY_SUBTITLE_IDLE_CLEAR_MS = 3200;
   const PANEL_PRIMARY_GRACE_MS = 600;
   const SUBTITLE_HISTORY_MAX_PER_CONTENT = 500;
   const PLAYBACK_CONTROLS_LAYOUT = {
@@ -94,6 +95,8 @@
     subtitleHistoryStore: new Map(),
     subtitleHistory: [],
     lastPanelRenderSnapshot: null,
+    currentSubtitleBlock: null,
+    lastCurrentSubtitleBlockAt: 0,
     lastAfterRenderSecondarySnapshotSignature: "",
     lastSecondarySyncContext: "",
     lastPrimaryRecoveryAttemptAt: 0,
@@ -133,6 +136,7 @@
   let startupCompletedLogged = false;
   let lastSecondaryText = "";
   let lastSecondaryTextAt = 0;
+  let lastSecondarySignalAt = 0;
 
   // logger API の logContent へ橋渡しする。
   // 既存の logContent(message, payload) 互換を維持しつつ contentKey を付与する。
@@ -205,6 +209,39 @@
       };
     }
     return { value: payload, contentKey: scopedContentKey };
+  }
+
+  function computeCurrentSubtitleBlock(reason = "unknown") {
+    const currentBlock = state.currentSubtitleBlock || null;
+    const primaryText = normalizeSubtitleText(
+      currentBlock?.primaryText || state.lastPrimaryText || "",
+    );
+    const secondaryText = normalizeSubtitleText(
+      lastSecondaryText || currentBlock?.secondaryText || "",
+    );
+
+    return {
+      primaryText,
+      secondaryText,
+      hasPrimarySignal: Boolean(primaryText),
+      hasSecondarySignal: Boolean(secondaryText),
+      sourceReason: reason,
+      updatedAt: Date.now(),
+    };
+  }
+
+  function setCurrentSubtitleBlock(block, reason = "unknown") {
+    state.currentSubtitleBlock = block;
+    state.lastCurrentSubtitleBlockAt = Date.now();
+
+    logContent("current subtitle block updated", {
+      reason,
+      hasBlock: Boolean(block),
+      primaryTextLength: block?.primaryText?.length || 0,
+      secondaryTextLength: block?.secondaryText?.length || 0,
+      hasPrimarySignal: Boolean(block?.hasPrimarySignal),
+      hasSecondarySignal: Boolean(block?.hasSecondarySignal),
+    });
   }
 
   const logContentSettings = (message, payload = null) =>
@@ -725,36 +762,42 @@
     let finalText = resolvedText;
     const now = Date.now();
 
+    if (activeCuesLength > 0 || resolvedText) {
+      lastSecondarySignalAt = now;
+    }
+
     if (finalText) {
       lastSecondaryText = finalText;
       lastSecondaryTextAt = now;
     } else if (
       !finalText &&
-      activeCuesLength === 0 &&
       lastSecondaryText &&
-      now - lastSecondaryTextAt <= SECONDARY_SUBTITLE_GRACE_MS
+      lastSecondarySignalAt > 0 &&
+      now - lastSecondarySignalAt <= SECONDARY_SUBTITLE_IDLE_CLEAR_MS
     ) {
       finalText = lastSecondaryText;
       if (DEBUG_SECONDARY_SUBS) {
         logContent(
-          "secondary subtitle retained during grace period",
+          "secondary subtitle retained until next cue or idle clear",
           getSecondaryRenderLogPayload(finalText, track, elementCount),
         );
       }
     } else if (
       !finalText &&
-      now - lastSecondaryTextAt > SECONDARY_SUBTITLE_GRACE_MS
+      lastSecondarySignalAt > 0 &&
+      now - lastSecondarySignalAt > SECONDARY_SUBTITLE_IDLE_CLEAR_MS
     ) {
       if (el.textContent) {
         if (DEBUG_SECONDARY_SUBS) {
           logContent(
-            "secondary subtitle cleared after grace period",
+            "secondary subtitle cleared after idle timeout",
             getSecondaryRenderLogPayload("", track, elementCount),
           );
         }
       }
       lastSecondaryText = "";
       lastSecondaryTextAt = 0;
+      lastSecondarySignalAt = 0;
     }
 
     if (DEBUG_SECONDARY_SUBS) {
@@ -763,6 +806,13 @@
         getSecondaryRenderLogPayload(finalText, track, elementCount),
       );
     }
+
+    // current subtitle block の本流更新は onPrimaryCueChange 側。
+    // ここでは secondary render 時の補助同期として current を再計算する。
+    setCurrentSubtitleBlock(
+      computeCurrentSubtitleBlock("renderSecondarySubtitle"),
+      "renderSecondarySubtitle",
+    );
 
     el.textContent = finalText;
     el.dataset.language = track?.language || "";
@@ -774,7 +824,8 @@
       const panelHost = getTarget().querySelector("#atv-panel-host");
       const secondaryEl = panelHost?.querySelector("[data-secondary-subtitle]");
       const snapshot = state.lastPanelRenderSnapshot || {};
-      const currentSubtitleBlock = snapshot.currentSubtitleBlock || null;
+      const currentSubtitleBlock =
+        state.currentSubtitleBlock || snapshot.currentSubtitleBlock || null;
       const payload = {
         tag,
         allBlocksCount: snapshot.allBlocksCount ?? 0,
@@ -877,6 +928,7 @@
         state.video,
         effectiveSecondaryLanguage,
         renderSecondarySubtitle,
+        { suppressRender: true },
       );
       state.secondaryTrack = cueController.getBoundSecondaryTrack();
 
@@ -890,19 +942,19 @@
       const primaryCueText = normalizeSubtitleText(
         getCurrentCueText(state.primaryTrack),
       );
-      const snapshotPrimaryText = normalizeSubtitleText(
-        state.lastPanelRenderSnapshot?.currentSubtitleBlock?.primaryText || "",
+      const currentPrimaryText = normalizeSubtitleText(
+        state.currentSubtitleBlock?.primaryText || state.lastPrimaryText || "",
       );
       const hasPrimaryLiveSignal =
         primaryActiveCues > 0 || Boolean(primaryCueText);
       const now = Date.now();
-      const hasFreshPrimarySnapshot =
-        Boolean(snapshotPrimaryText) &&
-        state.lastPrimarySnapshotAt > 0 &&
-        now - state.lastPrimarySnapshotAt <= 3000;
+      const hasFreshCurrentPrimary =
+        Boolean(currentPrimaryText) &&
+        state.lastCurrentSubtitleBlockAt > 0 &&
+        now - state.lastCurrentSubtitleBlockAt <= 3000;
       const hasSecondarySignal =
         secondaryActiveCues > 0 || Boolean(secondaryCueText);
-      const hasPrimarySignal = hasPrimaryLiveSignal || hasFreshPrimarySnapshot;
+      const hasPrimarySignal = hasPrimaryLiveSignal || hasFreshCurrentPrimary;
 
       const syncContextSummary = JSON.stringify({
         trackCount: state.video?.textTracks?.length ?? 0,
@@ -912,8 +964,8 @@
         secondaryActiveCues,
         primaryActiveCues,
         primaryCueTextLength: primaryCueText.length,
-        snapshotPrimaryTextLength: snapshotPrimaryText.length,
-        hasFreshPrimarySnapshot,
+        currentPrimaryTextLength: currentPrimaryText.length,
+        hasFreshCurrentPrimary,
       });
       const shouldLogSyncContext =
         previousSecondaryTrack !== state.secondaryTrack ||
@@ -930,8 +982,8 @@
           secondaryActiveCues,
           primaryActiveCues,
           primaryCueTextLength: primaryCueText.length,
-          snapshotPrimaryTextLength: snapshotPrimaryText.length,
-          hasFreshPrimarySnapshot,
+          currentPrimaryTextLength: currentPrimaryText.length,
+          hasFreshCurrentPrimary,
         });
       }
 
@@ -2565,6 +2617,7 @@
     setLastPrimaryText: (text) => {
       state.lastPrimaryText = text;
     },
+    setCurrentSubtitleBlock,
     appendSubtitleHistory,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
@@ -2862,6 +2915,7 @@
   function clearInternalSubtitleState(reason = "unknown") {
     lastSecondaryText = "";
     lastSecondaryTextAt = 0;
+    lastSecondarySignalAt = 0;
     state.lastPrimaryText = "";
     state.lastPrimarySnapshotAt = 0;
 

@@ -114,12 +114,16 @@
     function buildCurrentPanelBlock(currentTime) {
       const curPrimaryCue = getCurrentCue(state.primaryTrack, currentTime);
       const curSecondaryCue = findCueAt(state.secondaryTrack, currentTime);
-      if (!curPrimaryCue && !curSecondaryCue) {
+      const currentStateBlock = state.currentSubtitleBlock || null;
+
+      if (!curPrimaryCue && !curSecondaryCue && !currentStateBlock) {
         return { block: null, curPrimaryCue: null };
       }
 
       const currentCue = curPrimaryCue || curSecondaryCue;
-      let currentPrimaryText = curPrimaryCue ? cleanCueText(curPrimaryCue) : "";
+      let currentPrimaryText =
+        currentStateBlock?.primaryText ||
+        (curPrimaryCue ? cleanCueText(curPrimaryCue) : "");
 
       if (
         !currentPrimaryText &&
@@ -137,7 +141,13 @@
         }
       }
 
-      const currentSecondaryText = cleanCueText(curSecondaryCue);
+      const currentSecondaryText =
+        currentStateBlock?.secondaryText || cleanCueText(curSecondaryCue);
+
+      if (!currentCue) {
+        return { block: null, curPrimaryCue: null };
+      }
+
       if (DEBUG_PANEL_PROBE) {
         logContent("panel render current block probe", {
           currentTime,
@@ -147,7 +157,9 @@
           secondaryTrackLanguage: state.secondaryTrack?.language,
           secondaryTrackLabel: state.secondaryTrack?.label,
           curPrimaryCueText: cleanCueText(curPrimaryCue).slice(0, 40),
-          curSecondaryCueText: currentSecondaryText.slice(0, 40),
+          curSecondaryCueText: cleanCueText(curSecondaryCue).slice(0, 40),
+          statePrimaryText: (currentStateBlock?.primaryText || "").slice(0, 40),
+          stateSecondaryText: (currentStateBlock?.secondaryText || "").slice(0, 40),
           resolvedPrimary: currentPrimaryText.slice(0, 40),
           currentBlockSecondary: currentSecondaryText.slice(0, 40),
         });
@@ -167,18 +179,23 @@
 
     // [render: panel snapshot] current block と primary snapshot の最終描画状態を保持する。
     function updatePanelRenderSnapshot(allBlocks, curPrimaryCue) {
-      const currentSubtitleBlock = allBlocks.find((b) => b.state === "current");
+      const renderedCurrentBlock = allBlocks.find((b) => b.state === "current");
+      const stateCurrentBlock = state.currentSubtitleBlock || null;
+      const currentSubtitleBlock =
+        stateCurrentBlock ||
+        (renderedCurrentBlock
+          ? {
+              primaryText: renderedCurrentBlock.primary || "",
+              secondaryText: renderedCurrentBlock.secondary || "",
+            }
+          : null);
+
       state.lastPanelRenderSnapshot = {
         allBlocksCount: allBlocks.length,
-        currentSubtitleBlock: currentSubtitleBlock
-          ? {
-              primaryText: currentSubtitleBlock.primary || "",
-              secondaryText: currentSubtitleBlock.secondary || "",
-            }
-          : null,
+        currentSubtitleBlock,
       };
 
-      if (curPrimaryCue && currentSubtitleBlock?.primary) {
+      if (curPrimaryCue && currentSubtitleBlock?.primaryText) {
         state.lastPrimarySnapshotAt = Date.now();
       }
     }

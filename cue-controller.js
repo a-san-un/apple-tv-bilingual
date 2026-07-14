@@ -17,6 +17,7 @@
     getCurrentTime,
     getLastPrimaryText,
     setLastPrimaryText,
+    setCurrentSubtitleBlock,
     appendSubtitleHistory,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
@@ -86,8 +87,11 @@
       video,
       requestedLang,
       renderSecondarySubtitleOverride,
+      options = {},
     ) {
       if (!video) return;
+
+      const suppressRender = options.suppressRender === true;
 
       if (DEBUG_SECONDARY_SUBS) {
         logContent(
@@ -100,7 +104,9 @@
 
       if (!track) {
         unbindSecondarySubtitleTrack();
-        (renderSecondarySubtitleOverride || renderSecondarySubtitle)("", null);
+        if (!suppressRender) {
+          (renderSecondarySubtitleOverride || renderSecondarySubtitle)("", null);
+        }
         return;
       }
 
@@ -109,10 +115,12 @@
         return;
       }
 
-      (renderSecondarySubtitleOverride || renderSecondarySubtitle)(
-        getCurrentCueText(track),
-        track,
-      );
+      if (!suppressRender) {
+        (renderSecondarySubtitleOverride || renderSecondarySubtitle)(
+          getCurrentCueText(track),
+          track,
+        );
+      }
     }
 
     function onPrimaryCueChange() {
@@ -134,6 +142,18 @@
       }
 
       updateOverlay(pText, sText);
+
+      setCurrentSubtitleBlock(
+        {
+          primaryText: pText || "",
+          secondaryText: sText || "",
+          hasPrimarySignal: Boolean(pText),
+          hasSecondarySignal: Boolean(sText),
+          sourceReason: "onPrimaryCueChange",
+          updatedAt: Date.now(),
+        },
+        "onPrimaryCueChange",
+      );
 
       if (pText && pText !== getLastPrimaryText() && pCue) {
         setLastPrimaryText(pText);
