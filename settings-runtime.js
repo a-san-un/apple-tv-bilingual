@@ -205,7 +205,7 @@
       });
     }
 
-    function restartBilingual(nextSettings = null, reason = "unknown") {
+    function restartBilingual(nextSettings = null, reason = "unknown", options = {}) {
       logContent("restartBilingual trace", {
         reason,
         panelVisible: state.panelVisible,
@@ -237,7 +237,10 @@
           requestedSecondaryLang: state.requestedSecondaryLang,
         });
 
-        const wasPanelVisible = state.panelVisible;
+        const wasPanelVisible =
+          typeof options.keepPanelVisible === "boolean"
+            ? options.keepPanelVisible
+            : state.panelVisible;
         prepareForRestart();
         startBilingual({ keepPanelVisible: wasPanelVisible });
 
@@ -278,6 +281,13 @@
           },
         });
 
+        state.contentSettings = {
+          ...state.contentSettings,
+          ...next,
+        };
+
+        state.panelVisible = state.contentSettings.showSidebar !== false;
+
         if (state.video && resolvedSecondaryLanguage) {
           cueController.syncSecondarySubtitleTrack(
             state.video,
@@ -287,7 +297,9 @@
           state.secondaryTrack = cueController.getBoundSecondaryTrack();
         }
 
-        restartBilingual(next, "SETTINGS_CHANGED");
+        restartBilingual(next, "SETTINGS_CHANGED", {
+          keepPanelVisible: next.showSidebar !== false,
+        });
 
         const appliedRequestedSecondaryLang = state.requestedSecondaryLang;
         const appliedResolvedSecondaryLanguage = resolvedSecondaryLanguage;

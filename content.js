@@ -14,7 +14,6 @@
     primaryLang: "en",
     secondaryLang: "",
     showSidebar: true,
-    pinSidebar: false,
     playWordAudio: true,
     enableAiTooltip: false,
     preferredAiProvider: "auto",
@@ -72,6 +71,13 @@
   const PLAYBACK_PROGRESS_BASE_WIDTH_ATTR = "data-atvb-progress-base-width";
   const PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR =
     "data-atvb-progress-base-max-width";
+
+  const PLAYBACK_SKIP_BASE_LEFT_ATTR =
+    "data-atvb-playback-skip-base-left";
+  const PLAYBACK_SKIP_BASE_RIGHT_ATTR =
+    "data-atvb-playback-skip-base-right";
+  const PLAYBACK_SKIP_BASE_TRANSFORM_ATTR =
+    "data-atvb-playback-skip-base-transform";
 
   const state = {
     booted: false,
@@ -1651,32 +1657,21 @@
 
 
 
-  function pinRightPanel() {}
-
-  function unpinRightPanel() {}
-
   function applySettingsToUI(settings, options = {}) {
     const shouldSyncPanelVisibility = options.syncPanelVisibility !== false;
 
     if (shouldSyncPanelVisibility) {
-      if (settings.showSidebar === false) {
-        panelUi.hideRightPanel();
-      } else if (state.panelVisible) {
+      const sidebarEnabled = settings.showSidebar !== false;
+      if (sidebarEnabled) {
         panelUi.showRightPanel();
       } else {
         panelUi.hideRightPanel();
       }
-    }
-
-    if (settings.pinSidebar) {
-      pinRightPanel();
-    } else {
-      unpinRightPanel();
+      state.panelVisible = sidebarEnabled;
     }
 
     logContent("Applied settings to UI", {
       showSidebar: settings.showSidebar,
-      pinSidebar: settings.pinSidebar,
       playWordAudio: settings.playWordAudio,
       enableAiTooltip: settings.enableAiTooltip,
       preferredAiProvider: settings.preferredAiProvider,
@@ -2496,6 +2491,8 @@
     throw new Error("ATVB cueController.createCueController is not available");
   }
 
+  const root = (window.ATVB = window.ATVB || {});
+
   const { renderPanel } = createPanelRenderer({
     state,
     makeClickableSpans,
@@ -2508,55 +2505,6 @@
     PANEL_PRIMARY_GRACE_MS,
     DEBUG_PANEL_PROBE,
   });
-
-  const cueController = createCueController({
-    logContent,
-    DEBUG_SECONDARY_SUBS,
-    getSecondaryTrackDebugPayload,
-    resolveSecondarySubtitleTrack:
-      resolverDeps.resolveSecondarySubtitleTrack,
-    getCurrentCueText,
-    getTrackCuesLength: resolverDeps.getTrackCuesLength,
-    getTrackActiveCuesLength: resolverDeps.getTrackActiveCuesLength,
-    getRequestedSecondaryLanguage: () =>
-      state.requestedSecondaryLang || state.contentSettings.secondaryLang,
-    getPrimaryTrack: () => state.primaryTrack,
-    getSecondaryTrack: () => state.secondaryTrack,
-    getCurrentCue,
-    cleanCueText: vttDeps.cleanCueText,
-    getCurrentTime: () => state.video?.currentTime ?? 0,
-    getLastPrimaryText: () => state.lastPrimaryText,
-    setLastPrimaryText: (text) => {
-      state.lastPrimaryText = text;
-    },
-    appendSubtitleHistory,
-    DEBUG_PANEL_PROBE,
-    renderSecondarySubtitle,
-    updateOverlay,
-    renderPanel,
-  });
-
-  const panelUi = createPanelUi({
-    state,
-    getTarget,
-    ensureSecondarySubtitleElement,
-    getLiveDebugLogFilter,
-    getDebugLogText,
-    clearDebugLogs,
-    sendToBackground,
-    onClosePanel: () => panelUi.togglePanel(false),
-    applyLayout,
-    persistPanelVisibility,
-    scheduleAdjustPlaybackControls,
-    scheduleControlSettlingBurst,
-    logContent,
-    renderCurrentSnapshot,
-    renderPanel,
-    applySecondarySubtitleFallback,
-  });
-
-
-  // panel UI は別モジュールで組み立て、content 側では呼び出しと連携だけを持つ。
 
   const { createOverlayController } = root.overlayController;
   const overlayController = createOverlayController({
@@ -2596,6 +2544,57 @@
     clearPlaybackControlsTransforms: clearPlaybackControlsTransformsFromModule,
     adjustPlaybackControlsForPanel: adjustPlaybackControlsForPanelFromModule,
   } = playbackControlsLayout;
+
+  const cueController = createCueController({
+    logContent,
+    DEBUG_SECONDARY_SUBS,
+    getSecondaryTrackDebugPayload,
+    resolveSecondarySubtitleTrack:
+      resolverDeps.resolveSecondarySubtitleTrack,
+    getCurrentCueText,
+    getTrackCuesLength: resolverDeps.getTrackCuesLength,
+    getTrackActiveCuesLength: resolverDeps.getTrackActiveCuesLength,
+    getRequestedSecondaryLanguage: () =>
+      state.requestedSecondaryLang || state.contentSettings.secondaryLang,
+    getPrimaryTrack: () => state.primaryTrack,
+    getSecondaryTrack: () => state.secondaryTrack,
+    getCurrentCue,
+    cleanCueText: vttDeps.cleanCueText,
+    getCurrentTime: () => state.video?.currentTime ?? 0,
+    getLastPrimaryText: () => state.lastPrimaryText,
+    setLastPrimaryText: (text) => {
+      state.lastPrimaryText = text;
+    },
+    appendSubtitleHistory,
+    DEBUG_PANEL_PROBE,
+    renderSecondarySubtitle,
+    updateOverlay: (...args) => overlayController.updateOverlay(...args),
+    renderPanel,
+  });
+
+  const panelUi = createPanelUi({
+    state,
+    getTarget,
+    ensureSecondarySubtitleElement,
+    getLiveDebugLogFilter,
+    getDebugLogText,
+    clearDebugLogs,
+    sendToBackground,
+    onClosePanel: () => panelUi.togglePanel(false),
+    applyLayout,
+    persistPanelVisibility,
+    scheduleAdjustPlaybackControls,
+    scheduleControlSettlingBurst,
+    logContent,
+    renderCurrentSnapshot,
+    renderPanel,
+    applySecondarySubtitleFallback,
+  });
+
+
+  // panel UI は別モジュールで組み立て、content 側では呼び出しと連携だけを持つ。
+
+
 
   const { createRuntimeObservers } = root.runtimeObservers;
   const runtimeObservers = createRuntimeObservers({
@@ -2638,7 +2637,6 @@
     setOverlayVisible,
     destroyOverlay,
     createOverlay,
-    updateOverlay,
   } = overlayController;
 
   const {
@@ -2650,39 +2648,54 @@
 
 
   function loadPanelVisibility() {
-    return new Promise((resolve) => {
-      chrome.storage.local.get("panelVisible", (result = {}) => {
-        if (chrome.runtime.lastError) {
-          logContentError("panelVisible load failed", {
-            error: chrome.runtime.lastError.message,
-          });
-          resolve(true);
-          return;
-        }
-
-        if (Object.prototype.hasOwnProperty.call(result, "panelVisible")) {
-          resolve(result.panelVisible !== false);
-          return;
-        }
-
-        resolve(true);
-      });
-    });
+    return Promise.resolve(state.contentSettings.showSidebar !== false);
   }
 
   function persistPanelVisibility() {
-    chrome.storage.local.set({ panelVisible: state.panelVisible }, () => {
+    const nextSettings = {
+      ...state.contentSettings,
+      showSidebar: state.panelVisible,
+    };
+
+    chrome.storage.sync.set(nextSettings, () => {
       if (chrome.runtime.lastError) {
-        logContentError("panelVisible persist failed", {
+        logContentError("showSidebar persist failed", {
           error: chrome.runtime.lastError.message,
-          panelVisible: state.panelVisible,
+          showSidebar: state.panelVisible,
         });
         return;
       }
 
-      logContent("panelVisible persisted", {
-        panelVisible: state.panelVisible,
+      state.contentSettings = {
+        ...state.contentSettings,
+        showSidebar: state.panelVisible,
+      };
+
+      logContent("showSidebar persisted from playback toggle", {
+        showSidebar: state.panelVisible,
       });
+
+      chrome.runtime.sendMessage(
+        {
+          type: "APPLY_SETTINGS_TO_APPLE_TV",
+          reason: "playback_toggle",
+          settings: nextSettings,
+        },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            logContentError("playback toggle settings dispatch failed", {
+              error: chrome.runtime.lastError.message,
+              showSidebar: state.panelVisible,
+            });
+            return;
+          }
+
+          logContent("playback toggle settings dispatched", {
+            showSidebar: state.panelVisible,
+            ok: response?.ok ?? null,
+          });
+        },
+      );
     });
   }
 
@@ -3372,17 +3385,22 @@
         : null,
     });
 
+    const sidebarEnabledSetting =
+      state.contentSettings.showSidebar !== false;
+
     if (typeof options.keepPanelVisible === "boolean") {
       state.panelVisible = options.keepPanelVisible;
     } else {
-      state.panelVisible = await panelUi.loadPanelVisibility();
+      state.panelVisible = sidebarEnabledSetting;
     }
+
     logContent("startBilingual panelVisible applied", {
       panelVisible: state.panelVisible,
       keepPanelVisible:
         typeof options.keepPanelVisible === "boolean"
           ? options.keepPanelVisible
           : null,
+      showSidebarSetting: state.contentSettings.showSidebar,
     });
     console.trace("startBilingual panelVisible applied");
 

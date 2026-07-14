@@ -26,7 +26,6 @@ const GENERAL_KEYS = [
   "primaryLang",
   "secondaryLang",
   "showSidebar",
-  "pinSidebar",
   "playWordAudio",
   "enableAiTooltip",
   "preferredAiProvider",

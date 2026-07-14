@@ -147,10 +147,13 @@
   // storage.local にログを追記し、更新 callback を通知する。
   async function appendDebugLog(line) {
     try {
-      const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
-        await chrome.storage.local.get(DEBUG_LOGS_KEY);
+      if (!globalThis.chrome?.runtime?.id) return;
+
       const normalizedLine = ensureLogShape(line);
       if (!normalizedLine) return;
+
+      const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
+        await chrome.storage.local.get(DEBUG_LOGS_KEY);
 
       debugLogs.push(normalizedLine);
       if (debugLogs.length > RETAINED_DEBUG_LOGS_LIMIT) {
@@ -159,6 +162,9 @@
       await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
       onLogUpdated();
     } catch (error) {
+      const message =
+        error && typeof error.message === "string" ? error.message : String(error);
+      if (message.includes("Extension context invalidated")) return;
       console.warn("[ATV-Bilingual] appendDebugLog failed:", error);
     }
   }

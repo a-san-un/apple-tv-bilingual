@@ -34,6 +34,8 @@
         "panel-ui.js",
         "cue-controller.js",
         "overlay-controller.js",
+        "runtime-observers.js",
+        "playback-controls-layout.js",
         "settings-runtime.js",
         "content.js"
       ],

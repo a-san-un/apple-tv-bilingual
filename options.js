@@ -19,7 +19,6 @@ const DEFAULT_GENERAL_SETTINGS = {
   primaryLang: "en",
   secondaryLang: "",
   showSidebar: true,
-  pinSidebar: false,
   playWordAudio: true,
   enableAiTooltip: true,
   preferredAiProvider: "auto",
@@ -52,7 +51,6 @@ const els = {
   primaryLang: document.getElementById("primaryLang"),
   secondaryLang: document.getElementById("secondaryLang"),
   showSidebar: document.getElementById("showSidebar"),
-  pinSidebar: document.getElementById("pinSidebar"),
   playWordAudio: document.getElementById("playWordAudio"),
   enableAiTooltip: document.getElementById("enableAiTooltip"),
   googleAiStudioApiKey: document.getElementById("googleAiStudioApiKey"),
@@ -360,10 +358,9 @@ function showSaveStatus(message, isError = false) {
   }, 2800);
 }
 
-function buildLanguageSettingsPayload(primaryLang, secondaryLang) {
+function buildLanguageSettingsPayload(settings) {
   return {
-    primaryLang,
-    secondaryLang,
+    ...settings,
   };
 }
 
@@ -439,7 +436,6 @@ async function loadSettings() {
   );
 
   els.showSidebar.checked = Boolean(general.showSidebar);
-  els.pinSidebar.checked = Boolean(general.pinSidebar);
   els.playWordAudio.checked = Boolean(general.playWordAudio);
   els.enableAiTooltip.checked = Boolean(general.enableAiTooltip);
 
@@ -512,7 +508,6 @@ async function saveSettings() {
     primaryLang,
     secondaryLang,
     showSidebar: els.showSidebar.checked,
-    pinSidebar: els.pinSidebar.checked,
     playWordAudio: els.playWordAudio.checked,
     enableAiTooltip: els.enableAiTooltip.checked,
     preferredAiProvider: getPreferredAiProvider(),
@@ -580,8 +575,7 @@ async function saveSettings() {
   await appendDebugLog(lineReadback);
 
   const languageSettingsPayload = buildLanguageSettingsPayload(
-    primaryLang,
-    secondaryLang,
+    generalSettings,
   );
   const dispatchResult = await dispatchSettingsChangedFromOptions(
     languageSettingsPayload,
