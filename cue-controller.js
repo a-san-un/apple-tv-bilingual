@@ -44,7 +44,6 @@
         );
       }
 
-      updateOverlay();
       renderPanel();
 
       if (track) {

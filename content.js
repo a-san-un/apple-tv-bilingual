@@ -826,13 +826,6 @@
       );
     }
 
-    // current subtitle block の本流更新は onPrimaryCueChange 側。
-    // ここでは secondary render 時の補助同期として current を再計算する。
-    setCurrentSubtitleBlock(
-      computeCurrentSubtitleBlock("renderSecondarySubtitle"),
-      "renderSecondarySubtitle",
-    );
-
     el.textContent = finalText;
     el.dataset.language = track?.language || "";
     logSubtitlePanelState("after-renderSecondarySubtitle");
