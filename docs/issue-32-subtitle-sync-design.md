@@ -509,6 +509,157 @@ Phase 2 / Phase 3 の挙動確認では、たとえば次のような filter の
 - Phase 3 でも、Phase 1.5 の debug filter を使って current block 更新の頻度、block start/end の遷移、signal の有無を確認しながら進める
 - Phase 2 で cue-controller 側へ寄せた current block / overlay 更新入口は、Phase 3 で block sequence モデルに移行するときの接続点として再利用する
 
+### Phase 3 の入口イメージ
+
+Phase 2 時点の `onPrimaryCueChange()` では、まず 1 件の `currentBlock` を組み立て、その同じ入力を
+
+1. `setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange")`
+2. `updateOverlay(currentBlock.primaryText, currentBlock.secondaryText)`
+
+の順で使う中間段階を取っている。これは最終形ではないが、Phase 3 で **1 件の currentBlock を block 配列上の current 要素へ吸収する** ための接続点として有用である。
+
+```text
+Phase 2 の中間形
+
+onPrimaryCueChange()
+  └─ currentBlock を 1 回組み立てる
+       ├─ setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange")
+       └─ updateOverlay(currentBlock.primaryText, currentBlock.secondaryText)
+```
+
+Phase 3 では、この `currentBlock` を特別な単独オブジェクトとして持ち続けるのではなく、**past / current / future を含む `blocks[]` の current 要素**として扱う方向へ寄せる。
+
+```text
+Phase 3 で目指す形
+
+cuechange / track resolve / seek
+  └─ buildSubtitleBlockSequence(now)
+       └─ blocks[]
+            ├─ past blocks
+            ├─ current block
+            └─ future blocks
+
+blocks[]
+  ├─ panel: visible window を切り出して描画
+  └─ overlay: current block のみ描画
+```
+
+この見方に立つと、
+
+- `currentSubtitleBlock` は `blocks[]` の `state="current"` の 1 要素へ寄せられる
+- `subtitleHistory` は `blocks[]` の `state="past"` 側の暫定表現として縮小できる
+- future 行は primary cue 群をアンカーにした `state="future"` block 群として扱える
+
+という整理になる。
+
+### currentBlock から block へのマッピング方針
+
+Phase 2 で使っている `currentBlock` は、概ね次のような block へ写像できる。
+
+```js
+// Phase 2 の currentBlock
+{
+  startTime,
+  endTime,
+  primaryText,
+  secondaryText,
+  hasPrimarySignal,
+  hasSecondarySignal,
+  sourceReason,
+  updatedAt,
+}
+```
+
+```js
+// Phase 3 の block
+{
+  startTime,
+  endTime,
+  primaryText,
+  secondaryText,
+  state: "past" | "current" | "future",
+  stable: true | false,
+}
+```
+
+ここで `hasPrimarySignal` / `hasSecondarySignal` / `sourceReason` / `updatedAt` のような補助情報は、block の恒久的な公開モデルというより、**stable 判定や debug log の補助情報**として内部的に扱う想定とする。Phase 3 の主モデルでは、panel / overlay / history が共有する最小限の block 形状を優先する。
+
+### state の決め方
+
+`buildSubtitleBlockSequence(now)` では、各 block の `state` を現在時刻 `now` に対して次のように振る。
+
+- `endTime < now` の block は `state = "past"`
+- `startTime <= now <= endTime` の block は `state = "current"`
+- `startTime > now` の block は `state = "future"`
+
+このルールにより、panel と overlay は同じ `blocks[]` を参照しながら、
+
+- overlay は `state="current"` の 1 件だけを表示する
+- panel は `past/current/future` を連続した系列として表示する
+
+という役割分担に寄せられる。
+
+### stable の初期方針
+
+`stable` は「その block がどの程度確定しているか」を表す。Phase 3 の初期実装では、少なくとも次のような扱いを基本方針とする。
+
+- `state="past"` の block は基本 `stable=true`
+- `state="current"` の block は、primary / secondary が十分そろっていれば `stable=true`、secondary 後追いや再評価余地が大きい間は `stable=false`
+- `state="future"` の block は基本 `stable=false`
+
+これにより、past は確定データ、future は予測寄りデータ、current はその中間として扱いやすくなる。
+
+### 同一 block の重複更新をどう扱うか
+
+Phase 2 の観測では、同一 `blockStartTime` / `blockEndTime` を持つ `current subtitle block updated` が近接して複数回出る箇所があった。Phase 3 では、これを単に「即バグ」とみなして strict に 1 回へ潰し切るのではなく、**block の確定度 (`stable`) を使って吸収する** 方針を取る。
+
+初期方針としては、同一 block の識別キーを少なくとも次で見る。
+
+- `startTime`
+- `endTime`
+- `primaryText`
+
+このキーが同一の block に対して後続更新が来た場合、
+
+- 既存 block が `stable=false` なら更新を許容する
+- 既存 block が `stable=true` なら後続更新は原則無視する（または debug log のみ残す）
+
+という扱いを基本にする。
+
+```text
+新しい block candidate
+  └─ 同一 key の既存 block を探す
+       ├─ ない
+       │    └─ 新規追加
+       └─ ある
+            ├─ stable=false
+            │    └─ 更新を許容
+            └─ stable=true
+                 └─ 原則無視（UI には波及させない）
+```
+
+この方針により、secondary の後追い・track 再解決・seek 前後の一時的な揺れは `stable=false` の範囲で再評価を許容しつつ、いったん確定した block が panel / overlay 上で何度も揺れ直すことを抑えやすくなる。
+
+### Phase 3 に入る時点での整理
+
+したがって、Phase 3 の入口では次を前提にしてよい。
+
+- Phase 2 の `currentBlock` は、block sequence モデルへ移行するための暫定的な current 要素である
+- 最終的には `current / history / panel / overlay` を別経路で持たず、`blocks[]` を共通基盤にする
+- 同一 block の近接再評価は一定範囲で許容するが、`stable=true` 化した block は原則再更新しない
+- overlay は `blocks[]` の `state="current"` を表示し、panel は同じ `blocks[]` の可視範囲を描画する
+
+### 補足: debug log 共通 view / filter の扱い
+
+debug log の共通 view / filter 化（右パネル / 設定ページ / popup などの共通化）は、観測性改善のテーマとして価値があるが、Issue #32 の本筋である字幕同期アーキテクチャ修正とは別寄りの話題である。
+
+そのため Issue #32 では、
+
+- 設定ページ側 debug log を主観測面にする
+- 再生画面右パネルの debug log は補助ビューとして扱う
+
+という方針だけを持ち、`debug-log-core` / `debug-log-view` / host 別ラッパーのような共通化設計は、必要なら別 docs / 別 Issue として切り出して扱う。
+
 ---
 
 ## 補助的な設計メモ
