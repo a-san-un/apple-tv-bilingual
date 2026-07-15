@@ -327,7 +327,7 @@ buildSubtitleBlockSequence(now)
 
 ## 修正の順番
 
-## Phase 1: 履歴重複の一本化
+## Phase 1: 履歴重複の一本化（完了）
 
 ### やること
 
@@ -345,6 +345,19 @@ buildSubtitleBlockSequence(now)
 - 原因がほぼ特定済み
 - 差分が小さい
 - panel / history のノイズが大きく減る
+
+### 実施メモ（2026-07-15）
+
+- Phase 1 は実施済み。
+- `cue-controller.js:onPrimaryCueChange()` からの直接 `appendSubtitleHistory(...)` 呼び出しを削除し、history 追加責務を `setCurrentSubtitleBlock()` 側へ寄せた。
+- あわせて `current subtitle block` に `startTime` / `endTime` を持たせ、履歴側でも block 時間情報を扱える土台を作った。
+- これにより、履歴重複の主因であった二重 append 経路は解消した。
+
+### 継続課題
+
+- strict な意味での `primary cuechange 1 回 = history append 1 回` の確認は、観測性改善も含めて継続課題とする。
+- 同一文言でも time range が異なる block が複数行として現れる件は、Phase 1 のスコープ外とし、後続の block / history 表示仕様で扱う。
+- `contentKey` 切替時の subtitle runtime state reset は別タスクとして扱い、Phase 1 には含めない。
 
 ---
 
