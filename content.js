@@ -221,6 +221,8 @@
     );
 
     return {
+      startTime: currentBlock?.startTime ?? null,
+      endTime: currentBlock?.endTime ?? null,
       primaryText,
       secondaryText,
       hasPrimarySignal: Boolean(primaryText),
@@ -234,6 +236,21 @@
     state.currentSubtitleBlock = block;
     state.lastCurrentSubtitleBlockAt = Date.now();
 
+    if (
+      block?.hasPrimarySignal &&
+      block.primaryText &&
+      block.primaryText !== state.lastPrimaryText
+    ) {
+      state.lastPrimaryText = block.primaryText;
+
+      appendSubtitleHistory({
+        startTime: block.startTime ?? null,
+        endTime: block.endTime ?? null,
+        primary: block.primaryText,
+        secondary: block.secondaryText || "",
+      });
+    }
+
     logContent("current subtitle block updated", {
       reason,
       hasBlock: Boolean(block),
@@ -241,6 +258,8 @@
       secondaryTextLength: block?.secondaryText?.length || 0,
       hasPrimarySignal: Boolean(block?.hasPrimarySignal),
       hasSecondarySignal: Boolean(block?.hasSecondarySignal),
+      blockStartTime: block?.startTime ?? null,
+      blockEndTime: block?.endTime ?? null,
     });
   }
 
@@ -2613,12 +2632,7 @@
     getCurrentCue,
     cleanCueText: vttDeps.cleanCueText,
     getCurrentTime: () => state.video?.currentTime ?? 0,
-    getLastPrimaryText: () => state.lastPrimaryText,
-    setLastPrimaryText: (text) => {
-      state.lastPrimaryText = text;
-    },
     setCurrentSubtitleBlock,
-    appendSubtitleHistory,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     updateOverlay: (...args) => overlayController.updateOverlay(...args),

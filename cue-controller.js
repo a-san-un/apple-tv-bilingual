@@ -15,10 +15,7 @@
     getCurrentCue,
     cleanCueText,
     getCurrentTime,
-    getLastPrimaryText,
-    setLastPrimaryText,
     setCurrentSubtitleBlock,
-    appendSubtitleHistory,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     updateOverlay,
@@ -145,6 +142,8 @@
 
       setCurrentSubtitleBlock(
         {
+          startTime: pCue?.startTime ?? null,
+          endTime: pCue?.endTime ?? null,
           primaryText: pText || "",
           secondaryText: sText || "",
           hasPrimarySignal: Boolean(pText),
@@ -154,16 +153,6 @@
         },
         "onPrimaryCueChange",
       );
-
-      if (pText && pText !== getLastPrimaryText() && pCue) {
-        setLastPrimaryText(pText);
-        appendSubtitleHistory({
-          startTime: pCue.startTime,
-          endTime: pCue.endTime,
-          primary: pText,
-          secondary: sText,
-        });
-      }
 
       if (secondaryTrack) {
         renderSecondarySubtitle(sText, secondaryTrack);
