@@ -60,7 +60,7 @@ Issue #32 では、Apple TV+ 再生画面における字幕同期まわりの設
 
 - current subtitle の真実源は、個別の render snapshot ではなく state 側へ寄せる方向がよい
 - panel / overlay / history が別々の補完ロジックを持つと、責務の境界が曖昧になる
-- 右パネルと下部字幕は表示位置が違うだけで、**同じ字幕 block モデル** を参照すべき
+- 右パネルと下部字幕は表示位置が違うだけで、**同じ subtitle block モデル** を参照すべき
 
 ---
 
@@ -361,6 +361,66 @@ buildSubtitleBlockSequence(now)
 
 ---
 
+## Phase 1.5: debug filter による観測性改善（完了）
+
+### やること
+
+- subtitle debug panel に `source=content` filter を追加する
+- subtitle debug panel に `category=subtitle` filter を追加する
+- subtitle debug panel に `text` 部分一致 filter を追加する
+- 表示側の絞り込みを `filterLogs(logs, filters)` の pure function に寄せる
+
+### 目的
+
+- Phase 2 / Phase 3 の調査時に、primary / secondary cuechange、current block 更新、overlay clear / update の前後関係を追いやすくする
+- 保存構造や検索言語を広げず、**表示側の最小限の filter** で観測性を上げる
+- subtitle sync 本体に入る前に、再現確認と比較確認をしやすくする
+
+### 実施メモ（2026-07-15）
+
+- Phase 1.5 は実施済み。
+- debug panel に `source` / `category` / `text` の filter UI を追加した。
+- `debug-logger.js` 側で `filterLogs(logs, filters)` 相当の pure function を拡張し、
+  `source` / `category` / `contentKey` / `text` による絞り込みを共通化した。
+- `text` filter は message だけでなく payload 文字列にも部分一致するようにした。
+- `source=content`、`category=subtitle`、`text=cuechange`、
+  `text=current subtitle block updated` などの条件で動作確認した。
+
+### この phase をここで入れる理由
+
+- Phase 2 / Phase 3 は subtitle sync 本体の挙動比較が主になるため、先に観測性の最小セットを整えておく価値が高い
+- 既存ログ保存構造を変えず、小差分で調査効率だけを上げられる
+- 設計の主役ではないため、本体ロジックから独立した補助 phase として切り出すのが扱いやすい
+
+### この phase の範囲外
+
+- 保存構造の変更
+- 複雑な検索言語
+- 大規模な debug UI 改修
+- subtitle sync 本体ロジック（overlay 修正 / block sequence 導入）の変更
+
+### 調査時の使い方メモ
+
+Phase 2 / Phase 3 の挙動確認では、たとえば次のような filter の組み合わせを想定する。
+
+- `source=content` + `text=cuechange`
+  - cuechange 系の前後関係を見る
+- `source=content` + `text=current subtitle block updated`
+  - current block 更新の頻度・時刻・signal 有無を見る
+- `source=content` + `text=secondary track sync context`
+  - primary / secondary active cues と track 状態の文脈を追う
+- `source=content` + `category=subtitle`
+  - subtitle カテゴリに寄せたログのみをざっと確認する
+
+### 継続課題
+
+- subtitle 系の主ログの一部は `category=ui` に属しているため、
+  必要であれば後続フェーズで `subtitle` / `ui` の分類見直しを検討する
+- debug filter は観測補助であり、Issue #32 の中心設計ではないため、
+  仕様を広げすぎず最小運用を維持する
+
+---
+
 ## Phase 2: overlay のイベント依存を減らす
 
 ### やること
@@ -374,6 +434,12 @@ buildSubtitleBlockSequence(now)
 - overlay を cuechange イベントではなく current block に従わせる
 - 下部字幕の点滅・短表示を抑える
 - panel と overlay の内容差を減らす
+
+### 補足
+
+- Phase 2 の調査では、Phase 1.5 で追加した debug filter を使い、
+  `cuechange` / `current subtitle block updated` / `secondary track sync context`
+  の前後関係を見ながら修正前後を比較する
 
 ---
 
@@ -392,6 +458,11 @@ buildSubtitleBlockSequence(now)
 - panel / overlay / history の共通基盤を作る
 - current 専用補完ロジックを減らす
 - seek / track 再解決 / secondary 後追い差し替えに強くする
+
+### 補足
+
+- Phase 3 でも、Phase 1.5 の debug filter を使って
+  current block 更新の頻度、block start/end の遷移、signal の有無を確認しながら進める
 
 ---
 
@@ -422,8 +493,8 @@ panel 開閉は UI state の変更として扱い、subtitle pipeline 全体の 
 
 今回は次を主対象にはしない。
 
-- debug log filter の詳細設計
-- debug panel / options の UI 仕様
+- debug log filter の詳細仕様拡張
+- debug panel / options の大規模 UI 仕様整理
 - 設定保存構造の全面変更
 - `content.js` 全体の大規模再分割
 - subtitle track resolver / VTT normalizer の仕様変更
@@ -431,8 +502,9 @@ panel 開閉は UI state の変更として扱い、subtitle pipeline 全体の 
 
 ### 補足
 
-debug log の観測性改善は実務上重要だが、Issue #32 設計文書の主役ではない。  
-必要なら別タスクや別メモとして扱い、ここでは subtitle block モデルの設計を優先する。
+debug log の観測性改善は実務上重要であり、Phase 1.5 として最小限は扱う。  
+ただしこの文書の主役はあくまで subtitle block モデルと panel / overlay / history の同期設計であり、
+debug filter 自体を中心テーマにはしない。
 
 ---
 
@@ -452,6 +524,12 @@ debug log の観測性改善は実務上重要だが、Issue #32 設計文書の
   - overlay host と表示更新
 - `panel-renderer.js`
   - panel の current / past / future 描画
+- `debug-logger.js`
+  - debug log 整形・保存・表示側 filter
+- `debug-panel.js`
+  - debug panel の mount / update / filter wiring
+- `panel-ui.js`
+  - debug panel を含む panel shell の HTML
 - panel / overlay host 生成まわりの helper 群
 - style 注入 helper 群
 
@@ -477,4 +555,5 @@ Issue #32 の本質は、**イベント単位で UI を更新している設計*
 - past は確定データ、current は現在時刻に対する解決結果、future は再評価可能な予測寄りデータとして扱う
 - `stable` を持たせることで、確定度と再解決余地を区別する
 
-修正の順番としては、まず履歴重複を止め、その後 overlay のイベント依存を減らし、最終的に block sequence モデルへ寄せるのが最も安全で実務的である。
+修正の順番としては、まず履歴重複を止め、その後に観測性の最小セットを整え、  
+overlay のイベント依存を減らし、最終的に block sequence モデルへ寄せるのが最も安全で実務的である。

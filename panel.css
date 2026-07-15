@@ -152,6 +152,42 @@
 .debug-section__body {
   margin-top: 10px;
 }
+.debug-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.debug-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 88px;
+}
+.debug-filter--text {
+  flex: 1 1 220px;
+  min-width: 220px;
+}
+.debug-filter__label {
+  color: #9aa0ac;
+  font-size: 10px;
+  line-height: 1.2;
+  letter-spacing: 0.03em;
+  text-transform: lowercase;
+}
+.debug-filter__control {
+  min-height: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: #23262d;
+  color: #fff;
+  font-size: 11px;
+  padding: 0 8px;
+  box-sizing: border-box;
+}
+.debug-filter__control::placeholder {
+  color: #7f8794;
+}
 .debug-toolbar {
   display: flex;
   flex-wrap: wrap;

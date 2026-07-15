@@ -199,6 +199,7 @@
       ? new Set(filter.scopes.map((item) => String(item || "").trim()))
       : null;
     const contentKey = String(filter.contentKey || "").trim();
+    const text = String(filter.text || "").trim().toLowerCase();
 
     function extractContentKey(payload) {
       if (!payload || typeof payload !== "object") return "";
@@ -211,6 +212,19 @@
       return found ? String(found).trim() : "";
     }
 
+    function buildSearchText(line) {
+      const messageText = String(line?.message || "");
+      let payloadText = "";
+      if (line?.payload != null) {
+        try {
+          payloadText = JSON.stringify(line.payload);
+        } catch (_) {
+          payloadText = "";
+        }
+      }
+      return `${messageText} ${payloadText}`.toLowerCase();
+    }
+
     return (logs || []).filter((line) => {
       const normalized = ensureLogShape(line);
       if (!normalized) return false;
@@ -220,6 +234,10 @@
         const lineContentKey = extractContentKey(normalized.payload);
         if (!lineContentKey) return false;
         if (lineContentKey !== contentKey) return false;
+      }
+      if (text) {
+        const searchText = buildSearchText(normalized);
+        if (!searchText.includes(text)) return false;
       }
       return true;
     });

@@ -52,6 +52,31 @@
             >▶</button>
           </div>
           <div id="debugSectionBody" class="debug-section__body" hidden>
+            <div class="debug-filters">
+              <label class="debug-filter">
+                <span class="debug-filter__label">source</span>
+                <select id="debugFilterSource" class="debug-filter__control">
+                  <option value="">all</option>
+                  <option value="content">content</option>
+                </select>
+              </label>
+              <label class="debug-filter">
+                <span class="debug-filter__label">category</span>
+                <select id="debugFilterCategory" class="debug-filter__control">
+                  <option value="">all</option>
+                  <option value="subtitle">subtitle</option>
+                </select>
+              </label>
+              <label class="debug-filter debug-filter--text">
+                <span class="debug-filter__label">text</span>
+                <input
+                  id="debugFilterText"
+                  class="debug-filter__control"
+                  type="text"
+                  placeholder="cuechange / overlay / current subtitle block"
+                />
+              </label>
+            </div>
             <div class="debug-toolbar">
               <button id="debugCopyBtn" class="debug-btn" type="button">Copy</button>
               <button id="debugDownloadBtn" class="debug-btn" type="button">Download</button>
