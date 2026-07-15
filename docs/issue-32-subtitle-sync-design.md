@@ -61,6 +61,8 @@ Issue #32 では、Apple TV+ 再生画面における字幕同期まわりの設
 - current subtitle の真実源は、個別の render snapshot ではなく state 側へ寄せる方向がよい
 - panel / overlay / history が別々の補完ロジックを持つと、責務の境界が曖昧になる
 - 右パネルと下部字幕は表示位置が違うだけで、**同じ subtitle block モデル** を参照すべき
+- render 関数が current block の更新責務を持つと、描画タイミングの揺れで state が揺さぶられやすい
+- そのため、current block の更新責務は render 関数ではなく cuechange 本流へ寄せる方がよい
 
 ---
 
@@ -68,7 +70,7 @@ Issue #32 では、Apple TV+ 再生画面における字幕同期まわりの設
 
 ## 1. 履歴が二重で積まれる
 
-現状では、履歴追加が少なくとも次の 2 箇所で発生している。
+現状では、履歴追加が少なくとも次の 2 箇所で発生していた。
 
 - `setCurrentSubtitleBlock()` 内
 - `cue-controller.js:onPrimaryCueChange()` 内の `appendSubtitleHistory(...)`
@@ -86,7 +88,7 @@ Issue #32 では、Apple TV+ 再生画面における字幕同期まわりの設
 
 ## 2. overlay がイベント単位で更新されている
 
-overlay は現在、字幕 block 単位ではなく cuechange イベント単位で更新されている。
+overlay は現在、字幕 block 単位ではなく cuechange イベント単位で更新されていた。
 
 - primary cuechange では `updateOverlay(pText, sText)`
 - secondary cuechange では `updateOverlay()`（引数なし）
@@ -98,6 +100,12 @@ overlay は現在、字幕 block 単位ではなく cuechange イベント単位
 - 一時的に `pText` が空になっただけで overlay が消える
 - secondary cuechange の順序や遅れで overlay が消えうる
 - panel は残っているのに overlay だけ短表示になる
+
+### Phase 2 で見えてきたこと
+
+- secondary cuechange からの引数なし `updateOverlay()` は、overlay 点滅の直接要因の 1 つだった
+- `onPrimaryCueChange()` で **currentBlock を組み立ててから** `setCurrentSubtitleBlock(...)` → `updateOverlay(...)` の順に揃えるだけでも、overlay の体感改善が大きい
+- ただし現時点では、overlay はまだ `setCurrentSubtitleBlock()` の結果を observer 的に読んでいるわけではなく、**同じ `currentBlock` オブジェクトを shared input として使う段階** に留まっている
 
 ---
 
@@ -262,6 +270,24 @@ buildSubtitleBlockSequence(now)
 - current block が変わるまで表示を維持しやすい
 - 「次の字幕が来るまで残す」仕様に寄せやすい
 
+### Phase 2 時点での中間方針
+
+Phase 2 では、いきなり `buildSubtitleBlockSequence(now)` へ全面移行するのではなく、
+
+- current block の更新責務を cuechange 本流へ寄せる
+- overlay 更新も、その current block 更新結果に従う方向へ寄せる
+- `content.js` に新しい判断ロジックを増やさず、`cue-controller.js` / `overlay-controller.js` 側へ責務を寄せる
+
+という中間段階を取る。
+
+この中間段階では、`onPrimaryCueChange()` が **1 回の `currentBlock` オブジェクト** を組み立て、
+
+1. `setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange")`
+2. `updateOverlay(currentBlock.primaryText, currentBlock.secondaryText)`
+
+の順で使う構成に寄せる。  
+これにより、overlay と current block が同じ入力を参照する状態を作り、後続の block sequence モデルへ移行しやすくする。
+
 ## panel
 
 panel は **block 配列全体** を表示する。
@@ -380,11 +406,9 @@ buildSubtitleBlockSequence(now)
 
 - Phase 1.5 は実施済み。
 - debug panel に `source` / `category` / `text` の filter UI を追加した。
-- `debug-logger.js` 側で `filterLogs(logs, filters)` 相当の pure function を拡張し、
-  `source` / `category` / `contentKey` / `text` による絞り込みを共通化した。
+- `debug-logger.js` 側で `filterLogs(logs, filters)` 相当の pure function を拡張し、`source` / `category` / `contentKey` / `text` による絞り込みを共通化した。
 - `text` filter は message だけでなく payload 文字列にも部分一致するようにした。
-- `source=content`、`category=subtitle`、`text=cuechange`、
-  `text=current subtitle block updated` などの条件で動作確認した。
+- `source=content`、`category=subtitle`、`text=cuechange`、`text=current subtitle block updated` などの条件で動作確認した。
 
 ### この phase をここで入れる理由
 
@@ -414,10 +438,10 @@ Phase 2 / Phase 3 の挙動確認では、たとえば次のような filter の
 
 ### 継続課題
 
-- subtitle 系の主ログの一部は `category=ui` に属しているため、
-  必要であれば後続フェーズで `subtitle` / `ui` の分類見直しを検討する
-- debug filter は観測補助であり、Issue #32 の中心設計ではないため、
-  仕様を広げすぎず最小運用を維持する
+- subtitle 系の主ログの一部は `category=ui` に属しているため、必要であれば後続フェーズで `subtitle` / `ui` の分類見直しを検討する
+- debug filter は観測補助であり、Issue #32 の中心設計ではないため、仕様を広げすぎず最小運用を維持する
+- 右パネル上の debug log は overlay と表示レイヤが干渉するため、**Phase 2 / Phase 3 の主観測面は設定ページ側へ寄せる** 方針とする
+- 右パネル側の debug log は補助ビューとして扱い、filter / log list のロジックとビューは設定ページ側と共通化できるようにしていく
 
 ---
 
@@ -426,6 +450,7 @@ Phase 2 / Phase 3 の挙動確認では、たとえば次のような filter の
 ### やること
 
 - secondary cuechange からの引数なし `updateOverlay()` をやめる
+- `renderSecondarySubtitle()` から current block 更新責務を外す
 - `updateOverlay(pText, sText)` のような生イベント依存を弱める
 - overlay 更新を block 解決後の current block 基準へ寄せる
 
@@ -434,12 +459,32 @@ Phase 2 / Phase 3 の挙動確認では、たとえば次のような filter の
 - overlay を cuechange イベントではなく current block に従わせる
 - 下部字幕の点滅・短表示を抑える
 - panel と overlay の内容差を減らす
+- `content.js` にロジックを増やさず、`cue-controller.js` / `overlay-controller.js` 側へ責務を寄せる
+
+### 実施メモ（2026-07-15）
+
+- Phase 2 第1ラウンドでは、`cue-controller.js:onCueChange(track)` から secondary cuechange 起点の引数なし `updateOverlay()` を削除した。
+- あわせて `content.js:renderSecondarySubtitle()` から `setCurrentSubtitleBlock(computeCurrentSubtitleBlock("renderSecondarySubtitle"), "renderSecondarySubtitle")` を削除し、render 関数が current block の更新責務を持たない形に整理した。
+- debug filter で確認した範囲では、`current subtitle block updated` の `reason` は `onPrimaryCueChange` のみとなり、`renderSecondarySubtitle` 起点の current block 更新は観測されなかった。
+- Phase 2 第2ラウンドでは、`cue-controller.js:onPrimaryCueChange()` の中で `currentBlock` を 1 回組み立て、
+  1. `setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange")`
+  2. `updateOverlay(currentBlock.primaryText, currentBlock.secondaryText)`
+     の順に揃えた。
+- これにより、overlay と current block が **同じ `currentBlock` オブジェクト** を基準に更新される中間状態を作った。
+- 実機確認では、画面下部 overlay の字幕が体感上大きく改善し、点滅・短表示がかなり抑えられた。
+
+### この phase の設計判断
+
+- `renderSecondarySubtitle()` から current block 更新責務を外すことは、「render 関数が state の真実源を持たない」という意味で正しい方向とする。
+- current block 基準 overlay への入口は、`content.js` ではなく `cue-controller.js` 側に寄せる。
+- 同一 block の `current subtitle block updated` が近接して複数回出る事象は認識するが、Phase 2 では strict に 1 回へ潰し切ることを主目的にしない。
+- その揺れが overlay 点滅や panel/current 不整合の直接原因になる場合のみ、小さな guard を検討する。
+- それ以外の細かい再評価は、Phase 3 の block sequence / `stable` 導入で本格的に扱う。
 
 ### 補足
 
-- Phase 2 の調査では、Phase 1.5 で追加した debug filter を使い、
-  `cuechange` / `current subtitle block updated` / `secondary track sync context`
-  の前後関係を見ながら修正前後を比較する
+- Phase 2 の調査では、Phase 1.5 で追加した debug filter を使い、`cuechange` / `current subtitle block updated` / `secondary track sync context` の前後関係を見ながら修正前後を比較する。
+- ただし再生画面右パネルの debug log は overlay と排他的に扱われやすいため、**詳細なログ観測は設定ページ側の debug log をメインにする** 前提で運用する。
 
 ---
 
@@ -461,8 +506,8 @@ Phase 2 / Phase 3 の挙動確認では、たとえば次のような filter の
 
 ### 補足
 
-- Phase 3 でも、Phase 1.5 の debug filter を使って
-  current block 更新の頻度、block start/end の遷移、signal の有無を確認しながら進める
+- Phase 3 でも、Phase 1.5 の debug filter を使って current block 更新の頻度、block start/end の遷移、signal の有無を確認しながら進める
+- Phase 2 で cue-controller 側へ寄せた current block / overlay 更新入口は、Phase 3 で block sequence モデルに移行するときの接続点として再利用する
 
 ---
 
@@ -487,6 +532,16 @@ panel 用 style と overlay 用 style を混同しない。
 
 panel 開閉は UI state の変更として扱い、subtitle pipeline 全体の restart とは切り分ける方がよい。
 
+## 4. debug log は設定ページを主観測面にする
+
+再生画面右パネルの debug log は、その場で軽く状況を見る補助ビューとする。  
+Phase 2 / Phase 3 の詳細観測は、overlay と表示レイヤが干渉しない **設定ページ側の debug log** を主観測面として扱う。
+
+### 補足
+
+- filter ロジックと log list ビューは共通化し、右パネル側・設定ページ側は薄いラッパーで扱うのが望ましい
+- ただしこれは subtitle sync 本体とは別寄りの観測性改善テーマであり、Issue #32 本体の主対象にはしない
+
 ---
 
 ## 今回の文書で主対象にしないこと
@@ -503,8 +558,7 @@ panel 開閉は UI state の変更として扱い、subtitle pipeline 全体の 
 ### 補足
 
 debug log の観測性改善は実務上重要であり、Phase 1.5 として最小限は扱う。  
-ただしこの文書の主役はあくまで subtitle block モデルと panel / overlay / history の同期設計であり、
-debug filter 自体を中心テーマにはしない。
+ただしこの文書の主役はあくまで subtitle block モデルと panel / overlay / history の同期設計であり、debug filter 自体を中心テーマにはしない。
 
 ---
 
@@ -515,17 +569,19 @@ debug filter 自体を中心テーマにはしない。
 - `content.js`
   - state 保持
   - `setCurrentSubtitleBlock()`
-  - `renderSecondarySubtitle()`
   - panel / overlay 補助経路
 - `cue-controller.js`
   - primary / secondary cuechange の本流
   - current / history / overlay / panel の更新 fan-out
+  - current block 基準 overlay への入口
 - `overlay-controller.js`
   - overlay host と表示更新
 - `panel-renderer.js`
   - panel の current / past / future 描画
 - `debug-logger.js`
   - debug log 整形・保存・表示側 filter
+- debug log の共通 view / filter モジュール（将来）
+  - 右パネル・設定ページの共通化候補
 - `debug-panel.js`
   - debug panel の mount / update / filter wiring
 - `panel-ui.js`
@@ -557,3 +613,11 @@ Issue #32 の本質は、**イベント単位で UI を更新している設計*
 
 修正の順番としては、まず履歴重複を止め、その後に観測性の最小セットを整え、  
 overlay のイベント依存を減らし、最終的に block sequence モデルへ寄せるのが最も安全で実務的である。
+
+Phase 2 時点では、全面的な block sequence 導入の前に、
+
+- secondary cuechange 起点の overlay 更新を止める
+- render 関数から current block 更新責務を外す
+- cue-controller 側で current block 更新 → overlay 更新の順を揃える
+
+という小さな段階を踏むことで、overlay の体感改善と将来の設計移行の両方を両立させる。

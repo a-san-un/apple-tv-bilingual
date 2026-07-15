@@ -137,21 +137,19 @@
         });
       }
 
-      updateOverlay(pText, sText);
+      const currentBlock = {
+        startTime: pCue?.startTime ?? null,
+        endTime: pCue?.endTime ?? null,
+        primaryText: pText || "",
+        secondaryText: sText || "",
+        hasPrimarySignal: Boolean(pText),
+        hasSecondarySignal: Boolean(sText),
+        sourceReason: "onPrimaryCueChange",
+        updatedAt: Date.now(),
+      };
 
-      setCurrentSubtitleBlock(
-        {
-          startTime: pCue?.startTime ?? null,
-          endTime: pCue?.endTime ?? null,
-          primaryText: pText || "",
-          secondaryText: sText || "",
-          hasPrimarySignal: Boolean(pText),
-          hasSecondarySignal: Boolean(sText),
-          sourceReason: "onPrimaryCueChange",
-          updatedAt: Date.now(),
-        },
-        "onPrimaryCueChange",
-      );
+      setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange");
+      updateOverlay(currentBlock.primaryText, currentBlock.secondaryText);
 
       if (secondaryTrack) {
         renderSecondarySubtitle(sText, secondaryTrack);
