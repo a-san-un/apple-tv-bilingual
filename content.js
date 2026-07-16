@@ -94,6 +94,8 @@
     currentContentKey: "",
     subtitleHistoryStore: new Map(),
     subtitleHistory: [],
+    subtitleBlocks: [],
+    subtitleBlockMeta: null,
     lastPanelRenderSnapshot: null,
     currentSubtitleBlock: null,
     lastCurrentSubtitleBlockAt: 0,
@@ -232,34 +234,78 @@
     };
   }
 
+  function setSubtitleBlocks(result, reason = "unknown") {
+    const nextBlocks = Array.isArray(result?.blocks) ? result.blocks : [];
+    state.subtitleBlocks = nextBlocks;
+    state.subtitleBlockMeta = result?.meta || null;
+
+    logContent("subtitle blocks updated", {
+      reason,
+      blockCount: nextBlocks.length,
+      currentIndex:
+        typeof result?.currentIndex === "number" ? result.currentIndex : -1,
+    });
+  }
+
+  // 現在字幕の更新と一時的なテキスト巻き戻りの抑止
   function setCurrentSubtitleBlock(block, reason = "unknown") {
-    state.currentSubtitleBlock = block;
+    const previousBlock = state.currentSubtitleBlock || null;
+
+    const isSameTimeWindow =
+      previousBlock &&
+      block &&
+      previousBlock.startTime === block.startTime &&
+      previousBlock.endTime === block.endTime;
+
+    const shouldKeepPreviousTexts =
+      isSameTimeWindow &&
+      previousBlock.hasPrimarySignal &&
+      previousBlock.primaryText &&
+      block?.hasPrimarySignal &&
+      block.primaryText &&
+      previousBlock.primaryText !== block.primaryText &&
+      state.lastPrimaryText === previousBlock.primaryText;
+
+    const nextBlock =
+      shouldKeepPreviousTexts
+        ? {
+            ...block,
+            primaryText: previousBlock.primaryText,
+            secondaryText:
+              previousBlock.secondaryText || block.secondaryText || "",
+            hasPrimarySignal: previousBlock.hasPrimarySignal,
+            hasSecondarySignal:
+              previousBlock.hasSecondarySignal || block.hasSecondarySignal,
+          }
+        : block;
+
+    state.currentSubtitleBlock = nextBlock;
     state.lastCurrentSubtitleBlockAt = Date.now();
 
     if (
-      block?.hasPrimarySignal &&
-      block.primaryText &&
-      block.primaryText !== state.lastPrimaryText
+      nextBlock?.hasPrimarySignal &&
+      nextBlock.primaryText &&
+      nextBlock.primaryText !== state.lastPrimaryText
     ) {
-      state.lastPrimaryText = block.primaryText;
+      state.lastPrimaryText = nextBlock.primaryText;
 
       appendSubtitleHistory({
-        startTime: block.startTime ?? null,
-        endTime: block.endTime ?? null,
-        primary: block.primaryText,
-        secondary: block.secondaryText || "",
+        startTime: nextBlock.startTime ?? null,
+        endTime: nextBlock.endTime ?? null,
+        primary: nextBlock.primaryText,
+        secondary: nextBlock.secondaryText || "",
       });
     }
 
     logContent("current subtitle block updated", {
       reason,
-      hasBlock: Boolean(block),
-      primaryTextLength: block?.primaryText?.length || 0,
-      secondaryTextLength: block?.secondaryText?.length || 0,
-      hasPrimarySignal: Boolean(block?.hasPrimarySignal),
-      hasSecondarySignal: Boolean(block?.hasSecondarySignal),
-      blockStartTime: block?.startTime ?? null,
-      blockEndTime: block?.endTime ?? null,
+      hasBlock: Boolean(nextBlock),
+      primaryTextLength: nextBlock?.primaryText?.length || 0,
+      secondaryTextLength: nextBlock?.secondaryText?.length || 0,
+      hasPrimarySignal: Boolean(nextBlock?.hasPrimarySignal),
+      hasSecondarySignal: Boolean(nextBlock?.hasSecondarySignal),
+      blockStartTime: nextBlock?.startTime ?? null,
+      blockEndTime: nextBlock?.endTime ?? null,
     });
   }
 
@@ -300,6 +346,8 @@
 
   const vttApi = window.ATVB?.vtt || {};
   const resolverApi = window.ATVB?.resolver || {};
+  const subtitleBlocksApi = window.ATVB?.subtitleBlocks || {};
+  const subtitleBlockResolverApi = window.ATVB?.subtitleBlockResolver || {};
 
   const vttDeps = {
     normalizeSubtitleText: (...args) =>
@@ -324,6 +372,10 @@
     normalizeSubtitleText,
     cleanCueText,
   } = vttDeps;
+
+  const {
+    buildSubtitleBlockSequence = () => ({ blocks: [], currentIndex: -1, meta: null }),
+  } = subtitleBlocksApi;
 
   const {
     getTrackActiveCuesLength,
@@ -2544,6 +2596,14 @@
 
   const createPanelRenderer =
     window.ATVB?.panelRenderer?.createPanelRenderer;
+  const {
+    resolvePanelBlocksForRender = () => ({
+      blocks: [],
+      currentBlocks: [],
+      usedCurrentFallback: false,
+      sameWindowGroups: new Map(),
+    }),
+  } = subtitleBlockResolverApi;
   const createCueController =
     window.ATVB?.cueController?.createCueController;
 
@@ -2558,6 +2618,7 @@
   const root = (window.ATVB = window.ATVB || {});
 
   const { renderPanel } = createPanelRenderer({
+    resolvePanelBlocksForRender,
     state,
     makeClickableSpans,
     formatTime: vttDeps.formatTime,
@@ -2625,6 +2686,11 @@
     getCurrentCue,
     cleanCueText: vttDeps.cleanCueText,
     getCurrentTime: () => state.video?.currentTime ?? 0,
+    getPrimaryTrackCues: () => state.primaryTrack?.cues || [],
+    getSecondaryTrackCues: () => state.secondaryTrack?.cues || [],
+    getPreviousSubtitleBlocks: () => state.subtitleBlocks || [],
+    buildSubtitleBlockSequence,
+    setSubtitleBlocks,
     setCurrentSubtitleBlock,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,

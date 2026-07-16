@@ -15,6 +15,10 @@
     getCurrentCue,
     cleanCueText,
     getCurrentTime,
+    getPrimaryTrackCues,
+    getSecondaryTrackCues,
+    getPreviousSubtitleBlocks,
+    setSubtitleBlocks,
     setCurrentSubtitleBlock,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
@@ -101,7 +105,10 @@
       if (!track) {
         unbindSecondarySubtitleTrack();
         if (!suppressRender) {
-          (renderSecondarySubtitleOverride || renderSecondarySubtitle)("", null);
+          (renderSecondarySubtitleOverride || renderSecondarySubtitle)(
+            "",
+            null,
+          );
         }
         return;
       }
@@ -120,6 +127,10 @@
     }
 
     function onPrimaryCueChange() {
+      logContent("cue-controller onPrimaryCueChange entered", {
+        hasATVB: !!window.ATVB,
+      });
+
       const currentTime = getCurrentTime();
       const primaryTrack = getPrimaryTrack();
       const secondaryTrack = getSecondaryTrack();
@@ -137,16 +148,68 @@
         });
       }
 
-      const currentBlock = {
-        startTime: pCue?.startTime ?? null,
-        endTime: pCue?.endTime ?? null,
-        primaryText: pText || "",
-        secondaryText: sText || "",
-        hasPrimarySignal: Boolean(pText),
-        hasSecondarySignal: Boolean(sText),
-        sourceReason: "onPrimaryCueChange",
-        updatedAt: Date.now(),
-      };
+      const blockApi = window.ATVB?.subtitleBlocks || {};
+      const hasBuildSubtitleBlockSequence =
+        typeof blockApi.buildSubtitleBlockSequence === "function";
+
+      if (DEBUG_PANEL_PROBE) {
+        logContent("subtitle blocks api snapshot", {
+          hasATVB: !!window.ATVB,
+          atvbKeys: Object.keys(window.ATVB || {}),
+          hasSubtitleBlocks: !!window.ATVB?.subtitleBlocks,
+          hasBuildSubtitleBlockSequence,
+        });
+      }
+
+      let blockResult = null;
+
+      if (hasBuildSubtitleBlockSequence) {
+        blockResult = blockApi.buildSubtitleBlockSequence({
+          primaryCues: getPrimaryTrackCues(),
+          secondaryCues: getSecondaryTrackCues(),
+          now: currentTime,
+          previousBlocks: getPreviousSubtitleBlocks(),
+          cleanCueText,
+          rebuildReason: "onPrimaryCueChange",
+        });
+
+        setSubtitleBlocks(blockResult, "onPrimaryCueChange");
+      } else {
+        logContent("subtitle blocks api missing", {
+          reason: "onPrimaryCueChange",
+          hasATVB: !!window.ATVB,
+          atvbKeys: Object.keys(window.ATVB || {}),
+        });
+      }
+
+      const currentBlockFromSequence =
+        blockResult &&
+        typeof blockResult.currentIndex === "number" &&
+        blockResult.currentIndex >= 0
+          ? blockResult.blocks[blockResult.currentIndex]
+          : null;
+
+      const currentBlock = currentBlockFromSequence
+        ? {
+            startTime: currentBlockFromSequence.startTime ?? null,
+            endTime: currentBlockFromSequence.endTime ?? null,
+            primaryText: currentBlockFromSequence.primaryText || "",
+            secondaryText: currentBlockFromSequence.secondaryText || "",
+            hasPrimarySignal: Boolean(currentBlockFromSequence.primaryText),
+            hasSecondarySignal: Boolean(currentBlockFromSequence.secondaryText),
+            sourceReason: "onPrimaryCueChange",
+            updatedAt: Date.now(),
+          }
+        : {
+            startTime: pCue?.startTime ?? null,
+            endTime: pCue?.endTime ?? null,
+            primaryText: pText || "",
+            secondaryText: sText || "",
+            hasPrimarySignal: Boolean(pText),
+            hasSecondarySignal: Boolean(sText),
+            sourceReason: "onPrimaryCueChange:fallback",
+            updatedAt: Date.now(),
+          };
 
       setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange");
       updateOverlay(currentBlock.primaryText, currentBlock.secondaryText);

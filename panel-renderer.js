@@ -20,6 +20,12 @@
       getCurrentCue,
       cleanCueText,
       logContent,
+      resolvePanelBlocksForRender = () => ({
+        blocks: [],
+        currentBlocks: [],
+        usedCurrentFallback: false,
+        sameWindowGroups: new Map(),
+      }),
       PANEL_PRIMARY_GRACE_MS,
       DEBUG_PANEL_PROBE,
     } = deps;
@@ -228,29 +234,97 @@
       }
     }
 
-    // [render: panel list apply]
+    // [render: panel visible blocks] subtitleBlocks の解決は resolver へ委譲する。
+    function getPanelBlocksForRender(currentTime) {
+      const result = resolvePanelBlocksForRender({
+        sourceBlocks: state.subtitleBlocks,
+        currentTime,
+        currentSubtitleBlock: state.currentSubtitleBlock || null,
+      });
+
+      if (currentTime >= 59 && currentTime <= 68) {
+        const debugBlocks = (result.blocks || [])
+          .filter((block) => block.startTime >= 59 && block.startTime <= 68)
+          .map((block) => ({
+            key: block.key || null,
+            startTime: block.startTime,
+            endTime: block.endTime,
+            state: block.state,
+            stable: block.stable ?? null,
+            primaryPreview: String(block.primary || "").slice(0, 80),
+            secondaryPreview: String(block.secondary || "").slice(0, 80),
+          }));
+
+        const debugGroups = Array.from(
+          (result.sameWindowGroups || new Map()).entries(),
+        )
+          .map(([groupKey, entries]) => ({
+            groupKey,
+            size: entries.length,
+            startTime: entries[0]?.block?.startTime ?? null,
+            endTime: entries[0]?.block?.endTime ?? null,
+            items: entries.map(({ block }, index) => ({
+              index,
+              state: block.state,
+              primaryPreview: String(block.primary || "").slice(0, 60),
+            })),
+          }))
+          .filter((group) => group.startTime >= 59 && group.startTime <= 68);
+
+        logContent("panel debug 59-68", {
+          currentTime,
+          currentBlocks: (result.currentBlocks || []).map((block) => ({
+            key: block.key || null,
+            startTime: block.startTime,
+            endTime: block.endTime,
+            state: block.state,
+            primaryPreview: String(block.primary || "").slice(0, 80),
+          })),
+          debugBlocks,
+          debugGroups,
+        });
+      }
+
+      return {
+        blocks: result.blocks || [],
+        currentBlocks: result.currentBlocks || [],
+        usedCurrentFallback: Boolean(result.usedCurrentFallback),
+      };
+    }
+
+    // [render: panel list apply] panel 描画を subtitleBlocks ベースへ寄せる。
     function renderPanel() {
       if (!state.panelShadowRoot) return;
       const list = state.panelShadowRoot.getElementById("subtitle-list");
       if (!list) return;
 
       const currentTime = state.video ? state.video.currentTime : 0;
-      const allBlocks = [];
+      const {
+        blocks: allBlocks,
+        currentBlocks,
+        usedCurrentFallback,
+      } = getPanelBlocksForRender(currentTime);
+      const currentBlock = currentBlocks[0] || null;
+      const curPrimaryCue =
+        currentBlock && state.primaryTrack
+          ? findCueAt(state.primaryTrack, currentBlock.startTime + 0.01)
+          : null;
 
-      state.subtitleHistory.forEach((h) => {
-        if (h.endTime <= currentTime) allBlocks.push({ ...h, state: "past" });
-      });
-
-      // [render: panel list blocks - current]
-      // primary は state.primaryTrack、secondary は state.secondaryTrack の cue だけを使う。
-      const { block: currentBlock, curPrimaryCue } =
-        buildCurrentPanelBlock(currentTime);
-      if (currentBlock) {
-        allBlocks.push(currentBlock);
+      if (currentBlocks.length > 1) {
+        logContent("panel render current candidates", {
+          currentTime,
+          candidateCount: currentBlocks.length,
+          usedCurrentFallback,
+          candidates: currentBlocks.map((block) => ({
+            key: block.key || null,
+            startTime: block.startTime,
+            endTime: block.endTime,
+            stable: block.stable ?? null,
+            primaryPreview: String(block.primary || "").slice(0, 80),
+            secondaryPreview: String(block.secondary || "").slice(0, 80),
+          })),
+        });
       }
-
-      // [render: panel list blocks - future / snapshot]
-      allBlocks.push(...collectFuturePanelBlocks(currentTime));
 
       updatePanelRenderSnapshot(allBlocks, curPrimaryCue);
 

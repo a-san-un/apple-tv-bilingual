@@ -32,6 +32,8 @@
         "debug-panel.js",
         "panel-renderer.js",
         "panel-ui.js",
+        "subtitle-blocks.js",
+        "subtitle-block-resolver.js",
         "cue-controller.js",
         "overlay-controller.js",
         "runtime-observers.js",
