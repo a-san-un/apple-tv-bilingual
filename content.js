@@ -95,6 +95,7 @@
     subtitleHistoryStore: new Map(),
     subtitleHistory: [],
     subtitleBlocks: [],
+    subtitleCurrentIndex: -1,
     subtitleBlockMeta: null,
     lastPanelRenderSnapshot: null,
     currentSubtitleBlock: null,
@@ -236,15 +237,48 @@
 
   function setSubtitleBlocks(result, reason = "unknown") {
     const nextBlocks = Array.isArray(result?.blocks) ? result.blocks : [];
+    const nextCurrentIndex =
+      typeof result?.currentIndex === "number" ? result.currentIndex : -1;
+
     state.subtitleBlocks = nextBlocks;
+    state.subtitleCurrentIndex = nextCurrentIndex;
     state.subtitleBlockMeta = result?.meta || null;
 
     logContent("subtitle blocks updated", {
       reason,
       blockCount: nextBlocks.length,
-      currentIndex:
-        typeof result?.currentIndex === "number" ? result.currentIndex : -1,
+      currentIndex: nextCurrentIndex,
     });
+  }
+
+  function getCurrentSubtitleBlockFromSequence(sequenceResult = null) {
+    const blocks = Array.isArray(sequenceResult?.blocks)
+      ? sequenceResult.blocks
+      : state.subtitleBlocks;
+    const currentIndex =
+      typeof sequenceResult?.currentIndex === "number"
+        ? sequenceResult.currentIndex
+        : state.subtitleCurrentIndex;
+
+    if (!Array.isArray(blocks) || currentIndex < 0 || currentIndex >= blocks.length) {
+      return null;
+    }
+
+    const block = blocks[currentIndex];
+    if (!block) return null;
+
+    return {
+      startTime: block.startTime ?? null,
+      endTime: block.endTime ?? null,
+      primaryText: block.primaryText || block.primary || "",
+      secondaryText: block.secondaryText || block.secondary || "",
+      hasPrimarySignal: Boolean(block.primaryText || block.primary),
+      hasSecondarySignal: Boolean(block.secondaryText || block.secondary),
+      sourceReason: "subtitleBlockSequence",
+      updatedAt: Date.now(),
+      key: block.key || null,
+      stable: block.stable ?? false,
+    };
   }
 
   // 現在字幕の更新と一時的なテキスト巻き戻りの抑止
@@ -2691,6 +2725,7 @@
     getPreviousSubtitleBlocks: () => state.subtitleBlocks || [],
     buildSubtitleBlockSequence,
     setSubtitleBlocks,
+    getCurrentSubtitleBlockFromSequence,
     setCurrentSubtitleBlock,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,

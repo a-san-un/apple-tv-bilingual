@@ -19,6 +19,7 @@
     getSecondaryTrackCues,
     getPreviousSubtitleBlocks,
     setSubtitleBlocks,
+    getCurrentSubtitleBlockFromSequence,
     setCurrentSubtitleBlock,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
@@ -182,34 +183,17 @@
         });
       }
 
-      const currentBlockFromSequence =
-        blockResult &&
-        typeof blockResult.currentIndex === "number" &&
-        blockResult.currentIndex >= 0
-          ? blockResult.blocks[blockResult.currentIndex]
-          : null;
-
-      const currentBlock = currentBlockFromSequence
-        ? {
-            startTime: currentBlockFromSequence.startTime ?? null,
-            endTime: currentBlockFromSequence.endTime ?? null,
-            primaryText: currentBlockFromSequence.primaryText || "",
-            secondaryText: currentBlockFromSequence.secondaryText || "",
-            hasPrimarySignal: Boolean(currentBlockFromSequence.primaryText),
-            hasSecondarySignal: Boolean(currentBlockFromSequence.secondaryText),
-            sourceReason: "onPrimaryCueChange",
-            updatedAt: Date.now(),
-          }
-        : {
-            startTime: pCue?.startTime ?? null,
-            endTime: pCue?.endTime ?? null,
-            primaryText: pText || "",
-            secondaryText: sText || "",
-            hasPrimarySignal: Boolean(pText),
-            hasSecondarySignal: Boolean(sText),
-            sourceReason: "onPrimaryCueChange:fallback",
-            updatedAt: Date.now(),
-          };
+      const currentBlock =
+        getCurrentSubtitleBlockFromSequence(blockResult) || {
+          startTime: pCue?.startTime ?? null,
+          endTime: pCue?.endTime ?? null,
+          primaryText: pText || "",
+          secondaryText: sText || "",
+          hasPrimarySignal: Boolean(pText),
+          hasSecondarySignal: Boolean(sText),
+          sourceReason: "onPrimaryCueChange:fallback",
+          updatedAt: Date.now(),
+        };
 
       setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange");
       updateOverlay(currentBlock.primaryText, currentBlock.secondaryText);
