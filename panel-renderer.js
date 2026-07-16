@@ -1,15 +1,28 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - panel-renderer.js
-// version: 2.6.3
-// 役割: 右字幕パネルの list 描画責務を担当する。
-// Phase E (3): content.js から panel renderer 本体を切り出して
-// window.ATVB.panelRenderer で公開する。
+// version: 2.6.4
+//
+// 役割:
+// - 右字幕パネルの list 描画責務を担当する
+// - resolver が返す blocks/currentBlocks/sameWindowGroups を受け取り、
+//   panel 用 DOM へ変換する
+// - panel current UX 用の派生フラグ
+//   (isWindowCurrent / isPanelEmphasized / isSequentialCurrent)
+//   を描画へ反映する
+//
+// Phase 3-3 方針:
+// - truth は resolver 側の strict state/currentBlocks に委譲する
+// - panel は派生ビューとして multi-line current 表示を許容する
+// - strict current は scroll anchor / debug の基準として使い、
+//   panel 強調は isPanelEmphasized を使って描画する
 // =============================================================
 (function () {
   "use strict";
 
   window.ATVB = window.ATVB || {};
 
+  // [factory]
+  // panel renderer インスタンスを生成し、依存関数・state を束ねる。
   function createPanelRenderer(deps = {}) {
     const {
       state,
@@ -30,18 +43,33 @@
       DEBUG_PANEL_PROBE,
     } = deps;
 
-    // [render: panel block html] subtitle block 1件分の HTML を組み立てる。
+    // [render block html]
+    // subtitle block 1件分の HTML を組み立てる。
+    // panel 強調と strict current は別フラグで扱う。
     function buildPanelBlockHtml(block) {
-      const isCurrent = block.state === "current";
+      const isWindowCurrent = block.isWindowCurrent === true;
+      const isSequentialCurrent =
+        block.isSequentialCurrent ?? block.state === "current";
+      const isPanelEmphasized =
+        block.isPanelEmphasized ?? block.state === "current";
+
       const cls = "subtitle-block";
-      const mid = isCurrent ? 'id="current-block"' : "";
-      const mark = isCurrent
+      const mid = isSequentialCurrent ? 'id="current-block"' : "";
+      const mark = isPanelEmphasized
         ? `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" /><polygon class="play-core" points="10,8 17,12 10,16" /></svg>`
         : "";
       const pText = makeClickableSpans(block.primary, block.primary);
       const sText = makeClickableSpans(block.secondary, block.primary);
+
       return `
-        <div class="${cls}" ${mid} data-time="${block.startTime}">
+        <div
+          class="${cls}"
+          ${mid}
+          data-time="${block.startTime}"
+          data-window-current="${isWindowCurrent ? "true" : "false"}"
+          data-sequential-current="${isSequentialCurrent ? "true" : "false"}"
+          data-panel-emphasized="${isPanelEmphasized ? "true" : "false"}"
+        >
           <div class="subtitle-row">
             <div class="subtitle-mark">${mark}</div>
             <div class="subtitle-content">
@@ -54,7 +82,8 @@
       `;
     }
 
-    // [wiring: panel word interactions] block 内の単語 hover / click を subtitle popup へ接続する。
+    // [bind word interactions]
+    // block 内の単語 hover / click を subtitle popup へ接続する。
     function bindPanelWordInteractions(blockEl) {
       blockEl.querySelectorAll(".atv-word").forEach((span) => {
         span.addEventListener("mouseenter", () => {
@@ -76,7 +105,8 @@
       });
     }
 
-    // [wiring: panel block interactions] block click と word click を panel list DOM に接続する。
+    // [bind block interactions]
+    // block click と word click を panel list DOM に接続する。
     function bindPanelBlockInteractions(list) {
       list.querySelectorAll(".subtitle-block").forEach((blockEl) => {
         bindPanelWordInteractions(blockEl);
@@ -94,96 +124,8 @@
       });
     }
 
-    // [render: panel list blocks - future] current time より後ろの cue から future block 群を組み立てる。
-    function collectFuturePanelBlocks(currentTime) {
-      const blocks = [];
-      if (!state.primaryTrack || !state.primaryTrack.cues) return blocks;
-
-      for (let i = 0; i < state.primaryTrack.cues.length; i++) {
-        const c = state.primaryTrack.cues[i];
-        if (c.startTime > currentTime + 0.1) {
-          const sc = findCueAt(state.secondaryTrack, c.startTime + 0.05);
-          blocks.push({
-            startTime: c.startTime,
-            endTime: c.endTime,
-            primary: cleanCueText(c),
-            secondary: cleanCueText(sc),
-            state: "future",
-          });
-        }
-      }
-
-      return blocks;
-    }
-
-    // [render: panel list blocks - current] primary / secondary の現在 cue から current block を組み立てる。
-    function buildCurrentPanelBlock(currentTime) {
-      const curPrimaryCue = getCurrentCue(state.primaryTrack, currentTime);
-      const curSecondaryCue = findCueAt(state.secondaryTrack, currentTime);
-      const currentStateBlock = state.currentSubtitleBlock || null;
-
-      if (!curPrimaryCue && !curSecondaryCue && !currentStateBlock) {
-        return { block: null, curPrimaryCue: null };
-      }
-
-      const currentCue = curPrimaryCue || curSecondaryCue;
-      let currentPrimaryText =
-        currentStateBlock?.primaryText ||
-        (curPrimaryCue ? cleanCueText(curPrimaryCue) : "");
-
-      if (
-        !currentPrimaryText &&
-        state.primaryTrack &&
-        curSecondaryCue &&
-        state.lastPrimaryText
-      ) {
-        const elapsedSincePrimarySnapshot =
-          Date.now() - state.lastPrimarySnapshotAt;
-        if (
-          state.lastPrimarySnapshotAt > 0 &&
-          elapsedSincePrimarySnapshot <= PANEL_PRIMARY_GRACE_MS
-        ) {
-          currentPrimaryText = state.lastPrimaryText;
-        }
-      }
-
-      const currentSecondaryText =
-        currentStateBlock?.secondaryText || cleanCueText(curSecondaryCue);
-
-      if (!currentCue) {
-        return { block: null, curPrimaryCue: null };
-      }
-
-      if (DEBUG_PANEL_PROBE) {
-        logContent("panel render current block probe", {
-          currentTime,
-          settingsPrimaryLang: state.contentSettings.primaryLang,
-          primaryTrackLanguage: state.primaryTrack?.language,
-          primaryTrackLabel: state.primaryTrack?.label,
-          secondaryTrackLanguage: state.secondaryTrack?.language,
-          secondaryTrackLabel: state.secondaryTrack?.label,
-          curPrimaryCueText: cleanCueText(curPrimaryCue).slice(0, 40),
-          curSecondaryCueText: cleanCueText(curSecondaryCue).slice(0, 40),
-          statePrimaryText: (currentStateBlock?.primaryText || "").slice(0, 40),
-          stateSecondaryText: (currentStateBlock?.secondaryText || "").slice(0, 40),
-          resolvedPrimary: currentPrimaryText.slice(0, 40),
-          currentBlockSecondary: currentSecondaryText.slice(0, 40),
-        });
-      }
-
-      return {
-        curPrimaryCue,
-        block: {
-          startTime: currentCue.startTime,
-          endTime: currentCue.endTime,
-          primary: currentPrimaryText,
-          secondary: currentSecondaryText,
-          state: "current",
-        },
-      };
-    }
-
-    // [render: panel snapshot] current block と primary snapshot の最終描画状態を保持する。
+    // [update render snapshot]
+    // panel の最終描画状態を snapshot として保持し、必要なら primary snapshot 時刻も更新する。
     function updatePanelRenderSnapshot(allBlocks, curPrimaryCue) {
       const renderedCurrentBlock = allBlocks.find((b) => b.state === "current");
       const stateCurrentBlock = state.currentSubtitleBlock || null;
@@ -206,7 +148,8 @@
       }
     }
 
-    // [render: panel scroll] current block が見切れる場合だけ panel scroll position を補正する。
+    // [scroll current block]
+    // strict current block が見切れる場合だけ panel scroll position を補正する。
     function scrollCurrentPanelBlockIntoView() {
       const currentBlock =
         state.panelShadowRoot?.getElementById("current-block");
@@ -234,7 +177,9 @@
       }
     }
 
-    // [render: panel visible blocks] subtitleBlocks の解決は resolver へ委譲する。
+    // [get render blocks]
+    // subtitleBlocks の解決を resolver へ委譲し、panel 描画用 shape に整える。
+    // debug 時は対象区間の block / group / current をログ出力する。
     function getPanelBlocksForRender(currentTime) {
       const result = resolvePanelBlocksForRender({
         sourceBlocks: state.subtitleBlocks,
@@ -249,16 +194,24 @@
       if (shouldDebug32to40 || shouldDebug59to68) {
         const debugMin = shouldDebug32to40 ? 32 : 59;
         const debugMax = shouldDebug32to40 ? 40 : 68;
-        const debugLabel = shouldDebug32to40 ? "panel debug 32-40" : "panel debug 59-68";
+        const debugLabel = shouldDebug32to40
+          ? "panel debug 32-40"
+          : "panel debug 59-68";
 
         const debugBlocks = (result.blocks || [])
-          .filter((block) => block.startTime >= debugMin && block.startTime <= debugMax)
+          .filter(
+            (block) =>
+              block.startTime >= debugMin && block.startTime <= debugMax,
+          )
           .map((block) => ({
             key: block.key || null,
             startTime: block.startTime,
             endTime: block.endTime,
             state: block.state,
             stable: block.stable ?? null,
+            isWindowCurrent: block.isWindowCurrent ?? null,
+            isSequentialCurrent: block.isSequentialCurrent ?? null,
+            isPanelEmphasized: block.isPanelEmphasized ?? null,
             primaryPreview: String(block.primary || "").slice(0, 80),
             secondaryPreview: String(block.secondary || "").slice(0, 80),
           }));
@@ -278,7 +231,10 @@
               primaryPreview: String(block.primary || "").slice(0, 60),
             })),
           }))
-          .filter((group) => group.startTime >= debugMin && group.startTime <= debugMax);
+          .filter(
+            (group) =>
+              group.startTime >= debugMin && group.startTime <= debugMax,
+          );
 
         logContent(debugLabel, {
           currentTime,
@@ -301,7 +257,8 @@
       };
     }
 
-    // [render: panel list apply] panel 描画を subtitleBlocks ベースへ寄せる。
+    // [render panel]
+    // panel 描画本体。resolver 結果を DOM へ反映し、イベント接続と scroll 補正まで行う。
     function renderPanel() {
       if (!state.panelShadowRoot) return;
       const list = state.panelShadowRoot.getElementById("subtitle-list");
@@ -337,12 +294,10 @@
 
       updatePanelRenderSnapshot(allBlocks, curPrimaryCue);
 
-      // [render: panel list DOM apply]
       list.innerHTML = allBlocks
         .map((block) => buildPanelBlockHtml(block))
         .join("");
 
-      // [wiring: panel list interactions]
       bindPanelBlockInteractions(list);
 
       scrollCurrentPanelBlockIntoView();
