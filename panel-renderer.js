@@ -242,9 +242,16 @@
         currentSubtitleBlock: state.currentSubtitleBlock || null,
       });
 
-      if (currentTime >= 59 && currentTime <= 68) {
+      const shouldDebug32to40 = currentTime >= 32 && currentTime <= 40;
+      const shouldDebug59to68 = currentTime >= 59 && currentTime <= 68;
+
+      if (shouldDebug32to40 || shouldDebug59to68) {
+        const debugMin = shouldDebug32to40 ? 32 : 59;
+        const debugMax = shouldDebug32to40 ? 40 : 68;
+        const debugLabel = shouldDebug32to40 ? "panel debug 32-40" : "panel debug 59-68";
+
         const debugBlocks = (result.blocks || [])
-          .filter((block) => block.startTime >= 59 && block.startTime <= 68)
+          .filter((block) => block.startTime >= debugMin && block.startTime <= debugMax)
           .map((block) => ({
             key: block.key || null,
             startTime: block.startTime,
@@ -266,12 +273,13 @@
             items: entries.map(({ block }, index) => ({
               index,
               state: block.state,
+              key: block.key || null,
               primaryPreview: String(block.primary || "").slice(0, 60),
             })),
           }))
-          .filter((group) => group.startTime >= 59 && group.startTime <= 68);
+          .filter((group) => group.startTime >= debugMin && group.startTime <= debugMax);
 
-        logContent("panel debug 59-68", {
+        logContent(debugLabel, {
           currentTime,
           currentBlocks: (result.currentBlocks || []).map((block) => ({
             key: block.key || null,
