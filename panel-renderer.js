@@ -239,7 +239,8 @@
       const result = resolvePanelBlocksForRender({
         sourceBlocks: state.subtitleBlocks,
         currentTime,
-        currentSubtitleBlock: state.currentSubtitleBlock || null,
+        currentSubtitleBlock: null,
+        debugLog: logContent,
       });
 
       const shouldDebug32to40 = currentTime >= 32 && currentTime <= 40;
