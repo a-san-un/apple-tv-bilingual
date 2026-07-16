@@ -22,6 +22,8 @@ Issue #32 では、Apple TV+ 再生画面における字幕同期まわりの設
 - current / panel / overlay / history が別々に current を持たないようにする
 - 表示責務は分けても、字幕データの基準は揃える
 - 修正は小さな phase に分けて進める
+- `content.js` は orchestration / wiring に寄せ、判定ロジックを増やしすぎない
+- panel current 判定のような表示ポリシーは、必要なら専用 resolver へ切り出す
 
 ### 目指す状態
 
@@ -30,6 +32,7 @@ Issue #32 では、Apple TV+ 再生画面における字幕同期まわりの設
 - panel は同じ block 配列を表示する
 - history はその block 配列の past 側から自然に導けるようにする
 - 字幕は「次の字幕 block が来るまで残る」方向を優先する
+- 将来的な真実源は **`blocks[] + currentIndex + meta`** を返す subtitle block sequence モデルとする
 
 ---
 
@@ -42,7 +45,7 @@ Issue #32 では、Apple TV+ 再生画面における字幕同期まわりの設
 - `subtitleHistory`
   - 右パネルの past 行の保持
 - `currentSubtitleBlock`
-  - right panel current 行の基準
+  - right panel current 行と overlay current の基準
 - `lastPrimaryText` / `lastPrimarySignalAt`
   - primary の一時欠落に対する grace 補助
 - `lastSecondaryText`
@@ -53,6 +56,8 @@ Issue #32 では、Apple TV+ 再生画面における字幕同期まわりの設
   - secondary 側 DOM の個別描画
 - panel renderer
   - current / past / future を別ロジックで組み立て
+- panel current resolver
+  - same-window captions を含む panel 用 current の最終解決
 
 この状態では、同じ字幕情報が複数の経路で別々に補完・描画されるため、同期ズレや重複が起きやすい。
 
@@ -63,6 +68,8 @@ Issue #32 では、Apple TV+ 再生画面における字幕同期まわりの設
 - 右パネルと下部字幕は表示位置が違うだけで、**同じ subtitle block モデル** を参照すべき
 - render 関数が current block の更新責務を持つと、描画タイミングの揺れで state が揺さぶられやすい
 - そのため、current block の更新責務は render 関数ではなく cuechange 本流へ寄せる方がよい
+- panel current のような表示都合の winner 決定は、真実源そのものではなく表示ポリシー層で扱う方が安全
+- 同一秒・同一時間窓の字幕飛びは、単純な group 化不足ではなく、`current-fallback` の介入と panel current 描画責務の噛み合わせとして現れている可能性が高い
 
 ---
 
@@ -156,6 +163,37 @@ showSidebar の変更時に `restartBilingual()` が走る経路があり、UI �
 
 ---
 
+## 6. same-window captions で panel current が飛ぶ
+
+same-window captions を panel 側で順送り表示しようとすると、同一時間窓に複数字幕がある場面で「最初の字幕だけに再生マーカーが付き、その後続が飛んで見える」挙動が出る。
+
+### ここまでの観測
+
+- 32〜40 秒帯の字幕パネル debug 表示では、same-window group 自体は形成されている
+- 例:
+  - 32.330〜34.195 秒帯:
+    - `Looking for a woman`
+    - `with a bandaged right arm.`
+  - 36.830〜39.869 秒帯:
+    - `Please ship two barrels of D+`
+    - `to Water Filtration.`
+- 窓前半では group 内 1 件目が `current`、後続が `future` になる
+- ただし窓終端付近では、元 block 群が `past` に落ちた後、同じ時間窓に `current-fallback` が `current` として追加されることがある
+
+### この問題の影響
+
+- ユーザー視点では、同一秒の 2 行目以降が飛んだように見える
+- same-window 順送りができていないように見える
+- panel current と snapshot/current 補完が競合しやすい
+
+### ここから分かったこと
+
+- 問題の主因は same-window group 化不足そのものではない
+- むしろ **`current-fallback` の介入と、panel current マーカー描画責務の噛み合わせ** が主因候補である
+- このため、same-window group 化の成否と、panel current winner の決定責務は分けて考える必要がある
+
+---
+
 ## 設計の中心
 
 ## current 専用関数ではなく block 配列モデルへ寄せる
@@ -168,6 +206,8 @@ Issue #32 では、`resolveCurrentSubtitleBlock(now)` のような current 専�
 - 各 block に対して secondary cue を時間近傍で対応付ける
 - block 配列には `state: "past" | "current" | "future"` を付与する
 - block ごとに `stable: true | false` を持たせる
+- `currentIndex` で現在位置を明示する
+- `meta` で再構成理由やデバッグ補助情報を持つ
 - overlay は current block を表示する
 - panel は同じ block 配列全体を表示する
 
@@ -181,6 +221,7 @@ Issue #32 では、`resolveCurrentSubtitleBlock(now)` のような current 専�
 
 ```js
 {
+  key,
   startTime,
   endTime,
   primaryText,
@@ -190,8 +231,33 @@ Issue #32 では、`resolveCurrentSubtitleBlock(now)` のような current 専�
 }
 ```
 
+### sequence result 形状
+
+```js
+{
+  blocks: [
+    {
+      key,
+      startTime,
+      endTime,
+      primaryText,
+      secondaryText,
+      state: "past" | "current" | "future",
+      stable: true | false
+    }
+  ],
+  currentIndex,
+  meta: {
+    rebuildReason,
+    blockCount
+  }
+}
+```
+
 ### 各フィールドの意味
 
+- `key`
+  - block の基本識別子
 - `startTime`
   - block の開始基準時刻
 - `endTime`
@@ -204,6 +270,20 @@ Issue #32 では、`resolveCurrentSubtitleBlock(now)` のような current 専�
   - 現在時刻に対して、その block が past/current/future のどれか
 - `stable`
   - この block が現時点で確定寄りか、再評価されうるか
+- `currentIndex`
+  - `blocks[]` 内の current 位置
+- `meta`
+  - sequence 再構成の理由やデバッグ補助情報
+
+### key の基本方針
+
+block の基本キーは、少なくとも次の 3 要素を組み合わせる。
+
+- `startTime`
+- `endTime`
+- `primaryText`
+
+初期方針では、`secondaryText` は key に含めない。
 
 ### state の意味
 
@@ -217,9 +297,11 @@ Issue #32 では、`resolveCurrentSubtitleBlock(now)` のような current 専�
 ### stable の意味
 
 - `stable: true`
-  - primary / secondary の対応づけがほぼ固まり、再構成の可能性が低い
+  - この block を UI 真実源として今後あまり揺らさない
 - `stable: false`
   - secondary cue 後追い・track 再解決・seek などで再評価の余地がある
+
+ここでの `stable` は、単なる「確定した / していない」の二値というより、**UI に対してどこまで再更新を許容するか** の指標として扱う。
 
 ---
 
@@ -230,11 +312,15 @@ Issue #32 では、`resolveCurrentSubtitleBlock(now)` のような current 専�
 ```text
 buildSubtitleBlockSequence(now)
   ↓
-[
-  { startTime, endTime, primaryText, secondaryText, state: "past", stable: true },
-  { startTime, endTime, primaryText, secondaryText, state: "current", stable: true | false },
-  { startTime, endTime, primaryText, secondaryText, state: "future", stable: false },
-]
+{
+  blocks: [
+    { key, startTime, endTime, primaryText, secondaryText, state: "past", stable: true },
+    { key, startTime, endTime, primaryText, secondaryText, state: "current", stable: true | false },
+    { key, startTime, endTime, primaryText, secondaryText, state: "future", stable: false }
+  ],
+  currentIndex,
+  meta
+}
 ```
 
 ### 処理イメージ
@@ -243,6 +329,7 @@ buildSubtitleBlockSequence(now)
 2. 各 block に最も近い secondary cue を時間近傍で対応付ける
 3. 現在時刻 `now` に基づいて `past/current/future` を振る
 4. secondary 未着・track 再解決待ちなどを見て `stable` を振る
+5. `currentIndex` と `meta` を付加する
 
 ### primary cue をアンカーにする理由
 
@@ -260,7 +347,7 @@ overlay は **current block だけ** を表示する。
 
 ```text
 buildSubtitleBlockSequence(now)
-  └─ currentBlock を抽出
+  └─ currentIndex から currentBlock を取得
        └─ overlay へ描画
 ```
 
@@ -294,8 +381,12 @@ panel は **block 配列全体** を表示する。
 
 ```text
 buildSubtitleBlockSequence(now)
-  └─ selectVisiblePanelBlocks(...)
-       └─ panel へ描画
+  └─ subtitle-block-resolver.js
+       ├─ panel 用 block 正規化
+       ├─ same-window group 化
+       ├─ group 内 sequential current 解決
+       └─ selectVisiblePanelBlocks(...)
+            └─ panel へ描画
 ```
 
 ### 意味
@@ -303,6 +394,12 @@ buildSubtitleBlockSequence(now)
 - panel は current を特別扱いしつつ、past / future を同じ系列として表示できる
 - 現在のような current 補完や secondary 後追い差し替えを減らせる
 - history append のような補助構造に過度に依存しなくてよくなる
+- same-window captions の current winner 決定を、描画コード本体から分離できる
+
+### panel resolver を置く理由
+
+same-window captions の group 化や current winner 決定は、真実源 block そのものというより、**panel 表示ポリシー** に近い。  
+そのため、`panel-renderer.js` に判定ロジックを積み増すのではなく、`subtitle-block-resolver.js` のような専用 resolver に寄せる方が責務分離しやすい。
 
 ---
 
@@ -340,6 +437,8 @@ buildSubtitleBlockSequence(now)
 - 短期的には既存 `subtitleHistory` を使ってもよい
 - ただし責務は縮小し、block モデルへ寄せていく
 - 「1 セリフ基本 1 行」を崩すような二重 append は避ける
+- Phase 3-1 では history の全面置換までは進めず、まず真実源側を固める
+- `subtitleHistory` を UI 真実源から本格的に外すのは、panel / overlay が blocks 真実源に寄った後とする
 
 ### past/current/future の意味づけ
 
@@ -440,12 +539,15 @@ Phase 2 / Phase 3 の挙動確認では、たとえば次のような filter の
 
 - subtitle 系の主ログの一部は `category=ui` に属しているため、必要であれば後続フェーズで `subtitle` / `ui` の分類見直しを検討する
 - debug filter は観測補助であり、Issue #32 の中心設計ではないため、仕様を広げすぎず最小運用を維持する
-- 右パネル上の debug log は overlay と表示レイヤが干渉するため、**Phase 2 / Phase 3 の主観測面は設定ページ側へ寄せる** 方針とする
-- 右パネル側の debug log は補助ビューとして扱い、filter / log list のロジックとビューは設定ページ側と共通化できるようにしていく
+- Phase 2 時点では詳細観測を設定ページ側 debug log に寄せる方針を採っていたが、Phase 3 では **字幕パネル debug 表示が same-window group / current-fallback 観測の主観測源として有効** であることが分かった
+- 今後は、
+  - cuechange / signal / track 状態などの時系列ログは設定ページ側 debug log
+  - panel current / same-window group / visible blocks の観測は字幕パネル debug 表示
+    という使い分けを取る
 
 ---
 
-## Phase 2: overlay のイベント依存を減らす
+## Phase 2: overlay のイベント依存を減らす（実施済み・継続観察）
 
 ### やること
 
@@ -484,7 +586,8 @@ Phase 2 / Phase 3 の挙動確認では、たとえば次のような filter の
 ### 補足
 
 - Phase 2 の調査では、Phase 1.5 で追加した debug filter を使い、`cuechange` / `current subtitle block updated` / `secondary track sync context` の前後関係を見ながら修正前後を比較する。
-- ただし再生画面右パネルの debug log は overlay と排他的に扱われやすいため、**詳細なログ観測は設定ページ側の debug log をメインにする** 前提で運用する。
+- overlay 点滅や current 更新頻度の時系列観測は設定ページ側 debug log が依然有効である。
+- 一方、panel current の飛びや same-window group の見え方は、字幕パネル debug 表示の方が直接的に観測しやすい。
 
 ---
 
@@ -496,18 +599,23 @@ Phase 2 / Phase 3 の挙動確認では、たとえば次のような filter の
 - primary cue をアンカーに block 配列を構築する
 - secondary cue を時間近傍で割り当てる
 - `state` と `stable` を block に付与する
+- `currentIndex` と `meta` を sequence result に付与する
 - panel / overlay が同じ block 配列から描画されるようにする
+- panel current 判定を必要に応じて専用 resolver へ切り出す
+- `currentSubtitleBlock` を `blocks[currentIndex]` の互換コピーへ縮退させる
 
 ### 目的
 
 - panel / overlay / history の共通基盤を作る
 - current 専用補完ロジックを減らす
 - seek / track 再解決 / secondary 後追い差し替えに強くする
+- same-window captions を block モデルと表示ポリシーに分けて扱えるようにする
 
 ### 補足
 
 - Phase 3 でも、Phase 1.5 の debug filter を使って current block 更新の頻度、block start/end の遷移、signal の有無を確認しながら進める
 - Phase 2 で cue-controller 側へ寄せた current block / overlay 更新入口は、Phase 3 で block sequence モデルに移行するときの接続点として再利用する
+- same-window captions や current-fallback の観測では、字幕パネル debug 表示を主観測源として使う
 
 ### Phase 3 の入口イメージ
 
@@ -534,21 +642,22 @@ Phase 3 で目指す形
 
 cuechange / track resolve / seek
   └─ buildSubtitleBlockSequence(now)
-       └─ blocks[]
-            ├─ past blocks
-            ├─ current block
-            └─ future blocks
+       └─ {
+            blocks[],
+            currentIndex,
+            meta
+          }
 
-blocks[]
-  ├─ panel: visible window を切り出して描画
-  └─ overlay: current block のみ描画
+sequence result
+  ├─ panel: resolver で visible window を切り出して描画
+  └─ overlay: blocks[currentIndex] を描画
 ```
 
 この見方に立つと、
 
-- `currentSubtitleBlock` は `blocks[]` の `state="current"` の 1 要素へ寄せられる
-- `subtitleHistory` は `blocks[]` の `state="past"` 側の暫定表現として縮小できる
-- future 行は primary cue 群をアンカーにした `state="future"` block 群として扱える
+- `currentSubtitleBlock` は `blocks[]` の current 要素へ寄せられる
+- `subtitleHistory` は `blocks[]` の `past` 側の暫定表現として縮小できる
+- future 行は primary cue 群をアンカーにした `future` block 群として扱える
 
 という整理になる。
 
@@ -573,6 +682,7 @@ Phase 2 で使っている `currentBlock` は、概ね次のような block へ�
 ```js
 // Phase 3 の block
 {
+  key,
   startTime,
   endTime,
   primaryText,
@@ -594,20 +704,20 @@ Phase 2 で使っている `currentBlock` は、概ね次のような block へ�
 
 このルールにより、panel と overlay は同じ `blocks[]` を参照しながら、
 
-- overlay は `state="current"` の 1 件だけを表示する
+- overlay は `blocks[currentIndex]` を表示する
 - panel は `past/current/future` を連続した系列として表示する
 
 という役割分担に寄せられる。
 
 ### stable の初期方針
 
-`stable` は「その block がどの程度確定しているか」を表す。Phase 3 の初期実装では、少なくとも次のような扱いを基本方針とする。
+`stable` は「その block を UI 真実源として今後どれだけ揺らしてよいか」を表す。Phase 3-1 の MVP では、次のような扱いを基本方針とする。
 
 - `state="past"` の block は基本 `stable=true`
-- `state="current"` の block は、primary / secondary が十分そろっていれば `stable=true`、secondary 後追いや再評価余地が大きい間は `stable=false`
+- `state="current"` の block は当面 `stable=false` を基本とし、後続で昇格条件を詰める
 - `state="future"` の block は基本 `stable=false`
 
-これにより、past は確定データ、future は予測寄りデータ、current はその中間として扱いやすくなる。
+つまり、MVP では **past 側のみ保守的に true 化** し、current / future の細かい安定化は後続フェーズで扱う。
 
 ### 同一 block の重複更新をどう扱うか
 
@@ -640,6 +750,42 @@ Phase 2 の観測では、同一 `blockStartTime` / `blockEndTime` を持つ `cu
 
 この方針により、secondary の後追い・track 再解決・seek 前後の一時的な揺れは `stable=false` の範囲で再評価を許容しつつ、いったん確定した block が panel / overlay 上で何度も揺れ直すことを抑えやすくなる。
 
+### currentSubtitleBlock の縮退方針
+
+Phase 3-1 では `currentSubtitleBlock` を即削除しない。  
+まずは **`blocks[currentIndex]` の互換コピー** として残す。
+
+この方針を取る理由は次の通り。
+
+- overlay / history / 既存 current 参照箇所を一度に壊さず移行しやすい
+- 真実源は blocks 側へ寄せつつ、既存呼び出し面は最小差分で維持できる
+- 将来的には current 専用 state を縮退できる
+
+### Phase 3-1 の最小実装ライン
+
+Phase 3-1 は、まず真実源側を固めるフェーズとする。最小ラインは次の 4 点。
+
+1. `buildSubtitleBlockSequence(now)` の返り値 shape を `blocks[] + currentIndex + meta` に固定する
+2. block 生成時に `key = startTime + endTime + primaryText` を付与する
+3. `stable` は MVP では past 側のみ保守的に true 化する
+4. `currentSubtitleBlock` は `blocks[currentIndex]` の互換コピーとして維持する
+
+また state には少なくとも次を持つ。
+
+- `subtitleBlocks`
+- `subtitleCurrentIndex`
+- `subtitleBlockMeta`
+
+### Phase 3-2 の設計論点
+
+Phase 3-2 では、panel current の飛びに対して `subtitle-block-resolver.js` を調整する。主な論点は次の通り。
+
+- same-window group に通常 block がいる場合、`current-fallback` を追加しない
+- `current-fallback` の current winner 優先順位を下げる
+- snapshot 用 current と panel current マーカー描画責務を分離する
+
+この論点は、真実源 block モデルそのものというより、**panel 表示ポリシー** の調整として扱う。
+
 ### Phase 3 に入る時点での整理
 
 したがって、Phase 3 の入口では次を前提にしてよい。
@@ -647,7 +793,8 @@ Phase 2 の観測では、同一 `blockStartTime` / `blockEndTime` を持つ `cu
 - Phase 2 の `currentBlock` は、block sequence モデルへ移行するための暫定的な current 要素である
 - 最終的には `current / history / panel / overlay` を別経路で持たず、`blocks[]` を共通基盤にする
 - 同一 block の近接再評価は一定範囲で許容するが、`stable=true` 化した block は原則再更新しない
-- overlay は `blocks[]` の `state="current"` を表示し、panel は同じ `blocks[]` の可視範囲を描画する
+- overlay は `blocks[currentIndex]` を表示し、panel は同じ `blocks[]` の可視範囲を描画する
+- same-window captions の current winner 決定は、必要に応じて resolver による表示ポリシーとして扱う
 
 ---
 
@@ -672,13 +819,17 @@ panel 用 style と overlay 用 style を混同しない。
 
 panel 開閉は UI state の変更として扱い、subtitle pipeline 全体の restart とは切り分ける方がよい。
 
-## 4. debug log は設定ページを主観測面にする
+## 4. debug log / debug view の観測面を使い分ける
 
-再生画面右パネルの debug log は、その場で軽く状況を見る補助ビューとする。  
-Phase 2 / Phase 3 の詳細観測は、overlay と表示レイヤが干渉しない **設定ページ側の debug log** を主観測面として扱う。
+再生画面右パネルの debug log / debug 表示は、その場で軽く状況を見る補助ビューとする。  
+ただし Phase 3 では、same-window captions と current-fallback の観測に関して、**字幕パネル debug 表示が主観測面として有効** であることが分かった。
 
 ### 補足
 
+- 時系列ログの確認:
+  - 設定ページ側 debug log を主に使う
+- panel visible blocks / current winner / same-window group の確認:
+  - 字幕パネル debug 表示を主に使う
 - filter ロジックと log list ビューは共通化し、右パネル側・設定ページ側は薄いラッパーで扱うのが望ましい
 - ただしこれは subtitle sync 本体とは別寄りの観測性改善テーマであり、Issue #32 本体の主対象にはしない
 - debug log の共通 view / filter 化（右パネル / 設定ページ / popup などの共通化）は、必要なら別 docs / 別 Issue として切り出して扱う
@@ -710,15 +861,22 @@ debug log の観測性改善は実務上重要であり、Phase 1.5 として最
 - `content.js`
   - state 保持
   - `setCurrentSubtitleBlock()`
-  - panel / overlay 補助経路
+  - orchestration / wiring
 - `cue-controller.js`
   - primary / secondary cuechange の本流
   - current / history / overlay / panel の更新 fan-out
   - current block 基準 overlay への入口
+  - sequence 真実源への移行接続点
 - `overlay-controller.js`
   - overlay host と表示更新
 - `panel-renderer.js`
-  - panel の current / past / future 描画
+  - panel の描画
+  - visible blocks を受けて render する責務
+- `subtitle-block-resolver.js`
+  - panel 用 block 正規化
+  - same-window group 化
+  - group 内 sequential current 解決
+  - panel current winner 解決
 - `debug-logger.js`
   - debug log 整形・保存・表示側 filter
 - debug log の共通 view / filter モジュール（将来）
@@ -747,10 +905,13 @@ Issue #32 の本質は、**イベント単位で UI を更新している設計*
 そのため、設計の中心は次のように置く。
 
 - current 専用関数ではなく、**past/current/future を含む subtitle block 配列** を先に構築する
+- 真実源は `blocks[]` 単体ではなく、**`blocks[] + currentIndex + meta`** を返す sequence result として扱う
 - overlay は current block を表示する
 - panel は同じ block 配列全体を表示する
 - past は確定データ、current は現在時刻に対する解決結果、future は再評価可能な予測寄りデータとして扱う
-- `stable` を持たせることで、確定度と再解決余地を区別する
+- `stable` を持たせることで、確定度と再解決余地ではなく、**UI に対してどこまで揺らしてよいか** を区別する
+- `currentSubtitleBlock` は当面 `blocks[currentIndex]` の互換コピーとして残し、段階的に縮退させる
+- panel current 判定は、必要に応じて resolver を介した表示ポリシーとして扱う
 
 修正の順番としては、まず履歴重複を止め、その後に観測性の最小セットを整え、  
 overlay のイベント依存を減らし、最終的に block sequence モデルへ寄せるのが最も安全で実務的である。
@@ -762,3 +923,11 @@ Phase 2 時点では、全面的な block sequence 導入の前に、
 - cue-controller 側で current block 更新 → overlay 更新の順を揃える
 
 という小さな段階を踏むことで、overlay の体感改善と将来の設計移行の両方を両立させる。
+
+そして Phase 3 では、
+
+- `buildSubtitleBlockSequence(now)` を真実源構築関数として定義し
+- `blocks[] + currentIndex + meta` を state の中心に据え
+- panel / overlay / history を真実源側 → 表示側の順に寄せていく
+
+ことで、same-window captions、secondary 後追い差し替え、seek / track 再解決、一時欠落時の揺れに対して、より一貫した設計を作っていく。
