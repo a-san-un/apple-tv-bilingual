@@ -70,6 +70,8 @@ Issue #32 では、Apple TV+ 再生画面における字幕同期まわりの設
 - そのため、current block の更新責務は render 関数ではなく cuechange 本流へ寄せる方がよい
 - panel current のような表示都合の winner 決定は、真実源そのものではなく表示ポリシー層で扱う方が安全
 - 同一秒・同一時間窓の字幕飛びは、単純な group 化不足ではなく、`current-fallback` の介入と panel current 描画責務の噛み合わせとして現れている可能性が高い
+- Phase 3-2 の観測により、resolver 単体の調整だけでは「same-window 2 行の両方が panel 上で認識される」UX を保証し切れないことが分かった
+- そのため、真実源モデルを維持したまま、panel だけは派生ビューとして独自の強調ポリシーを持てるようにする方向が有力になった
 
 ---
 
@@ -178,7 +180,10 @@ same-window captions を panel 側で順送り表示しようとすると、同�
     - `Please ship two barrels of D+`
     - `to Water Filtration.`
 - 窓前半では group 内 1 件目が `current`、後続が `future` になる
-- ただし窓終端付近では、元 block 群が `past` に落ちた後、同じ時間窓に `current-fallback` が `current` として追加されることがある
+- 窓終端付近では、元 block 群が `past` に落ちた後、同じ時間窓に `current-fallback` が `current` として追加されることがあった
+- Phase 3-2 では、same-window に通常 block が存在する場合は `current-fallback` を追加しない調整を入れた
+- same-window 2 行 group に対して 50:50 → 30:70 の sequential current 小実験も行った
+- それでも、panel 上では 2 行目に再生マーカーが乗る瞬間はほぼ観測されなかった
 
 ### この問題の影響
 
@@ -190,7 +195,8 @@ same-window captions を panel 側で順送り表示しようとすると、同�
 
 - 問題の主因は same-window group 化不足そのものではない
 - むしろ **`current-fallback` の介入と、panel current マーカー描画責務の噛み合わせ** が主因候補である
-- このため、same-window group 化の成否と、panel current winner の決定責務は分けて考える必要がある
+- さらに Phase 3-2 の観測から、**panel 更新タイミングと line-level current のサンプリング粗さ** も無視できない
+- このため、same-window group 化の成否、panel current winner の決定責務、panel の見せ方は分けて考える必要がある
 
 ---
 
@@ -385,6 +391,7 @@ buildSubtitleBlockSequence(now)
        ├─ panel 用 block 正規化
        ├─ same-window group 化
        ├─ group 内 sequential current 解決
+       ├─ panel 用派生フラグ付与
        └─ selectVisiblePanelBlocks(...)
             └─ panel へ描画
 ```
@@ -395,11 +402,53 @@ buildSubtitleBlockSequence(now)
 - 現在のような current 補完や secondary 後追い差し替えを減らせる
 - history append のような補助構造に過度に依存しなくてよくなる
 - same-window captions の current winner 決定を、描画コード本体から分離できる
+- panel 用の UX ポリシーを、真実源 block モデルと切り分けて調整できる
 
 ### panel resolver を置く理由
 
 same-window captions の group 化や current winner 決定は、真実源 block そのものというより、**panel 表示ポリシー** に近い。  
 そのため、`panel-renderer.js` に判定ロジックを積み増すのではなく、`subtitle-block-resolver.js` のような専用 resolver に寄せる方が責務分離しやすい。
+
+### Phase 3-3 の方向性
+
+Phase 3-2 までの観測を踏まえると、panel では line-level current を strict に 1 行だけ見せるより、**same-window 2 行 group を window 単位で current と認識できる見せ方** の方が UX に合う可能性が高い。
+
+そのため Phase 3-3 では、真実源 block の `state` は維持したまま、panel 用に次のような派生フラグを持たせる方向を検討する。
+
+```js
+{
+  (key,
+    startTime,
+    endTime,
+    primaryText,
+    secondaryText,
+    state,
+    stable,
+    isWindowCurrent,
+    isPanelEmphasized,
+    isSequentialCurrent);
+}
+```
+
+意味は次の通り。
+
+- `state`
+  - 真実源としての `past/current/future`
+- `isWindowCurrent`
+  - same-window group 全体として current な window に属しているか
+- `isPanelEmphasized`
+  - panel 上で current 相当に強調表示すべきか
+- `isSequentialCurrent`
+  - group 内 line-level current として内部的に選ばれた行か
+
+初期案としては、same-window 2 行 group の window が current のとき、
+
+- `isWindowCurrent = true`
+- 2 行とも `isPanelEmphasized = true`
+- `isSequentialCurrent` は内部整合や debug のために 1 行だけ true
+
+とする。  
+これにより、真実源モデルを壊さずに、panel だけは「2 行とも current 風に見せる」派生ビューとして扱える。
 
 ---
 
@@ -666,7 +715,6 @@ sequence result
 Phase 2 で使っている `currentBlock` は、概ね次のような block へ写像できる。
 
 ```js
-// Phase 2 の currentBlock
 {
   startTime,
   endTime,
@@ -680,7 +728,6 @@ Phase 2 で使っている `currentBlock` は、概ね次のような block へ�
 ```
 
 ```js
-// Phase 3 の block
 {
   key,
   startTime,
@@ -776,15 +823,27 @@ Phase 3-1 は、まず真実源側を固めるフェーズとする。最小ラ�
 - `subtitleCurrentIndex`
 - `subtitleBlockMeta`
 
-### Phase 3-2 の設計論点
+### Phase 3-2 の整理
 
-Phase 3-2 では、panel current の飛びに対して `subtitle-block-resolver.js` を調整する。主な論点は次の通り。
+Phase 3-2 では、panel current の飛びに対して `subtitle-block-resolver.js` を調整した。整理できた点は次の通り。
 
 - same-window group に通常 block がいる場合、`current-fallback` を追加しない
-- `current-fallback` の current winner 優先順位を下げる
-- snapshot 用 current と panel current マーカー描画責務を分離する
+- snapshot 用 current と panel current マーカー描画責務を切り離し、panel resolver は `blocks[]` 側を真実源として扱う
+- same-window group 内の sequential current は resolver 側の責務とする
+- same-window 2 行 group に対して 50:50 → 30:70 の順送り小実験を行ったが、
+  **panel 上で 2 行目が current として認識されることは保証できなかった**
+- このため、resolver 単体調整だけでは panel UX 要件を満たし切れない
 
-この論点は、真実源 block モデルそのものというより、**panel 表示ポリシー** の調整として扱う。
+### Phase 3-3 の設計論点
+
+Phase 3-3 では、**panel current UX フェーズ** として次を扱う。
+
+- panel に限り、same-window 2 行 group を「2 行とも current 風に強調表示する」ことを許容するか
+- resolver から renderer へ渡す派生フラグ shape をどう定義するか
+- `state="current"` と panel 用の `isPanelEmphasized` をどう切り分けるか
+- 必要なら、same-window group 中だけ panel 更新補助を入れるかどうか
+
+この論点は、真実源 block モデルそのものというより、**panel 表示ポリシー** の再設計として扱う。
 
 ### Phase 3 に入る時点での整理
 
@@ -795,6 +854,7 @@ Phase 3-2 では、panel current の飛びに対して `subtitle-block-resolver.
 - 同一 block の近接再評価は一定範囲で許容するが、`stable=true` 化した block は原則再更新しない
 - overlay は `blocks[currentIndex]` を表示し、panel は同じ `blocks[]` の可視範囲を描画する
 - same-window captions の current winner 決定は、必要に応じて resolver による表示ポリシーとして扱う
+- panel では、真実源 `state` と UI 強調状態を分離する余地を持つ
 
 ---
 
@@ -877,6 +937,7 @@ debug log の観測性改善は実務上重要であり、Phase 1.5 として最
   - same-window group 化
   - group 内 sequential current 解決
   - panel current winner 解決
+  - panel 用派生フラグ付与（Phase 3-3 で拡張予定）
 - `debug-logger.js`
   - debug log 整形・保存・表示側 filter
 - debug log の共通 view / filter モジュール（将来）
@@ -912,6 +973,7 @@ Issue #32 の本質は、**イベント単位で UI を更新している設計*
 - `stable` を持たせることで、確定度と再解決余地ではなく、**UI に対してどこまで揺らしてよいか** を区別する
 - `currentSubtitleBlock` は当面 `blocks[currentIndex]` の互換コピーとして残し、段階的に縮退させる
 - panel current 判定は、必要に応じて resolver を介した表示ポリシーとして扱う
+- Phase 3-3 では、panel に限って same-window 2 行 group を **window 単位で current と認識できる強調表示** へ寄せる方向を検討する
 
 修正の順番としては、まず履歴重複を止め、その後に観測性の最小セットを整え、  
 overlay のイベント依存を減らし、最終的に block sequence モデルへ寄せるのが最も安全で実務的である。
