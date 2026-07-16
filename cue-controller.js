@@ -24,6 +24,7 @@
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     updateOverlay,
+    updateOverlayFromBlock,
     renderPanel,
   }) {
     let secondaryTrackCleanup = null;
@@ -196,7 +197,7 @@
         };
 
       setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange");
-      updateOverlay(currentBlock.primaryText, currentBlock.secondaryText);
+      updateOverlayFromBlock(currentBlock);
 
       if (secondaryTrack) {
         renderSecondarySubtitle(sText, secondaryTrack);

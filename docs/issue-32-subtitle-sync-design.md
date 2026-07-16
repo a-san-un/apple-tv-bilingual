@@ -73,6 +73,8 @@ Issue #32 では、Apple TV+ 再生画面における字幕同期まわりの設
 - Phase 3-2 の観測により、resolver 単体の調整だけでは「same-window 2 行の両方が panel 上で認識される」UX を保証し切れないことが分かった
 - そのため、真実源モデルを維持したまま、panel だけは派生ビューとして独自の強調ポリシーを持てるようにする方向が有力になった
 - さらに Phase 3-3 の初期実装により、truth としての `state/currentBlocks` は strict 判定のまま維持しつつ、panel では window 単位 current と line-level current を分離した派生フラグで扱う方向が有効であることが確認できた
+- Phase 3-4 の初期実装により、overlay も `currentSubtitleBlock` 直読みに戻るのではなく、**truth blocks 側で決まった current block を shared input として受ける** 方向が有効であることが確認できた
+- 一方で、same-window captions や large seek 直後では、overlay が **英語だけのブロック** になったり、日本語が一時的に欠けたりする場面が残っており、overlay では current block 1 件だけでなく current block が属する window / group をどう扱うかが次の論点として残っている
 
 ---
 
@@ -116,6 +118,8 @@ overlay は現在、字幕 block 単位ではなく cuechange イベント単位
 - secondary cuechange からの引数なし `updateOverlay()` は、overlay 点滅の直接要因の 1 つだった
 - `onPrimaryCueChange()` で **currentBlock を組み立ててから** `setCurrentSubtitleBlock(...)` → `updateOverlay(...)` の順に揃えるだけでも、overlay の体感改善が大きい
 - ただし現時点では、overlay はまだ `setCurrentSubtitleBlock()` の結果を observer 的に読んでいるわけではなく、**同じ `currentBlock` オブジェクトを shared input として使う段階** に留まっている
+- Phase 3-4 では、この shared input をさらに blocks/current 側へ寄せ、`updateOverlayFromBlock(currentBlock)` を入口にすることで、overlay がテキスト引数ではなく block を入力とする方向へ前進した
+- ただしこの時点では、overlay は **current block 1 件** を表示するだけで、same-window group 全体を扱う構成にはまだなっていない
 
 ---
 
@@ -191,6 +195,42 @@ same-window captions を panel 側で順送り表示しようとすると、同�
 - むしろ **`current-fallback` の介入と、panel current マーカー描画責務の噛み合わせ** が主因候補である
 - さらに Phase 3-2 の観測から、**panel 更新タイミングと line-level current のサンプリング粗さ** も無視できない
 - このため、same-window group 化の成否、panel current winner の決定責務、panel の見せ方は分けて考える必要がある
+
+---
+
+## 7. same-window captions や large seek で overlay が英語だけのブロックになりうる
+
+Phase 3-4 の観測では、overlay の表示改善は進んだ一方で、特定条件下では **英語だけのブロック** が残ることが確認できた。
+
+ここでいう英語だけのブロックとは、
+
+- 英語字幕は表示されている
+- 日本語字幕は同じ時間帯で panel 側には見えている、または前後では見えている
+- しかし overlay ではその block の時点で日本語が出ていない
+
+という状態を指す。
+
+### ここまでの観測
+
+- same-window group としては、同一 `startTime/endTime` に複数の primary 行があり、同じ secondaryText が対応付いている場面が確認できた
+- panel debug では、group 内 1 行目が strict current で、後続行は `future` だが `isWindowCurrent = true` / `isPanelEmphasized = true` として強調される
+- overlay は current block 1 件だけを受け取って表示するため、group 全体ではなくその瞬間の 1 block のみを描画している
+- そのため、same-window で複数の英語行が連続する場面では、英語だけ表示される、または日本語が欠けて見える時間帯がある
+- さらに large seek 直後には、secondary 側の再同期が追いつくまで、一定時間 overlay が英語だけのブロックになる場面がある
+- 一方で、同じ場面でも再生し直すと英語行が 1 行にまとまるケースがあり、Apple TV+ 側の字幕トラック構造や再生タイミングによる揺れも観測された
+
+### この問題の影響
+
+- overlay と panel の体感差が残る
+- ユーザーには「前後では日本語があるのに、この場面だけ日本語が消えた」ように見える
+- current block 単位の overlay 表示だけでは、same-window captions の UX を十分に扱えない
+
+### ここから分かったこと
+
+- Phase 3-4 の current block ベース移行は正しい方向だが、same-window group の表現まではまだカバーしていない
+- overlay では current block 1 件だけでなく、**current block が属する同時刻 window / group** をどう扱うかを追加で設計する必要がある
+- これは panel current UX と同様に、truth blocks そのものではなく **overlay 表示ポリシー** として切り出して扱う方が安全である
+- large seek 後の英語だけブロックは、overlay 単体ではなく secondary 再同期ポリシーや `stable` の扱いとも関係するため、小パッチで抱え込まず設計論点として扱うべきである
 
 ---
 
@@ -374,6 +414,31 @@ Phase 2 では、いきなり `buildSubtitleBlockSequence(now)` へ全面移行�
 
 の順で使う構成に寄せる。  
 これにより、overlay と current block が同じ入力を参照する状態を作り、後続の block sequence モデルへ移行しやすくする。
+
+### Phase 3-4 時点での中間方針更新
+
+Phase 3-4 では、この入口をさらに一歩進め、
+
+1. `setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange")`
+2. `updateOverlayFromBlock(currentBlock)`
+
+の順で使う構成へ寄せる。
+
+これにより、overlay 側は少なくとも **テキスト引数ではなく block オブジェクト** を入力とする方向へ移行できる。  
+ただしこの段階では、`updateOverlayFromBlock(block)` はまだ block から `primaryText / secondaryText` を取り出して `updateOverlay(...)` を呼ぶ薄い adapter に留まる。
+
+### overlay に残っている論点
+
+same-window captions のように、同じ時間窓に複数の primary 行が属する場面では、overlay が current block 1 件だけを描画すると UX が不自然になりうる。
+
+たとえば次のような論点が残る。
+
+- current block が属する同時刻 group 全体を overlay でも 1 つの窓として扱うべきか
+- 英語は group 内複数行を改行結合すべきか
+- 日本語は group 内で最初に見つかった secondaryText を使うべきか
+- large seek 直後の英語だけ block を、overlay ではどこまで許容するか
+
+これらは truth blocks そのものではなく、**overlay 表示ポリシー** の設計論点として扱う。
 
 ## panel
 
@@ -863,6 +928,30 @@ Phase 3-3 では、**panel current UX フェーズ** として次を扱う。
 - これにより、truth の strict 判定と panel UX 用の強調表示を切り分ける土台ができた
 - 一方で、gap tolerance の閾値や same-window 強調の最終 UX は、引き続き観察と微調整の対象とする
 
+### Phase 3-4 の設計論点
+
+Phase 3-4 では、**overlay blocks 移行フェーズ** として次を扱う。
+
+- overlay 側で `currentSubtitleBlock` 依存がどこに残っているか
+- `overlay-controller.js` / `cue-controller.js` / `content.js` のうち、今回触る責務境界をどこまでにするか
+- overlay を `blocks[currentIndex]` ベースへどう寄せるか
+- same-window captions / seek / reopen / track 再解決時に、overlay 側で何を観測すべきか
+- 今回は主に **表示側（overlay）** を触る回であり、truth model 自体は大きく変えない
+
+### Phase 3-4 の実施メモ（2026-07-17）
+
+- Phase 3-4 では、overlay を `blocks[currentIndex]` ベースへ寄せる最小差分を実施した
+- `cue-controller.js` の `createCueController({...})` で `updateOverlayFromBlock` を受け取るようにし、`onPrimaryCueChange()` で決まった current block を overlay へ直接渡せるようにした
+- `onPrimaryCueChange()` 内の overlay 更新は、`updateOverlay(currentBlock.primaryText, currentBlock.secondaryText)` から `updateOverlayFromBlock(currentBlock)` へ変更した
+- `overlay-controller.js` に `updateOverlayFromBlock(block)` を追加し、overlay 側の入力を少なくとも text pair ではなく block オブジェクトへ寄せた
+- `content.js` は bridge / wiring に留め、`createCueController({...})` への `updateOverlayFromBlock` 受け渡しと、restart 時の subtitle runtime state reset 追加に留めた
+- `resetRuntimeState()` では、`subtitleBlocks` / `subtitleCurrentIndex` / `subtitleBlockMeta` / `currentSubtitleBlock` / `lastCurrentSubtitleBlockAt` / `lastPanelRenderSnapshot` などの subtitle truth / snapshot 系 state をまとめてクリアするようにした
+- これにより、通常再生では overlay の表示が大きく改善し、英語＋日本語の 2 行表示が安定しやすくなった
+- 一方で same-window captions では、panel 側に同一時間窓の複数英語行＋共有日本語が存在していても、overlay は current block 1 件だけを描画するため、英語だけのブロックになったり、日本語が欠けて見える時間帯が残った
+- 大きな seek 直後にも、secondary 再同期が追いつくまで overlay が一定時間英語だけのブロックになる場面が観測された
+- 同じ場面でも再生し直すと、英語行が 1 行に合体したり、日本語が安定して出るケースがあり、Apple TV+ 側トラック構造や再生タイミングの揺れも無視できないことが分かった
+- そのため、Phase 3-4 の最小差分としては current block ベース移行までを完了とし、same-window group を overlay でどう表現するか、および large seek 後の英語だけ block をどう扱うかは、次ラウンドの設計論点として残す
+
 ### Phase 3 に入る時点での整理
 
 したがって、Phase 3 の入口では次を前提にしてよい。
@@ -873,6 +962,7 @@ Phase 3-3 では、**panel current UX フェーズ** として次を扱う。
 - overlay は `blocks[currentIndex]` を表示し、panel は同じ `blocks[]` の可視範囲を描画する
 - same-window captions の current winner 決定は、必要に応じて resolver による表示ポリシーとして扱う
 - panel では、真実源 `state` と UI 強調状態を分離する余地を持つ
+- overlay でも、必要に応じて **truth blocks + currentIndex を入力とした表示ポリシー層** を追加し、same-window group や large seek 時の見え方を専用に扱う余地を持つ
 
 ---
 
@@ -908,6 +998,11 @@ panel 開閉は UI state の変更として扱い、subtitle pipeline 全体の 
   - 設定ページ側 debug log を主に使う
 - panel visible blocks / current winner / same-window group の確認:
   - 字幕パネル debug 表示を主に使う
+- overlay の英語だけ block / same-window の日本語欠落 / large seek 後の戻り方の確認:
+  - 設定ページ側 debug log の `current subtitle block updated` / `secondary track sync context`
+  - 字幕パネル debug 表示の `currentBlocks` / `debugBlocks` / `debugGroups`
+  - 実際の overlay 表示
+    を併用して見る
 - filter ロジックと log list ビューは共通化し、右パネル側・設定ページ側は薄いラッパーで扱うのが望ましい
 - ただしこれは subtitle sync 本体とは別寄りの観測性改善テーマであり、Issue #32 本体の主対象にはしない
 - debug log の共通 view / filter 化（右パネル / 設定ページ / popup などの共通化）は、必要なら別 docs / 別 Issue として切り出して扱う
@@ -940,6 +1035,7 @@ debug log の観測性改善は実務上重要であり、Phase 1.5 として最
   - state 保持
   - `setCurrentSubtitleBlock()`
   - orchestration / wiring
+  - subtitle runtime state reset
 - `cue-controller.js`
   - primary / secondary cuechange の本流
   - current / history / overlay / panel の更新 fan-out
@@ -947,6 +1043,7 @@ debug log の観測性改善は実務上重要であり、Phase 1.5 として最
   - sequence 真実源への移行接続点
 - `overlay-controller.js`
   - overlay host と表示更新
+  - block 入力 adapter（`updateOverlayFromBlock`）
 - `panel-renderer.js`
   - panel の描画
   - resolver が返す block 群と派生フラグの描画
@@ -993,6 +1090,8 @@ Issue #32 の本質は、**イベント単位で UI を更新している設計*
 - `currentSubtitleBlock` は当面 `blocks[currentIndex]` の互換コピーとして残し、段階的に縮退させる
 - panel current 判定は、必要に応じて resolver を介した表示ポリシーとして扱う
 - Phase 3-3 では、panel に限って same-window 2 行 group を **window 単位で current と認識できる強調表示** へ寄せる
+- Phase 3-4 では、overlay を `blocks[currentIndex]` ベースへ寄せる最小差分を実施し、通常再生の体感を改善した
+- 一方で、same-window captions と large seek 直後の英語だけ block は、overlay 側の次ラウンド設計論点として残っている
 
 修正の順番としては、まず履歴重複を止め、その後に観測性の最小セットを整え、  
 overlay のイベント依存を減らし、最終的に block sequence モデルへ寄せるのが最も安全で実務的である。

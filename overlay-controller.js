@@ -204,11 +204,16 @@
       s.textContent = secondaryText || "";
     }
 
+    function updateOverlayFromBlock(block) {
+      updateOverlay(block?.primaryText || "", block?.secondaryText || "");
+    }
+
     return {
       setOverlayVisible,
       destroyOverlay,
       createOverlay,
       updateOverlay,
+      updateOverlayFromBlock,
     };
   }
 

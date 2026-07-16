@@ -2730,6 +2730,7 @@
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     updateOverlay: (...args) => overlayController.updateOverlay(...args),
+    updateOverlayFromBlock: (block) => overlayController.updateOverlayFromBlock(block),
     renderPanel,
   });
 
@@ -3369,6 +3370,12 @@
       state.subtitleHistory = [];
       saveHistoryForContentKey(state.currentContentKey, []);
     }
+    state.subtitleBlocks = [];
+    state.subtitleCurrentIndex = -1;
+    state.subtitleBlockMeta = null;
+    state.currentSubtitleBlock = null;
+    state.lastCurrentSubtitleBlockAt = 0;
+    state.lastPanelRenderSnapshot = null;
     state.lastPrimaryText = "";
     state.lastPrimarySnapshotAt = 0;
     state.lastObservedVideoTime = null;
