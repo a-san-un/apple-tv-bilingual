@@ -177,19 +177,12 @@
       wireOverlayUiEvents();
     }
 
-    function updateOverlay(primaryText, secondaryText) {
-      const rootNode = getOverlayRoot();
-      if (!rootNode) return;
-      const p = rootNode.getElementById("ov-primary");
-      const s = rootNode.getElementById("ov-secondary");
-      if (!p || !s) return;
-      if (!primaryText) {
-        p.innerHTML = "";
-        s.innerHTML = "";
-        return;
-      }
+    /* overlay の 1 行テキストを word span 群へ変換する。 */
+    function renderOverlayLineHtml(text) {
+      const normalizedText = typeof text === "string" ? text : "";
+      if (!normalizedText) return "";
 
-      p.innerHTML = primaryText
+      return normalizedText
         .split(" ")
         .map((word) => {
           const esc = word
@@ -197,13 +190,69 @@
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;");
-          return `<span class="atv-word" data-word="${esc}" data-sentence="${encodeURIComponent(primaryText)}">${esc}</span>`;
+          return `<span class="atv-word" data-word="${esc}" data-sentence="${encodeURIComponent(normalizedText)}">${esc}</span>`;
         })
         .join(" ");
+    }
 
+    /* overlay の表示 DOM を空にする。 */
+    function clearOverlayLines() {
+      const rootNode = getOverlayRoot();
+      if (!rootNode) return;
+      const p = rootNode.getElementById("ov-primary");
+      const s = rootNode.getElementById("ov-secondary");
+      if (!p || !s) return;
+      p.innerHTML = "";
+      s.innerHTML = "";
+    }
+
+    /* 単一テキストの overlay 更新を行う。 */
+    function updateOverlay(primaryText, secondaryText) {
+      const rootNode = getOverlayRoot();
+      if (!rootNode) return;
+      const p = rootNode.getElementById("ov-primary");
+      const s = rootNode.getElementById("ov-secondary");
+      if (!p || !s) return;
+      if (!primaryText) {
+        clearOverlayLines();
+        return;
+      }
+
+      p.innerHTML = renderOverlayLineHtml(primaryText);
       s.textContent = secondaryText || "";
     }
 
+    /* OverlayView を描画し、clear 条件もここで統一する。 */
+    function updateOverlayFromView(view) {
+      const rootNode = getOverlayRoot();
+      if (!rootNode) return;
+
+      const p = rootNode.getElementById("ov-primary");
+      const s = rootNode.getElementById("ov-secondary");
+      if (!p || !s) return;
+
+      if (view?.isEmpty === true && view?.shouldKeepVisible === false) {
+        clearOverlayLines();
+        return;
+      }
+
+      const mainLines = Array.isArray(view?.mainLines) ? view.mainLines : [];
+      const subLines = Array.isArray(view?.subLines) ? view.subLines : [];
+
+      p.innerHTML = mainLines.map((line) => renderOverlayLineHtml(line)).filter(Boolean).join("<br>");
+      s.innerHTML = subLines
+        .map((line) =>
+          String(line || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;"),
+        )
+        .filter(Boolean)
+        .join("<br>");
+    }
+
+    /* 移行期間中の block ベース更新を維持する legacy adapter。 */
     function updateOverlayFromBlock(block) {
       updateOverlay(block?.primaryText || "", block?.secondaryText || "");
     }
@@ -213,6 +262,7 @@
       destroyOverlay,
       createOverlay,
       updateOverlay,
+      updateOverlayFromView,
       updateOverlayFromBlock,
     };
   }

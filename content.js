@@ -251,6 +251,16 @@
     });
   }
 
+  /* subtitle block sequence の truth snapshot を返す。 */
+  function getSubtitleBlockSequence() {
+    return {
+      blocks: state.subtitleBlocks,
+      currentIndex: state.subtitleCurrentIndex,
+      meta: state.subtitleBlockMeta,
+    };
+  }
+
+  /* subtitle block sequence から current block を取り出す。 */
   function getCurrentSubtitleBlockFromSequence(sequenceResult = null) {
     const blocks = Array.isArray(sequenceResult?.blocks)
       ? sequenceResult.blocks
@@ -2725,11 +2735,13 @@
     getPreviousSubtitleBlocks: () => state.subtitleBlocks || [],
     buildSubtitleBlockSequence,
     setSubtitleBlocks,
+    getSubtitleBlockSequence,
     getCurrentSubtitleBlockFromSequence,
     setCurrentSubtitleBlock,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     updateOverlay: (...args) => overlayController.updateOverlay(...args),
+    updateOverlayFromView: (view) => overlayController.updateOverlayFromView(view),
     updateOverlayFromBlock: (block) => overlayController.updateOverlayFromBlock(block),
     renderPanel,
   });

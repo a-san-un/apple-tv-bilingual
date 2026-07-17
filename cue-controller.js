@@ -19,11 +19,13 @@
     getSecondaryTrackCues,
     getPreviousSubtitleBlocks,
     setSubtitleBlocks,
+    getSubtitleBlockSequence,
     getCurrentSubtitleBlockFromSequence,
     setCurrentSubtitleBlock,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     updateOverlay,
+    updateOverlayFromView,
     updateOverlayFromBlock,
     renderPanel,
   }) {
@@ -196,8 +198,25 @@
           updatedAt: Date.now(),
         };
 
+      /* truth blocks から overlay view を解決して描画する。 */
       setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange");
-      updateOverlayFromBlock(currentBlock);
+
+      const overlaySequence = getSubtitleBlockSequence();
+      const overlayResolver = window.ATVB?.overlayBlockResolver || {};
+      const overlayView =
+        typeof overlayResolver.resolveOverlayView === "function"
+          ? overlayResolver.resolveOverlayView(
+              overlaySequence?.blocks,
+              overlaySequence?.currentIndex,
+              overlaySequence?.meta,
+            )
+          : null;
+
+      if (overlayView) {
+        updateOverlayFromView(overlayView);
+      } else {
+        updateOverlayFromBlock(currentBlock);
+      }
 
       if (secondaryTrack) {
         renderSecondarySubtitle(sText, secondaryTrack);

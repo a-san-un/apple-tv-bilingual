@@ -35,6 +35,7 @@
         "subtitle-blocks.js",
         "subtitle-block-resolver.js",
         "cue-controller.js",
+        "overlay-block-resolver.js",
         "overlay-controller.js",
         "runtime-observers.js",
         "playback-controls-layout.js",
