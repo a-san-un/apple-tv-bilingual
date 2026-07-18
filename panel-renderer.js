@@ -35,6 +35,7 @@
       logContent,
       resolvePanelBlocksForRender = () => ({
         blocks: [],
+        displayBlocks: [],
         currentBlocks: [],
         usedCurrentFallback: false,
         sameWindowGroups: new Map(),
@@ -126,20 +127,65 @@
 
     // [update render snapshot]
     // panel の最終描画状態を snapshot として保持し、必要なら primary snapshot 時刻も更新する。
-    function updatePanelRenderSnapshot(allBlocks, curPrimaryCue) {
-      const renderedCurrentBlock = allBlocks.find((b) => b.state === "current");
-      const stateCurrentBlock = state.currentSubtitleBlock || null;
-      const currentSubtitleBlock =
-        stateCurrentBlock ||
-        (renderedCurrentBlock
-          ? {
-              primaryText: renderedCurrentBlock.primary || "",
-              secondaryText: renderedCurrentBlock.secondary || "",
-            }
+    function updatePanelRenderSnapshot({
+      currentBlock,
+      displayBlocks,
+      curPrimaryCue,
+    }) {
+      const renderedCurrentBlock =
+        currentBlock ||
+        (Array.isArray(displayBlocks)
+          ? displayBlocks.find((block) => block.state === "current") || null
           : null);
+      const stateCurrentBlock = state.currentSubtitleBlock || null;
+      const subtitleViewResolver = window.ATVB?.subtitleViewResolver || null;
+      const sequenceBlocks = Array.isArray(state.subtitleBlocks)
+        ? state.subtitleBlocks
+        : [];
+      const currentIndex = sequenceBlocks.findIndex(
+        (block) => block?.state === "current",
+      );
+      const uiView =
+        subtitleViewResolver &&
+        typeof subtitleViewResolver.resolveUiSubtitleView === "function"
+          ? subtitleViewResolver.resolveUiSubtitleView(
+              sequenceBlocks,
+              currentIndex,
+              null,
+            )
+          : null;
+
+      const uiPrimaryText =
+        Array.isArray(uiView?.mainLines) && uiView.mainLines.length > 0
+          ? uiView.mainLines.join("\n")
+          : "";
+      const uiSecondaryText =
+        Array.isArray(uiView?.subLines) && uiView.subLines.length > 0
+          ? uiView.subLines.join("\n")
+          : "";
+
+      const currentSubtitleBlock = stateCurrentBlock
+        ? {
+            ...stateCurrentBlock,
+            primaryText: uiPrimaryText || stateCurrentBlock.primaryText || "",
+            secondaryText:
+              uiSecondaryText || stateCurrentBlock.secondaryText || "",
+          }
+        : renderedCurrentBlock
+          ? {
+              primaryText: uiPrimaryText || renderedCurrentBlock.primary || "",
+              secondaryText:
+                uiSecondaryText || renderedCurrentBlock.secondary || "",
+            }
+          : uiPrimaryText || uiSecondaryText
+            ? {
+                primaryText: uiPrimaryText,
+                secondaryText: uiSecondaryText,
+              }
+            : null;
 
       state.lastPanelRenderSnapshot = {
-        allBlocksCount: allBlocks.length,
+        allBlocksCount: Array.isArray(displayBlocks) ? displayBlocks.length : 0,
         currentSubtitleBlock,
       };
 
@@ -252,6 +298,7 @@
 
       return {
         blocks: result.blocks || [],
+        displayBlocks: result.displayBlocks || result.blocks || [],
         currentBlocks: result.currentBlocks || [],
         usedCurrentFallback: Boolean(result.usedCurrentFallback),
       };
@@ -266,7 +313,7 @@
 
       const currentTime = state.video ? state.video.currentTime : 0;
       const {
-        blocks: allBlocks,
+        displayBlocks,
         currentBlocks,
         usedCurrentFallback,
       } = getPanelBlocksForRender(currentTime);
@@ -292,9 +339,13 @@
         });
       }
 
-      updatePanelRenderSnapshot(allBlocks, curPrimaryCue);
+      updatePanelRenderSnapshot({
+        currentBlock,
+        displayBlocks,
+        curPrimaryCue,
+      });
 
-      list.innerHTML = allBlocks
+      list.innerHTML = displayBlocks
         .map((block) => buildPanelBlockHtml(block))
         .join("");
 

@@ -52,11 +52,11 @@
         );
       }
 
-      renderPanel();
-
       if (track) {
         renderSecondarySubtitle(getCurrentCueText(track), track);
       }
+
+      onPrimaryCueChange();
     }
 
     function bindSecondarySubtitleTrack(track) {
@@ -65,12 +65,16 @@
       unbindSecondarySubtitleTrack();
 
       try {
-        track.mode = "showing";
+        if (track.mode === "disabled") {
+          track.mode = "hidden";
+        }
       } catch (_) {}
 
       if (DEBUG_SECONDARY_SUBS) {
-        logContent("secondary track forced to showing", {
+        logContent("secondary track bind", {
           trackLanguage: track?.language || "",
+          trackKind: track?.kind || "",
+          trackMode: track?.mode || "",
           cuesLength: getTrackCuesLength(track),
           activeCuesLength: getTrackActiveCuesLength(track),
         });
@@ -202,10 +206,11 @@
       setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange");
 
       const overlaySequence = getSubtitleBlockSequence();
-      const overlayResolver = window.ATVB?.overlayBlockResolver || {};
+      const subtitleViewResolver = root.subtitleViewResolver || null;
       const overlayView =
-        typeof overlayResolver.resolveOverlayView === "function"
-          ? overlayResolver.resolveOverlayView(
+        subtitleViewResolver &&
+        typeof subtitleViewResolver.resolveUiSubtitleView === "function"
+          ? subtitleViewResolver.resolveUiSubtitleView(
               overlaySequence?.blocks,
               overlaySequence?.currentIndex,
               overlaySequence?.meta,

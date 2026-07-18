@@ -161,16 +161,14 @@
       return null;
     }
 
-    // Keep hidden so native subtitle UI is not forced onscreen,
-    // but activeCues / cuechange still work.
-    if (selectedTrack.mode === "disabled") {
-      selectedTrack.mode = "hidden";
-    } else if (
-      selectedTrack.mode !== "hidden" &&
-      selectedTrack.mode !== "showing"
-    ) {
-      selectedTrack.mode = "hidden";
-    }
+    // secondary 用 track は「読める状態」を優先する。
+    // disabled だけは hidden に持ち上げるが、
+    // hidden / showing はトラック側の自然な状態を尊重する。
+    try {
+      if (selectedTrack.mode === "disabled") {
+        selectedTrack.mode = "hidden";
+      }
+    } catch (_) {}
 
     return selectedTrack;
   }

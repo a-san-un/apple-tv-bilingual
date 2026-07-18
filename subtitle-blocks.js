@@ -36,7 +36,10 @@
       matchWindow,
     ) {
       let bestCue = null;
-      let bestDelta = Number.POSITIVE_INFINITY;
+      let bestScore = Number.POSITIVE_INFINITY;
+
+      const blockStart = Number(block?.startTime ?? 0);
+      const blockEnd = Number(block?.endTime ?? 0);
 
       for (const cue of secondaryCues) {
         const text = normalizeText(
@@ -44,13 +47,20 @@
         );
         if (!text) continue;
 
-        const delta = Math.abs(
-          Number(cue?.startTime ?? 0) - Number(block.startTime ?? 0),
-        );
+        const cueStart = Number(cue?.startTime ?? 0);
+        const cueEnd = Number(cue?.endTime ?? 0);
 
-        if (delta > matchWindow) continue;
-        if (delta < bestDelta) {
-          bestDelta = delta;
+        const overlaps =
+          cueStart <= blockEnd + 0.35 && blockStart <= cueEnd + 0.35;
+
+        const startDelta = Math.abs(cueStart - blockStart);
+        const endDelta = Math.abs(cueEnd - blockEnd);
+        const score = Math.min(startDelta, endDelta);
+
+        if (!overlaps && startDelta > matchWindow) continue;
+
+        if (score < bestScore) {
+          bestScore = score;
           bestCue = cue;
         }
       }

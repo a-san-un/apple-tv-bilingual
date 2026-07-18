@@ -73,10 +73,8 @@
   const PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR =
     "data-atvb-progress-base-max-width";
 
-  const PLAYBACK_SKIP_BASE_LEFT_ATTR =
-    "data-atvb-playback-skip-base-left";
-  const PLAYBACK_SKIP_BASE_RIGHT_ATTR =
-    "data-atvb-playback-skip-base-right";
+  const PLAYBACK_SKIP_BASE_LEFT_ATTR = "data-atvb-playback-skip-base-left";
+  const PLAYBACK_SKIP_BASE_RIGHT_ATTR = "data-atvb-playback-skip-base-right";
   const PLAYBACK_SKIP_BASE_TRANSFORM_ATTR =
     "data-atvb-playback-skip-base-transform";
 
@@ -220,7 +218,7 @@
       currentBlock?.primaryText || state.lastPrimaryText || "",
     );
     const secondaryText = normalizeSubtitleText(
-      lastSecondaryText || currentBlock?.secondaryText || "",
+      currentBlock?.secondaryText || "",
     );
 
     return {
@@ -270,7 +268,11 @@
         ? sequenceResult.currentIndex
         : state.subtitleCurrentIndex;
 
-    if (!Array.isArray(blocks) || currentIndex < 0 || currentIndex >= blocks.length) {
+    if (
+      !Array.isArray(blocks) ||
+      currentIndex < 0 ||
+      currentIndex >= blocks.length
+    ) {
       return null;
     }
 
@@ -310,18 +312,17 @@
       previousBlock.primaryText !== block.primaryText &&
       state.lastPrimaryText === previousBlock.primaryText;
 
-    const nextBlock =
-      shouldKeepPreviousTexts
-        ? {
-            ...block,
-            primaryText: previousBlock.primaryText,
-            secondaryText:
-              previousBlock.secondaryText || block.secondaryText || "",
-            hasPrimarySignal: previousBlock.hasPrimarySignal,
-            hasSecondarySignal:
-              previousBlock.hasSecondarySignal || block.hasSecondarySignal,
-          }
-        : block;
+    const nextBlock = shouldKeepPreviousTexts
+      ? {
+          ...block,
+          primaryText: previousBlock.primaryText,
+          secondaryText:
+            previousBlock.secondaryText || block.secondaryText || "",
+          hasPrimarySignal: previousBlock.hasPrimarySignal,
+          hasSecondarySignal:
+            previousBlock.hasSecondarySignal || block.hasSecondarySignal,
+        }
+      : block;
 
     state.currentSubtitleBlock = nextBlock;
     state.lastCurrentSubtitleBlockAt = Date.now();
@@ -412,18 +413,17 @@
       resolverApi.resolveSecondarySubtitleTrack?.(...args) ?? null,
   };
 
-  const {
-    normalizeSubtitleText,
-    cleanCueText,
-  } = vttDeps;
+  const { normalizeSubtitleText, cleanCueText } = vttDeps;
 
   const {
-    buildSubtitleBlockSequence = () => ({ blocks: [], currentIndex: -1, meta: null }),
+    buildSubtitleBlockSequence = () => ({
+      blocks: [],
+      currentIndex: -1,
+      meta: null,
+    }),
   } = subtitleBlocksApi;
 
-  const {
-    getTrackActiveCuesLength,
-  } = resolverDeps;
+  const { getTrackActiveCuesLength } = resolverDeps;
 
   // logger の更新通知を Debug パネル更新へ接続する。
   function registerDebugLogUpdateCallback() {
@@ -453,19 +453,64 @@
 
   function findCueAt(track, time) {
     if (!track) return null;
+
+    let activeCues = null;
+    try {
+      activeCues = track.activeCues;
+    } catch (_) {
+      activeCues = null;
+    }
+
+    if (activeCues && activeCues.length > 0) {
+      let bestActiveCue = null;
+      let bestActiveScore = Infinity;
+
+      for (let i = 0; i < activeCues.length; i++) {
+        const cue = activeCues[i];
+        if (!cue) continue;
+
+        const center = (cue.startTime + cue.endTime) / 2;
+        const score = Math.abs(center - time);
+
+        if (score < bestActiveScore) {
+          bestActiveScore = score;
+          bestActiveCue = cue;
+        }
+      }
+
+      if (bestActiveCue) return bestActiveCue;
+    }
+
     let cues = null;
-    // mode 遷移中は cues アクセスが例外/ null になり得るので保護する。
     try {
       cues = track.cues;
     } catch (_) {
       cues = null;
     }
     if (!cues) return null;
+
+    let bestCue = null;
+    let bestScore = Infinity;
+
     for (let i = 0; i < cues.length; i++) {
-      const c = cues[i];
-      if (c.startTime <= time + 0.1 && time < c.endTime + 0.1) return c;
+      const cue = cues[i];
+      if (!cue) continue;
+
+      const overlapsLoosely =
+        cue.startTime <= time + 0.35 && time <= cue.endTime + 0.35;
+
+      if (!overlapsLoosely) continue;
+
+      const center = (cue.startTime + cue.endTime) / 2;
+      const score = Math.abs(center - time);
+
+      if (score < bestScore) {
+        bestScore = score;
+        bestCue = cue;
+      }
     }
-    return null;
+
+    return bestCue;
   }
 
   function sendToBackground(msg, callback) {
@@ -1815,8 +1860,6 @@
     });
   }
 
-
-
   function applySettingsToUI(settings, options = {}) {
     const shouldSyncPanelVisibility = options.syncPanelVisibility !== false;
 
@@ -1857,7 +1900,6 @@
     state.popupShadowRoot = null;
     state.debugPanelRoot = null;
   }
-
 
   const LANGUAGE_SETUP_NOTICE_ID = "atv-language-setup-notice";
 
@@ -2265,7 +2307,8 @@
       popupBody.style.overscrollBehavior = "contain";
     }
 
-    const { anchorRect, popupSource, word, sentenceLength } = state.popupLastContext;
+    const { anchorRect, popupSource, word, sentenceLength } =
+      state.popupLastContext;
     if (!anchorRect) return;
 
     const pw = 340;
@@ -2342,7 +2385,8 @@
   }
 
   function ensurePopupResizeObserver() {
-    if (state.popupResizeObserver || typeof ResizeObserver === "undefined") return;
+    if (state.popupResizeObserver || typeof ResizeObserver === "undefined")
+      return;
     const popup = state.popupShadowRoot?.getElementById("popup");
     if (!popup) return;
     state.popupResizeObserver = new ResizeObserver(() => {
@@ -2365,8 +2409,12 @@
     root.getElementById("pane-ai").innerHTML =
       '<span class="loading">翻訳中...</span>';
 
-    root.querySelectorAll(".popup-tab").forEach((b) => b.classList.remove("active"));
-    root.querySelectorAll(".popup-pane").forEach((b) => b.classList.remove("active"));
+    root
+      .querySelectorAll(".popup-tab")
+      .forEach((b) => b.classList.remove("active"));
+    root
+      .querySelectorAll(".popup-pane")
+      .forEach((b) => b.classList.remove("active"));
     root.querySelector('[data-tab="dict"]')?.classList.add("active");
     root.getElementById("pane-dict")?.classList.add("active");
 
@@ -2447,14 +2495,17 @@
     }
 
     const badges = [
-      res.isCommon ? '<span class="badge badge-common">よく使われる語</span>' : "",
+      res.isCommon
+        ? '<span class="badge badge-common">よく使われる語</span>'
+        : "",
       res.jlpt ? `<span class="badge badge-jlpt">${res.jlpt}</span>` : "",
     ]
       .filter(Boolean)
       .join("");
 
     if (badgesEl) badgesEl.innerHTML = badges;
-    if (readingEl) readingEl.textContent = res.reading ? `/${res.reading}/` : "";
+    if (readingEl)
+      readingEl.textContent = res.reading ? `/${res.reading}/` : "";
 
     const sensesHtml = (res.meanings ?? [])
       .map((sense, i) => {
@@ -2638,8 +2689,7 @@
     throw new Error("ATVB panelUi.createPanelUi is not available");
   }
 
-  const createPanelRenderer =
-    window.ATVB?.panelRenderer?.createPanelRenderer;
+  const createPanelRenderer = window.ATVB?.panelRenderer?.createPanelRenderer;
   const {
     resolvePanelBlocksForRender = () => ({
       blocks: [],
@@ -2648,8 +2698,7 @@
       sameWindowGroups: new Map(),
     }),
   } = subtitleBlockResolverApi;
-  const createCueController =
-    window.ATVB?.cueController?.createCueController;
+  const createCueController = window.ATVB?.cueController?.createCueController;
 
   if (typeof createPanelRenderer !== "function") {
     throw new Error("ATVB panelRenderer.createPanelRenderer is not available");
@@ -2718,8 +2767,7 @@
     logContent,
     DEBUG_SECONDARY_SUBS,
     getSecondaryTrackDebugPayload,
-    resolveSecondarySubtitleTrack:
-      resolverDeps.resolveSecondarySubtitleTrack,
+    resolveSecondarySubtitleTrack: resolverDeps.resolveSecondarySubtitleTrack,
     getCurrentCueText,
     getTrackCuesLength: resolverDeps.getTrackCuesLength,
     getTrackActiveCuesLength: resolverDeps.getTrackActiveCuesLength,
@@ -2741,8 +2789,10 @@
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     updateOverlay: (...args) => overlayController.updateOverlay(...args),
-    updateOverlayFromView: (view) => overlayController.updateOverlayFromView(view),
-    updateOverlayFromBlock: (block) => overlayController.updateOverlayFromBlock(block),
+    updateOverlayFromView: (view) =>
+      overlayController.updateOverlayFromView(view),
+    updateOverlayFromBlock: (block) =>
+      overlayController.updateOverlayFromBlock(block),
     renderPanel,
   });
 
@@ -2762,13 +2812,9 @@
     logContent,
     renderCurrentSnapshot,
     renderPanel,
-    applySecondarySubtitleFallback,
   });
 
-
   // panel UI は別モジュールで組み立て、content 側では呼び出しと連携だけを持つ。
-
-
 
   const { createRuntimeObservers } = root.runtimeObservers;
   const runtimeObservers = createRuntimeObservers({
@@ -2807,11 +2853,8 @@
     ensureMessageListener,
   } = settingsRuntime;
 
-  const {
-    setOverlayVisible,
-    destroyOverlay,
-    createOverlay,
-  } = overlayController;
+  const { setOverlayVisible, destroyOverlay, createOverlay } =
+    overlayController;
 
   const {
     waitForVideo,
@@ -2819,7 +2862,6 @@
     startPlaybackControlLayoutObservers,
     stopPlaybackControlLayoutObservers,
   } = runtimeObservers;
-
 
   function loadPanelVisibility() {
     return Promise.resolve(state.contentSettings.showSidebar !== false);
@@ -2931,7 +2973,10 @@
     let primaryListenerBound = false;
 
     // [attach: primary] primary resolver → mode 設定 → cuechange bind
-    state.primaryTrack = resolverDeps.pickBestSubtitleTrack(tracks, primaryLang);
+    state.primaryTrack = resolverDeps.pickBestSubtitleTrack(
+      tracks,
+      primaryLang,
+    );
     if (state.primaryTrack) {
       try {
         // 非英語 primary track の cue 可用性を上げるため secondary と同じ showing にする。
@@ -2946,7 +2991,11 @@
 
     // [attach: secondary] secondary resolver / binder は sync helper 側へ委譲する。
     if (secondaryLang) {
-      cueController.syncSecondarySubtitleTrack(video, secondaryLang, renderSecondarySubtitle);
+      cueController.syncSecondarySubtitleTrack(
+        video,
+        secondaryLang,
+        renderSecondarySubtitle,
+      );
     } else {
       cueController.unbindSecondarySubtitleTrack();
       renderSecondarySubtitle("", null);
@@ -2999,38 +3048,6 @@
     }
 
     return false;
-  }
-
-  // panel secondary が空のときだけ、直近 history から最小差分で補完する。
-  function applySecondarySubtitleFallback(reason = "unknown") {
-    const panelHost = getTarget().querySelector("#atv-panel-host");
-    const secondaryEl = panelHost?.querySelector("[data-secondary-subtitle]");
-    let secondaryText = normalizeSubtitleText(secondaryEl?.textContent || "");
-
-    logSubtitlePanelState("before-secondary-fallback");
-
-    if (!secondaryText && secondaryEl && state.subtitleHistory.length > 0) {
-      const latestHistory =
-        state.subtitleHistory[state.subtitleHistory.length - 1];
-      const fallbackText = normalizeSubtitleText(
-        latestHistory?.secondary || latestHistory?.primary || "",
-      );
-      if (fallbackText) {
-        secondaryEl.textContent = fallbackText;
-        secondaryText = fallbackText;
-        logContent("panel secondary text fallback applied", {
-          reason,
-          contentKey: state.currentContentKey,
-          fallbackSource: latestHistory?.secondary ? "secondary" : "primary",
-          fallbackTextLength: fallbackText.length,
-        });
-      }
-    }
-
-    return {
-      panelHost,
-      secondaryText,
-    };
   }
 
   function clearInternalSubtitleState(reason = "unknown") {
@@ -3482,12 +3499,30 @@
     applyInitialCueSnapshotOrWait();
 
     applySettingsToUI(state.contentSettings, { syncPanelVisibility: false });
+
     const secondaryBoundTrack = cueController.getBoundSecondaryTrack();
+    const subtitleViewResolver = window.ATVB?.subtitleViewResolver || null;
+    const overlaySequence =
+      typeof getSubtitleBlockSequence === "function"
+        ? getSubtitleBlockSequence()
+        : null;
+    const uiView =
+      subtitleViewResolver &&
+      typeof subtitleViewResolver.resolveUiSubtitleView === "function"
+        ? subtitleViewResolver.resolveUiSubtitleView(
+            overlaySequence?.blocks,
+            overlaySequence?.currentIndex,
+            overlaySequence?.meta,
+          )
+        : null;
+
+    const resolvedSecondaryText =
+      Array.isArray(uiView?.subLines) && uiView.subLines.length > 0
+        ? uiView.subLines.join("\n")
+        : getCurrentCueText(secondaryBoundTrack);
+
     if (secondaryBoundTrack) {
-      renderSecondarySubtitle(
-        getCurrentCueText(secondaryBoundTrack),
-        secondaryBoundTrack,
-      );
+      renderSecondarySubtitle(resolvedSecondaryText, secondaryBoundTrack);
     }
   }
 
@@ -3566,8 +3601,7 @@
         : null,
     });
 
-    const sidebarEnabledSetting =
-      state.contentSettings.showSidebar !== false;
+    const sidebarEnabledSetting = state.contentSettings.showSidebar !== false;
 
     if (typeof options.keepPanelVisible === "boolean") {
       state.panelVisible = options.keepPanelVisible;

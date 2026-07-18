@@ -23,11 +23,18 @@
     return typeof value === "string" ? value.trim() : "";
   }
 
-  /* group 内の指定フィールドを取得順で lines に変換する。 */
+  /* group 内の指定フィールドを取得順で lines に変換し、重複を除く。 */
   function collectGroupLines(group, fieldName) {
-    return (Array.isArray(group) ? group : [])
+    const lines = (Array.isArray(group) ? group : [])
       .map((block) => normalizeLineText(block?.[fieldName]))
       .filter(Boolean);
+
+    const seen = new Set();
+    return lines.filter((line) => {
+      if (seen.has(line)) return false;
+      seen.add(line);
+      return true;
+    });
   }
 
   /* current block と同じ same-window group を抽出する。 */

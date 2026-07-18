@@ -18,7 +18,6 @@
       logContent,
       renderCurrentSnapshot,
       renderPanel,
-      applySecondarySubtitleFallback,
     } = deps;
 
     const PANEL_SLOT_LAYER_STYLE_ID = "atv-panel-slot-layer-style";
@@ -254,14 +253,10 @@
         renderPanel();
       }
 
-      let panelHost = null;
-      let secondaryText = "";
-
-      if (typeof applySecondarySubtitleFallback === "function") {
-        const result = applySecondarySubtitleFallback(reason) || {};
-        panelHost = result.panelHost || null;
-        secondaryText = result.secondaryText || "";
-      }
+      const panelHost = getTarget?.().querySelector("#atv-panel-host") || null;
+      const secondaryEl =
+        panelHost?.querySelector("[data-secondary-subtitle]") || null;
+      const secondaryText = normalizeSubtitleText(secondaryEl?.textContent || "");
 
       if (typeof logContent === "function") {
         logContent("panel state applied", {

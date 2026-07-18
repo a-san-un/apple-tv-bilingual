@@ -328,6 +328,50 @@
     }
   }
 
+  function dedupeLinesInOrder(lines) {
+    const seen = new Set();
+    return (Array.isArray(lines) ? lines : []).filter((line) => {
+      const value = typeof line === "string" ? line.trim() : "";
+      if (!value || seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+  }
+
+  function buildDisplayBlocksFromGroups(blocks, sameWindowGroups) {
+    const sourceBlocks = Array.isArray(blocks) ? blocks : [];
+    const groups = sameWindowGroups instanceof Map ? sameWindowGroups : new Map();
+    const consumed = new Set();
+    const displayBlocks = [];
+
+    sourceBlocks.forEach((block) => {
+      const groupKey = `${block.startTime}::${block.endTime}`;
+      if (consumed.has(groupKey)) return;
+
+      const entries = groups.get(groupKey) || [{ block }];
+      consumed.add(groupKey);
+
+      const groupBlocks = entries.map(({ block }) => block).filter(Boolean);
+      const primaryLines = dedupeLinesInOrder(groupBlocks.map((b) => b.primary));
+      const secondaryLines = dedupeLinesInOrder(groupBlocks.map((b) => b.secondary));
+      const representative = groupBlocks.find((b) => b.state === "current") || groupBlocks[0] || block;
+
+      displayBlocks.push({
+        ...representative,
+        primary: primaryLines.join("\n"),
+        secondary: secondaryLines.join("\n"),
+        mainLines: primaryLines,
+        subLines: secondaryLines,
+        state: representative?.state || block.state,
+        isWindowCurrent: groupBlocks.some((b) => b.isWindowCurrent === true),
+        isSequentialCurrent: representative?.isSequentialCurrent ?? representative?.state === "current",
+        isPanelEmphasized: groupBlocks.some((b) => b.isPanelEmphasized === true),
+      });
+    });
+
+    return displayBlocks;
+  }
+
   // [resolve panel blocks]
   // panel 描画用の truth/派生情報をまとめて解決し、renderer が使う shape へ整える。
   function resolvePanelBlocksForRender({
@@ -356,8 +400,14 @@
       debugLog,
     );
 
+    const displayBlocks = buildDisplayBlocksFromGroups(
+      normalizedBlocks,
+      sameWindowGroups,
+    );
+
     return {
       blocks: normalizedBlocks,
+      displayBlocks,
       currentBlocks,
       usedCurrentFallback,
       sameWindowGroups,
@@ -371,6 +421,8 @@
     resolveSingleCurrentBlock,
     findPanelCurrentWindowKey,
     applyPanelCurrentFlags,
+    dedupeLinesInOrder,
+    buildDisplayBlocksFromGroups,
     resolvePanelBlocksForRender,
   };
 })();
