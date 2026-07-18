@@ -32,6 +32,7 @@
   }) {
     let secondaryTrackCleanup = null;
     let secondaryTrackBound = null;
+    let lastMergedSubtitleHealth = null;
 
     function getBoundSecondaryTrack() {
       return secondaryTrackBound;
@@ -284,21 +285,26 @@
         sequenceHealth,
       });
 
+      lastMergedSubtitleHealth = mergedSubtitleHealth;
+
+      if (DEBUG_PANEL_PROBE) {
+        logContent("merged subtitle health snapshot", {
+          primaryHealthy: mergedSubtitleHealth.derived.primaryHealthy,
+          secondaryHealthy: mergedSubtitleHealth.derived.secondaryHealthy,
+          shouldRecoverSecondary:
+            mergedSubtitleHealth.derived.shouldRecoverSecondary,
+          shouldForceSecondaryRebind:
+            mergedSubtitleHealth.derived.shouldForceSecondaryRebind,
+        });
+      }
+
       if (mergedSubtitleHealth.derived.shouldRecoverSecondary && state.video) {
-        try {
-          syncSecondarySubtitleTrack(
-            state.video,
-            getRequestedSecondaryLanguage(),
-            null,
-            {
-              suppressRender: true,
-              forceRebind:
-                mergedSubtitleHealth.derived.shouldForceSecondaryRebind,
-            },
-          );
-        } catch (error) {
-          logContent("cue-controller secondary recovery failed", {
-            errorMessage: String(error && error.message) || "",
+        if (DEBUG_PANEL_PROBE) {
+          logContent("cue-controller secondary recovery observed", {
+            hasVideo: Boolean(state.video),
+            forceRebind:
+              mergedSubtitleHealth.derived.shouldForceSecondaryRebind,
+            note: "sync interval handles execution",
           });
         }
       }
@@ -352,6 +358,7 @@
       syncSecondarySubtitleTrack,
       onCueChange,
       onPrimaryCueChange,
+      getMergedSubtitleHealth: () => lastMergedSubtitleHealth,
     };
   }
 

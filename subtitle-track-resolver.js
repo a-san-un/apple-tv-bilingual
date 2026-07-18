@@ -149,6 +149,22 @@
     return candidates[0].track;
   }
 
+  function getSecondarySubtitleTrackCandidates(video, requestedLang) {
+    const tracks = Array.from(video?.textTracks || []);
+    return tracks.map((track, index) => ({
+      index,
+      language: track?.language || "",
+      label: normalizeTrackLabel(track?.label),
+      kind: track?.kind || "",
+      mode: track?.mode || "",
+      cuesLength: getTrackCuesLength(track),
+      activeCuesLength: getTrackActiveCuesLength(track),
+      matchesRequestedLanguage: matchesRequestedLanguage(track, requestedLang),
+      forcedLike: isForcedLikeTrack(track),
+      score: scoreSubtitleTrack(track, index),
+    }));
+  }
+
   function resolveSecondarySubtitleTrack(video, requestedLang) {
     if (!video || !video.textTracks) return null;
 
@@ -183,6 +199,7 @@
     getTrackActiveCuesLength,
     scoreSubtitleTrack,
     pickBestSubtitleTrack,
+    getSecondarySubtitleTrackCandidates,
     resolveSecondarySubtitleTrack,
   };
 })();

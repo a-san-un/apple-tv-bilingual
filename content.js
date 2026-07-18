@@ -21,7 +21,7 @@
 
   const DEBUG_SECONDARY_SUBS = false;
   // Optional probe logs for #19 regressions. Keep false in normal operation.
-  const DEBUG_PANEL_PROBE = false;
+  const DEBUG_PANEL_PROBE = true;
   const LOG_CATEGORIES = Object.freeze({
     SETTINGS: "settings",
     SUBTITLE: "subtitle",
@@ -101,6 +101,7 @@
     lastCurrentSubtitleBlockAt: 0,
     lastAfterRenderSecondarySnapshotSignature: "",
     lastSecondarySyncContext: "",
+    secondaryRecoveryMissCount: 0,
     lastPrimaryRecoveryAttemptAt: 0,
     lastPrimarySnapshotAt: 0,
     lastObservedVideoTime: null,
@@ -211,6 +212,14 @@
       };
     }
     return { value: payload, contentKey: scopedContentKey };
+  }
+
+  function getMergedSubtitleHealthSnapshot() {
+    try {
+      return cueController?.getMergedSubtitleHealth?.() || null;
+    } catch (_) {
+      return null;
+    }
   }
 
   function computeCurrentSubtitleBlock(reason = "unknown") {
@@ -415,6 +424,8 @@
       resolverApi.getTrackActiveCuesLength?.(...args) ?? 0,
     pickBestSubtitleTrack: (...args) =>
       resolverApi.pickBestSubtitleTrack?.(...args) ?? null,
+    getSecondarySubtitleTrackCandidates: (...args) =>
+      resolverApi.getSecondarySubtitleTrackCandidates?.(...args) ?? [],
     resolveSecondarySubtitleTrack: (...args) =>
       resolverApi.resolveSecondarySubtitleTrack?.(...args) ?? null,
   };
@@ -1133,6 +1144,7 @@
       const shouldLogSyncContext =
         previousSecondaryTrack !== state.secondaryTrack ||
         syncContextSummary !== state.lastSecondarySyncContext;
+      const mergedSubtitleHealth = getMergedSubtitleHealthSnapshot();
       if (shouldLogSyncContext) {
         state.lastSecondarySyncContext = syncContextSummary;
         logContent("secondary track sync context", {
@@ -1147,7 +1159,94 @@
           primaryCueTextLength: primaryCueText.length,
           currentPrimaryTextLength: currentPrimaryText.length,
           hasFreshCurrentPrimary,
+          mergedPrimaryHealthy:
+            mergedSubtitleHealth?.derived?.primaryHealthy ?? null,
+          mergedSecondaryHealthy:
+            mergedSubtitleHealth?.derived?.secondaryHealthy ?? null,
+          mergedShouldRecoverSecondary:
+            mergedSubtitleHealth?.derived?.shouldRecoverSecondary ?? null,
+          mergedShouldForceSecondaryRebind:
+            mergedSubtitleHealth?.derived?.shouldForceSecondaryRebind ?? null,
+          secondaryRecoveryMissCount: state.secondaryRecoveryMissCount,
         });
+      }
+
+      const shouldRecoverSecondary =
+        mergedSubtitleHealth?.derived?.shouldRecoverSecondary === true ||
+        (hasFreshCurrentPrimary &&
+          !secondaryCueText &&
+          Boolean(state.secondaryTrack));
+
+      if (mergedSubtitleHealth?.derived?.secondaryHealthy === true) {
+        state.secondaryRecoveryMissCount = 0;
+      } else if (shouldRecoverSecondary) {
+        state.secondaryRecoveryMissCount += 1;
+
+        if (DEBUG_PANEL_PROBE) {
+          const secondaryCandidates =
+            resolverDeps.getSecondarySubtitleTrackCandidates(
+              state.video,
+              effectiveSecondaryLanguage,
+            );
+          const resolvedSecondaryTrack =
+            resolverDeps.resolveSecondarySubtitleTrack(
+              state.video,
+              effectiveSecondaryLanguage,
+            );
+
+          logContent("secondary resolver probe", {
+            reason: "sync_interval",
+            effectiveSecondaryLanguage,
+            currentSecondaryTrackLanguage: state.secondaryTrack?.language || "",
+            currentSecondaryTrackKind: state.secondaryTrack?.kind || "",
+            currentSecondaryTrackMode: state.secondaryTrack?.mode || "",
+            currentSecondaryCuesLength: resolverDeps.getTrackCuesLength(
+              state.secondaryTrack,
+            ),
+            currentSecondaryActiveCuesLength: getTrackActiveCuesLength(
+              state.secondaryTrack,
+            ),
+            currentSecondaryCueTextLength: secondaryCueText.length,
+            resolvedSecondaryTrackLanguage:
+              resolvedSecondaryTrack?.language || "",
+            resolvedSecondaryTrackKind: resolvedSecondaryTrack?.kind || "",
+            resolvedSecondaryTrackMode: resolvedSecondaryTrack?.mode || "",
+            resolvedSecondaryCuesLength: resolverDeps.getTrackCuesLength(
+              resolvedSecondaryTrack,
+            ),
+            resolvedSecondaryActiveCuesLength: getTrackActiveCuesLength(
+              resolvedSecondaryTrack,
+            ),
+            resolvedSecondaryCueTextLength: normalizeSubtitleText(
+              getCurrentCueText(resolvedSecondaryTrack),
+            ).length,
+            secondaryCandidates,
+          });
+        }
+
+        const shouldForceSecondaryRebind =
+          mergedSubtitleHealth?.derived?.shouldForceSecondaryRebind === true ||
+          state.secondaryRecoveryMissCount >= 3;
+
+        logContent("secondary recovery trigger", {
+          reason: "sync_interval",
+          effectiveSecondaryLanguage,
+          missCount: state.secondaryRecoveryMissCount,
+          forceRebind: shouldForceSecondaryRebind,
+          secondaryTrackFound: Boolean(state.secondaryTrack),
+          currentSecondaryTextLength: secondaryCueText.length,
+          primaryCueTextLength: primaryCueText.length,
+          currentPrimaryTextLength: currentPrimaryText.length,
+        });
+
+        syncSecondarySubtitleTrack({
+          reason: shouldForceSecondaryRebind
+            ? "secondary_force_rebind_after_repeated_miss"
+            : "secondary_current_missing_with_primary_present",
+          forceRebind: shouldForceSecondaryRebind,
+        });
+      } else {
+        state.secondaryRecoveryMissCount = 0;
       }
 
       const trackCount = state.video?.textTracks?.length ?? 0;
