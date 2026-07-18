@@ -256,7 +256,7 @@
       const panelHost = getTarget?.().querySelector("#atv-panel-host") || null;
       const secondaryEl =
         panelHost?.querySelector("[data-secondary-subtitle]") || null;
-      const secondaryText = normalizeSubtitleText(secondaryEl?.textContent || "");
+      const secondaryText = String(secondaryEl?.textContent || "").trim();
 
       if (typeof logContent === "function") {
         logContent("panel state applied", {
@@ -266,6 +266,9 @@
           hasPanelHost: Boolean(panelHost),
           secondaryTextLength: secondaryText.length,
           historySize: state.subtitleHistory.length,
+          panelPastCount: Array.isArray(state.panelPastBlocks)
+            ? state.panelPastBlocks.length
+            : 0,
         });
       }
     }

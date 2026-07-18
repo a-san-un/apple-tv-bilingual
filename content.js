@@ -92,6 +92,7 @@
     currentContentKey: "",
     subtitleHistoryStore: new Map(),
     subtitleHistory: [],
+    panelPastBlocks: [],
     subtitleBlocks: [],
     subtitleCurrentIndex: -1,
     subtitleBlockMeta: null,
@@ -237,15 +238,20 @@
     const nextBlocks = Array.isArray(result?.blocks) ? result.blocks : [];
     const nextCurrentIndex =
       typeof result?.currentIndex === "number" ? result.currentIndex : -1;
+    const nextPanelPastBlocks = nextBlocks.filter(
+      (block) => block?.state === "past",
+    );
 
     state.subtitleBlocks = nextBlocks;
     state.subtitleCurrentIndex = nextCurrentIndex;
     state.subtitleBlockMeta = result?.meta || null;
+    state.panelPastBlocks = nextPanelPastBlocks;
 
     logContent("subtitle blocks updated", {
       reason,
       blockCount: nextBlocks.length,
       currentIndex: nextCurrentIndex,
+      panelPastCount: nextPanelPastBlocks.length,
     });
   }
 
@@ -983,6 +989,9 @@
         tag,
         allBlocksCount: snapshot.allBlocksCount ?? 0,
         historyCount: state.subtitleHistory.length,
+        panelPastCount: Array.isArray(state.panelPastBlocks)
+          ? state.panelPastBlocks.length
+          : 0,
         hasCurrentBlock: Boolean(currentSubtitleBlock),
         currentPrimary: currentSubtitleBlock?.primaryText || "",
         currentSecondary: currentSubtitleBlock?.secondaryText || "",
@@ -993,6 +1002,7 @@
         const signature = JSON.stringify({
           allBlocksCount: payload.allBlocksCount,
           historyCount: payload.historyCount,
+          panelPastCount: payload.panelPastCount,
           hasCurrentBlock: payload.hasCurrentBlock,
           currentPrimary: payload.currentPrimary,
           currentSecondary: payload.currentSecondary,
@@ -2764,6 +2774,7 @@
   } = playbackControlsLayout;
 
   const cueController = createCueController({
+    state,
     logContent,
     DEBUG_SECONDARY_SUBS,
     getSecondaryTrackDebugPayload,
@@ -3402,6 +3413,7 @@
     state.subtitleBlocks = [];
     state.subtitleCurrentIndex = -1;
     state.subtitleBlockMeta = null;
+    state.panelPastBlocks = [];
     state.currentSubtitleBlock = null;
     state.lastCurrentSubtitleBlockAt = 0;
     state.lastPanelRenderSnapshot = null;

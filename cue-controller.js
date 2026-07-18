@@ -2,6 +2,7 @@
   const root = (window.ATVB = window.ATVB || {});
 
   function createCueController({
+    state,
     logContent,
     DEBUG_SECONDARY_SUBS,
     getSecondaryTrackDebugPayload,
@@ -100,12 +101,17 @@
       if (!video) return;
 
       const suppressRender = options.suppressRender === true;
+      const forceRebind = options.forceRebind === true;
 
       if (DEBUG_SECONDARY_SUBS) {
         logContent(
           "secondary sync",
           getSecondaryTrackDebugPayload(requestedLang, secondaryTrackBound),
         );
+      }
+
+      if (forceRebind) {
+        unbindSecondarySubtitleTrack();
       }
 
       const track = resolveSecondarySubtitleTrack(video, requestedLang);
@@ -121,7 +127,7 @@
         return;
       }
 
-      if (secondaryTrackBound !== track) {
+      if (secondaryTrackBound !== track || forceRebind) {
         bindSecondarySubtitleTrack(track);
         return;
       }
@@ -132,6 +138,83 @@
           track,
         );
       }
+    }
+
+    function buildMergedSubtitleHealth({
+      primaryTrack,
+      secondaryTrack,
+      pCue,
+      pText,
+      sCue,
+      sText,
+      sequenceHealth,
+    }) {
+      const runtime = {
+        primaryTrackFound: Boolean(primaryTrack),
+        secondaryTrackFound: Boolean(secondaryTrack),
+        primaryActiveCues: getTrackActiveCuesLength(primaryTrack),
+        secondaryActiveCues: getTrackActiveCuesLength(secondaryTrack),
+      };
+
+      const currentCue = {
+        hasPrimaryCue: Boolean(pCue),
+        hasSecondaryCue: Boolean(sCue),
+        primaryTextLength: pText.length,
+        secondaryTextLength: sText.length,
+        hasPrimaryText: Boolean(pText),
+        hasSecondaryText: Boolean(sText),
+      };
+
+      const sequence = {
+        hasCurrentBlock: Boolean(sequenceHealth?.hasCurrentBlock),
+        hasCurrentPrimary: Boolean(sequenceHealth?.hasCurrentPrimary),
+        hasCurrentSecondary: Boolean(sequenceHealth?.hasCurrentSecondary),
+        currentPairAligned: Boolean(sequenceHealth?.currentPairAligned),
+        currentPairMissingSecondary: Boolean(
+          sequenceHealth?.currentPairMissingSecondary,
+        ),
+        previousPairMissingSecondary: Boolean(
+          sequenceHealth?.previousPairMissingSecondary,
+        ),
+        consecutiveCurrentMissingSecondary: Boolean(
+          sequenceHealth?.consecutiveCurrentMissingSecondary,
+        ),
+      };
+
+      const primaryHealthy =
+        runtime.primaryTrackFound &&
+        (
+          runtime.primaryActiveCues > 0 ||
+          currentCue.hasPrimaryText ||
+          sequence.hasCurrentPrimary
+        );
+
+      const secondaryHealthy =
+        runtime.secondaryTrackFound &&
+        (
+          runtime.secondaryActiveCues > 0 ||
+          currentCue.hasSecondaryText ||
+          sequence.hasCurrentSecondary
+        );
+
+      return {
+        runtime,
+        currentCue,
+        sequence,
+        derived: {
+          primaryHealthy,
+          secondaryHealthy,
+          shouldRecoverSecondary:
+            primaryHealthy &&
+            !secondaryHealthy &&
+            sequence.currentPairMissingSecondary,
+          shouldForceSecondaryRebind:
+            primaryHealthy &&
+            !secondaryHealthy &&
+            sequence.currentPairMissingSecondary &&
+            sequence.consecutiveCurrentMissingSecondary,
+        },
+      };
     }
 
     function onPrimaryCueChange() {
@@ -190,6 +273,36 @@
         });
       }
 
+      const sequenceHealth = blockResult?.meta?.sequenceHealth || null;
+      const mergedSubtitleHealth = buildMergedSubtitleHealth({
+        primaryTrack,
+        secondaryTrack,
+        pCue,
+        pText,
+        sCue,
+        sText,
+        sequenceHealth,
+      });
+
+      if (mergedSubtitleHealth.derived.shouldRecoverSecondary && state.video) {
+        try {
+          syncSecondarySubtitleTrack(
+            state.video,
+            getRequestedSecondaryLanguage(),
+            null,
+            {
+              suppressRender: true,
+              forceRebind:
+                mergedSubtitleHealth.derived.shouldForceSecondaryRebind,
+            },
+          );
+        } catch (error) {
+          logContent("cue-controller secondary recovery failed", {
+            errorMessage: String(error && error.message) || "",
+          });
+        }
+      }
+
       const currentBlock =
         getCurrentSubtitleBlockFromSequence(blockResult) || {
           startTime: pCue?.startTime ?? null,
@@ -207,7 +320,7 @@
 
       const overlaySequence = getSubtitleBlockSequence();
       const subtitleViewResolver = root.subtitleViewResolver || null;
-      const overlayView =
+      const subtitleView =
         subtitleViewResolver &&
         typeof subtitleViewResolver.resolveUiSubtitleView === "function"
           ? subtitleViewResolver.resolveUiSubtitleView(
@@ -217,8 +330,10 @@
             )
           : null;
 
-      if (overlayView) {
-        updateOverlayFromView(overlayView);
+      state.currentSubtitleView = subtitleView;
+
+      if (subtitleView) {
+        updateOverlayFromView(subtitleView);
       } else {
         updateOverlayFromBlock(currentBlock);
       }

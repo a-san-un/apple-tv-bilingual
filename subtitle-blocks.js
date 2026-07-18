@@ -71,6 +71,50 @@
       );
     }
 
+    function analyzeSequenceHealth(blocks, currentIndex, previousBlocks = []) {
+      const list = Array.isArray(blocks) ? blocks : [];
+      const currentBlock =
+        currentIndex >= 0 && currentIndex < list.length ? list[currentIndex] : null;
+      const previousList = Array.isArray(previousBlocks) ? previousBlocks : [];
+      const previousCurrentBlock =
+        previousList.find((block) => block?.state === "current") || null;
+
+      const hasCurrentBlock = Boolean(currentBlock);
+      const hasCurrentPrimary = Boolean(normalizeText(currentBlock?.primaryText));
+      const hasCurrentSecondary = Boolean(normalizeText(currentBlock?.secondaryText));
+      const currentPairAligned =
+        hasCurrentBlock && (!hasCurrentPrimary || hasCurrentSecondary);
+
+      const previousCurrentPrimary = Boolean(
+        normalizeText(previousCurrentBlock?.primaryText),
+      );
+      const previousCurrentSecondary = Boolean(
+        normalizeText(previousCurrentBlock?.secondaryText),
+      );
+      const previousPairMissingSecondary =
+        previousCurrentPrimary && !previousCurrentSecondary;
+
+      const currentPairMissingSecondary =
+        hasCurrentPrimary && !hasCurrentSecondary;
+
+      const consecutiveCurrentMissingSecondary =
+        currentPairMissingSecondary && previousPairMissingSecondary;
+
+      return {
+        hasCurrentBlock,
+        hasCurrentPrimary,
+        hasCurrentSecondary,
+        currentPairAligned,
+        currentPairMissingSecondary,
+        previousPairMissingSecondary,
+        consecutiveCurrentMissingSecondary,
+        shouldRecoverSecondary:
+          hasCurrentBlock &&
+          hasCurrentPrimary &&
+          consecutiveCurrentMissingSecondary,
+      };
+    }
+
     function buildSubtitleBlockSequence({
       primaryCues,
       secondaryCues,
@@ -135,6 +179,11 @@
       const currentIndex = blocks.findIndex(
         (block) => block.state === "current",
       );
+      const sequenceHealth = analyzeSequenceHealth(
+        blocks,
+        currentIndex,
+        previousBlocks,
+      );
 
       return {
         blocks,
@@ -143,6 +192,7 @@
           now,
           rebuildReason,
           blockCount: blocks.length,
+          sequenceHealth,
         },
       };
     }
@@ -150,6 +200,7 @@
     root.subtitleBlocks = {
       buildSubtitleBlockKey,
       buildSubtitleBlockSequence,
+      analyzeSequenceHealth,
     };
 
   } catch (error) {

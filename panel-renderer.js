@@ -131,37 +131,23 @@
       currentBlock,
       displayBlocks,
       curPrimaryCue,
+      subtitleView,
     }) {
       const renderedCurrentBlock =
         currentBlock ||
+        subtitleView?.currentBlock ||
         (Array.isArray(displayBlocks)
           ? displayBlocks.find((block) => block.state === "current") || null
           : null);
       const stateCurrentBlock = state.currentSubtitleBlock || null;
-      const subtitleViewResolver = window.ATVB?.subtitleViewResolver || null;
-      const sequenceBlocks = Array.isArray(state.subtitleBlocks)
-        ? state.subtitleBlocks
-        : [];
-      const currentIndex = sequenceBlocks.findIndex(
-        (block) => block?.state === "current",
-      );
-      const uiView =
-        subtitleViewResolver &&
-        typeof subtitleViewResolver.resolveUiSubtitleView === "function"
-          ? subtitleViewResolver.resolveUiSubtitleView(
-              sequenceBlocks,
-              currentIndex,
-              null,
-            )
-          : null;
 
       const uiPrimaryText =
-        Array.isArray(uiView?.mainLines) && uiView.mainLines.length > 0
-          ? uiView.mainLines.join("\n")
+        Array.isArray(subtitleView?.mainLines) && subtitleView.mainLines.length > 0
+          ? subtitleView.mainLines.join("\n")
           : "";
       const uiSecondaryText =
-        Array.isArray(uiView?.subLines) && uiView.subLines.length > 0
-          ? uiView.subLines.join("\n")
+        Array.isArray(subtitleView?.subLines) && subtitleView.subLines.length > 0
+          ? subtitleView.subLines.join("\n")
           : "";
 
       const currentSubtitleBlock = stateCurrentBlock
@@ -173,9 +159,17 @@
           }
         : renderedCurrentBlock
           ? {
-              primaryText: uiPrimaryText || renderedCurrentBlock.primary || "",
+              ...renderedCurrentBlock,
+              primaryText:
+                uiPrimaryText ||
+                renderedCurrentBlock.primaryText ||
+                renderedCurrentBlock.primary ||
+                "",
               secondaryText:
-                uiSecondaryText || renderedCurrentBlock.secondary || "",
+                uiSecondaryText ||
+                renderedCurrentBlock.secondaryText ||
+                renderedCurrentBlock.secondary ||
+                "",
             }
           : uiPrimaryText || uiSecondaryText
             ? {
@@ -318,6 +312,7 @@
         usedCurrentFallback,
       } = getPanelBlocksForRender(currentTime);
       const currentBlock = currentBlocks[0] || null;
+      const subtitleView = state.currentSubtitleView || null;
       const curPrimaryCue =
         currentBlock && state.primaryTrack
           ? findCueAt(state.primaryTrack, currentBlock.startTime + 0.01)
@@ -343,6 +338,7 @@
         currentBlock,
         displayBlocks,
         curPrimaryCue,
+        subtitleView,
       });
 
       list.innerHTML = displayBlocks

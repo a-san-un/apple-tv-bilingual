@@ -18,7 +18,20 @@
       return null;
     }
 
-    return overlayResolver.resolveOverlayView(blocks, currentIndex, meta);
+    const view = overlayResolver.resolveOverlayView(blocks, currentIndex, meta);
+    if (!view) {
+      return null;
+    }
+
+    return {
+      currentBlock: view.currentBlock ?? null,
+      displayBlocks: Array.isArray(view.displayBlocks) ? view.displayBlocks : [],
+      mainLines: Array.isArray(view.mainLines) ? view.mainLines : [],
+      subLines: Array.isArray(view.subLines) ? view.subLines : [],
+      isStable: Boolean(view.isStable),
+      shouldKeepVisible: Boolean(view.shouldKeepVisible),
+      isEmpty: Boolean(view.isEmpty),
+    };
   }
 
   root.subtitleViewResolver = {
