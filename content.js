@@ -101,8 +101,6 @@
     lastCurrentSubtitleBlockAt: 0,
     lastAfterRenderSecondarySnapshotSignature: "",
     lastSecondarySyncContext: "",
-    secondaryRecoveryMissCount: 0,
-    secondaryRecoveryWindowStartedAt: 0,
     lastPrimaryRecoveryAttemptAt: 0,
     lastPrimarySnapshotAt: 0,
     lastObservedVideoTime: null,
@@ -1168,41 +1166,33 @@
             mergedSubtitleHealth?.derived?.shouldRecoverSecondary ?? null,
           mergedShouldForceSecondaryRebind:
             mergedSubtitleHealth?.derived?.shouldForceSecondaryRebind ?? null,
-          secondaryRecoveryMissCount: state.secondaryRecoveryMissCount,
+          secondaryRecoveryMissCount:
+            cueController.getLaneStates().secondary.missCount,
         });
       }
 
-      const runtimeSuggestsSecondaryStall =
-        hasFreshCurrentPrimary &&
-        secondaryCueText.length === 0 &&
-        Boolean(state.secondaryTrack) &&
-        secondaryActiveCues === 0;
+      const recoveryDecision = cueController.evaluateSecondaryRecovery({
+        now,
+        runtime: {
+          primaryTrackFound: Boolean(state.primaryTrack),
+          secondaryTrackFound: Boolean(state.secondaryTrack),
+          primaryActiveCues,
+          secondaryActiveCues,
+        },
+        currentCue: {
+          primaryTextLength: primaryCueText.length,
+          secondaryTextLength: secondaryCueText.length,
+          currentPrimaryTextLength: currentPrimaryText.length,
+          hasFreshCurrentPrimary,
+        },
+        sequence: mergedSubtitleHealth?.sequence || null,
+        derived: mergedSubtitleHealth?.derived || null,
+      });
 
-      if (!runtimeSuggestsSecondaryStall) {
-        state.secondaryRecoveryWindowStartedAt = 0;
-      } else if (!state.secondaryRecoveryWindowStartedAt) {
-        state.secondaryRecoveryWindowStartedAt = now;
-      }
-
-      const secondaryRecoveryWindowElapsed =
-        state.secondaryRecoveryWindowStartedAt > 0
-          ? now - state.secondaryRecoveryWindowStartedAt
-          : 0;
-
-      const shouldRecoverSecondary =
-        runtimeSuggestsSecondaryStall &&
-        secondaryRecoveryWindowElapsed >= 2000 &&
-        (
-          mergedSubtitleHealth?.derived?.shouldRecoverSecondary === true ||
-          mergedSubtitleHealth?.derived?.primaryHealthy === true
-        );
-
-      if (mergedSubtitleHealth?.derived?.secondaryHealthy === true) {
-        state.secondaryRecoveryMissCount = 0;
-        state.secondaryRecoveryWindowStartedAt = 0;
-      } else if (shouldRecoverSecondary) {
-        state.secondaryRecoveryMissCount += 1;
-
+      if (
+        recoveryDecision.action === "recover" ||
+        recoveryDecision.action === "force-rebind"
+      ) {
         if (DEBUG_PANEL_PROBE) {
           const secondaryCandidates =
             resolverDeps.getSecondarySubtitleTrackCandidates(
@@ -1245,15 +1235,13 @@
           });
         }
 
-        const shouldForceSecondaryRebind =
-          mergedSubtitleHealth?.derived?.shouldForceSecondaryRebind === true ||
-          state.secondaryRecoveryMissCount >= 3;
-
         logContent("secondary recovery trigger", {
           reason: "sync_interval",
           effectiveSecondaryLanguage,
-          missCount: state.secondaryRecoveryMissCount,
-          forceRebind: shouldForceSecondaryRebind,
+          missCount: recoveryDecision.secondaryLane.missCount,
+          forceRebind: recoveryDecision.action === "force-rebind",
+          terminated: recoveryDecision.secondaryLane.terminated,
+          missLimitReached: recoveryDecision.action === "terminated",
           secondaryTrackFound: Boolean(state.secondaryTrack),
           currentSecondaryTextLength: secondaryCueText.length,
           primaryCueTextLength: primaryCueText.length,
@@ -1261,13 +1249,9 @@
         });
 
         syncSecondarySubtitleTrack({
-          reason: shouldForceSecondaryRebind
-            ? "secondary_force_rebind_after_repeated_miss"
-            : "secondary_current_missing_with_primary_present",
-          forceRebind: shouldForceSecondaryRebind,
+          reason: recoveryDecision.reason,
+          forceRebind: recoveryDecision.action === "force-rebind",
         });
-      } else {
-        state.secondaryRecoveryMissCount = 0;
       }
 
       const trackCount = state.video?.textTracks?.length ?? 0;

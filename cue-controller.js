@@ -34,6 +34,158 @@
     let secondaryTrackBound = null;
     let lastMergedSubtitleHealth = null;
 
+    const SECONDARY_RECOVERY_WINDOW_MS = 2000;
+    const SECONDARY_FORCE_REBIND_MISS_COUNT = 3;
+    const SECONDARY_RECOVERY_MISS_LIMIT = 6;
+
+    function createLaneState(lane) {
+      return {
+        lane,
+        healthy: false,
+        isMissing: false,
+        missingSince: 0,
+        missingDurationMs: 0,
+        missCount: 0,
+        terminated: false,
+        lastDecision: "idle",
+      };
+    }
+
+    const laneStates = {
+      primary: createLaneState("primary"),
+      secondary: createLaneState("secondary"),
+    };
+
+    function resetLaneState(laneState) {
+      laneState.isMissing = false;
+      laneState.missingSince = 0;
+      laneState.missingDurationMs = 0;
+      laneState.missCount = 0;
+      laneState.terminated = false;
+      laneState.lastDecision = "idle";
+    }
+
+    function updateLaneState(laneState, { now, healthy, isMissing }) {
+      laneState.healthy = healthy === true;
+      laneState.isMissing = isMissing === true;
+
+      if (!laneState.isMissing) {
+        laneState.missingSince = 0;
+        laneState.missingDurationMs = 0;
+        laneState.missCount = 0;
+        laneState.terminated = false;
+        laneState.lastDecision = "idle";
+        return laneState;
+      }
+
+      if (!laneState.missingSince) {
+        laneState.missingSince = now;
+      }
+
+      laneState.missingDurationMs = Math.max(0, now - laneState.missingSince);
+      return laneState;
+    }
+
+    function evaluateSecondaryRecovery({
+      now,
+      runtime,
+      currentCue,
+      sequence,
+      derived,
+    }) {
+      const primaryLane = updateLaneState(laneStates.primary, {
+        now,
+        healthy: derived?.primaryHealthy === true,
+        isMissing: false,
+      });
+
+      const secondaryRuntimeMissing =
+        currentCue?.hasFreshCurrentPrimary === true &&
+        currentCue?.secondaryTextLength === 0 &&
+        runtime?.secondaryTrackFound === true &&
+        runtime?.secondaryActiveCues === 0;
+
+      const secondarySequenceMissing =
+        sequence?.currentPairMissingSecondary === true;
+
+      const secondaryLane = updateLaneState(laneStates.secondary, {
+        now,
+        healthy: derived?.secondaryHealthy === true,
+        isMissing: secondaryRuntimeMissing && secondarySequenceMissing,
+      });
+
+      if (secondaryLane.healthy) {
+        resetLaneState(secondaryLane);
+      }
+
+      if (!secondaryLane.isMissing) {
+        secondaryLane.lastDecision = "idle";
+        return {
+          primaryLane,
+          secondaryLane,
+          action: "idle",
+          reason: "secondary_not_missing",
+        };
+      }
+
+      if (secondaryLane.terminated) {
+        secondaryLane.lastDecision = "terminated";
+        return {
+          primaryLane,
+          secondaryLane,
+          action: "terminated",
+          reason: "secondary_recovery_terminated",
+        };
+      }
+
+      const shouldRecoverSecondary =
+        secondaryLane.missingDurationMs >= SECONDARY_RECOVERY_WINDOW_MS &&
+        (
+          derived?.shouldRecoverSecondary === true ||
+          derived?.primaryHealthy === true
+        );
+
+      if (!shouldRecoverSecondary) {
+        secondaryLane.lastDecision = "idle";
+        return {
+          primaryLane,
+          secondaryLane,
+          action: "idle",
+          reason: "secondary_missing_waiting_window",
+        };
+      }
+
+      secondaryLane.missCount += 1;
+
+      if (secondaryLane.missCount >= SECONDARY_RECOVERY_MISS_LIMIT) {
+        secondaryLane.terminated = true;
+        secondaryLane.lastDecision = "terminated";
+        return {
+          primaryLane,
+          secondaryLane,
+          action: "terminated",
+          reason: "secondary_recovery_miss_limit",
+        };
+      }
+
+      const shouldForceSecondaryRebind =
+        derived?.shouldForceSecondaryRebind === true ||
+        secondaryLane.missCount >= SECONDARY_FORCE_REBIND_MISS_COUNT;
+
+      secondaryLane.lastDecision = shouldForceSecondaryRebind
+        ? "force-rebind"
+        : "recover";
+
+      return {
+        primaryLane,
+        secondaryLane,
+        action: secondaryLane.lastDecision,
+        reason: shouldForceSecondaryRebind
+          ? "secondary_force_rebind_after_repeated_miss"
+          : "secondary_current_missing_with_primary_present",
+      };
+    }
+
     function getBoundSecondaryTrack() {
       return secondaryTrackBound;
     }
@@ -364,6 +516,8 @@
       onCueChange,
       onPrimaryCueChange,
       getMergedSubtitleHealth: () => lastMergedSubtitleHealth,
+      getLaneStates: () => laneStates,
+      evaluateSecondaryRecovery,
     };
   }
 
