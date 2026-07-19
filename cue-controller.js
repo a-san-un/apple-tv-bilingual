@@ -286,6 +286,7 @@
 
       if (secondaryTrackBound !== track || forceRebind) {
         bindSecondarySubtitleTrack(track);
+        rebuildCurrentSceneSubtitleBlocks();
         return;
       }
 
@@ -295,6 +296,8 @@
           track,
         );
       }
+
+      rebuildCurrentSceneSubtitleBlocks();
     }
 
     function buildMergedSubtitleHealth({
@@ -377,6 +380,117 @@
           shouldForceSecondaryRebind,
         },
       };
+    }
+
+    function rebuildCurrentSceneSubtitleBlocks() {
+      const currentTime = getCurrentTime();
+      const primaryTrack = getPrimaryTrack();
+      const secondaryTrack = getSecondaryTrack();
+
+      const allPrimaryCues = getPrimaryTrackCues();
+      const allSecondaryCues = getSecondaryTrackCues();
+
+      if (!Array.isArray(allPrimaryCues) || allPrimaryCues.length === 0) {
+        return;
+      }
+
+      // 現在時刻に最も近い primary cue を探す
+      let closestIndex = 0;
+      let closestDelta = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < allPrimaryCues.length; i++) {
+        const cue = allPrimaryCues[i];
+        const start = Number(cue?.startTime ?? 0);
+        const end = Number(cue?.endTime ?? 0);
+        const center = (start + end) / 2;
+        const delta = Math.abs(center - currentTime);
+        if (delta < closestDelta) {
+          closestDelta = delta;
+          closestIndex = i;
+        }
+      }
+
+      // 前後 1〜2 個ぶんを対象にする（現在行 ±1）
+      const windowStart = Math.max(0, closestIndex - 1);
+      const windowEnd = Math.min(allPrimaryCues.length, closestIndex + 2);
+      const windowPrimaryCues = allPrimaryCues.slice(windowStart, windowEnd);
+      const windowSecondaryCues = allSecondaryCues;
+
+      const blockApi = window.ATVB?.subtitleBlocks || {};
+      const hasBuildSubtitleBlockSequence =
+        typeof blockApi.buildSubtitleBlockSequence === "function";
+
+      if (!hasBuildSubtitleBlockSequence) {
+        return;
+      }
+
+      const blockResult = blockApi.buildSubtitleBlockSequence({
+        primaryCues: windowPrimaryCues,
+        secondaryCues: windowSecondaryCues,
+        now: currentTime,
+        previousBlocks: getPreviousSubtitleBlocks(),
+        cleanCueText,
+        rebuildReason: "rebuildCurrentScene",
+      });
+
+      setSubtitleBlocks(blockResult, "rebuildCurrentScene");
+
+      const sequenceHealth = blockResult?.meta?.sequenceHealth || null;
+      const pCue = getCurrentCue(primaryTrack, currentTime);
+      const pText = cleanCueText(pCue);
+      const sCue = getCurrentCue(secondaryTrack, currentTime);
+      const sText = cleanCueText(sCue);
+
+      const mergedSubtitleHealth = buildMergedSubtitleHealth({
+        primaryTrack,
+        secondaryTrack,
+        pCue,
+        pText,
+        sCue,
+        sText,
+        sequenceHealth,
+      });
+
+      lastMergedSubtitleHealth = mergedSubtitleHealth;
+
+      const currentBlock =
+        getCurrentSubtitleBlockFromSequence(blockResult) || {
+          startTime: pCue?.startTime ?? null,
+          endTime: pCue?.endTime ?? null,
+          primaryText: pText || "",
+          secondaryText: sText || "",
+          hasPrimarySignal: Boolean(pText),
+          hasSecondarySignal: Boolean(sText),
+          sourceReason: "rebuildCurrentScene:fallback",
+          updatedAt: Date.now(),
+        };
+
+      setCurrentSubtitleBlock(currentBlock, "rebuildCurrentScene");
+
+      const overlaySequence = getSubtitleBlockSequence();
+      const subtitleViewResolver = root.subtitleViewResolver || null;
+      const subtitleView =
+        subtitleViewResolver &&
+        typeof subtitleViewResolver.resolveUiSubtitleView === "function"
+          ? subtitleViewResolver.resolveUiSubtitleView(
+              overlaySequence?.blocks,
+              overlaySequence?.currentIndex,
+              overlaySequence?.meta,
+            )
+          : null;
+
+      state.currentSubtitleView = subtitleView;
+
+      if (subtitleView) {
+        updateOverlayFromView(subtitleView);
+      } else {
+        updateOverlayFromBlock(currentBlock);
+      }
+
+      if (secondaryTrack) {
+        renderSecondarySubtitle(sText, secondaryTrack);
+      }
+
+      renderPanel();
     }
 
     function onPrimaryCueChange() {
