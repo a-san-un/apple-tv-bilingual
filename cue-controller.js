@@ -44,9 +44,12 @@
     let lastMergedSubtitleHealth = null;
     let nearbyRebuildGuard = null;
 
+    state.nearbyRebuildHoldView ??= null;
+
     const SECONDARY_RECOVERY_WINDOW_MS = 1000;
     const SECONDARY_FORCE_REBIND_MISS_COUNT = 2;
     const SECONDARY_RECOVERY_MISS_LIMIT = 8;
+    const NEARBY_REBUILD_SEEK_WINDOW_MS = 4000;
 
     // lane ごとの欠落状態を保持する初期オブジェクトを作る。
     function createLaneState(lane) {
@@ -392,9 +395,19 @@
       };
     }
 
-    // nearby rebuild の 1 回保護を消費して解除する。
+    function clearNearbyRebuildGuard() {
+      nearbyRebuildGuard = null;
+      state.nearbyRebuildHoldView = null;
+    }
+
     function consumeNearbyRebuildGuard() {
       nearbyRebuildGuard = null;
+    }
+
+    function isWithinNearbyRebuildSeekWindow() {
+      const lastLargeSeekAt = Number(state.lastLargeSeekAt ?? 0);
+      if (!lastLargeSeekAt) return false;
+      return Date.now() - lastLargeSeekAt <= NEARBY_REBUILD_SEEK_WINDOW_MS;
     }
 
     // nearby rebuild 直後の current block を次の 1 回だけ保護する。
@@ -408,15 +421,24 @@
       };
     }
 
-    // 次の primary cue change で nearby rebuild の current を優先するか判定する。
+    // 次の primary cue change で nearby rebuild の current / hold view を優先するか判定する。
     function shouldPreserveNearbyRebuildCurrentBlock() {
-      return Boolean(
-        nearbyRebuildGuard?.consumeOnNextPrimaryCueChange &&
+      const guardActive = Boolean(
+        nearbyRebuildGuard?.consumeOnNextPrimaryCueChange,
+      );
+      if (!guardActive) return false;
+
+      const hasNearbySource = Boolean(
+        state.nearbyRebuildHoldView?.currentBlock?.sourceReason ===
+          "nearbyRebuildHold" ||
         state.currentSubtitleBlock?.sourceReason === "nearbyRebuild",
       );
+      if (!hasNearbySource) return false;
+
+      return isWithinNearbyRebuildSeekWindow();
     }
 
-    // 現在時刻近傍の cue だけで subtitle blocks を組み直し、current block を更新する。
+    // 現在時刻近傍の cue だけで subtitle blocks を組み直し、current view / current block を更新する。
     function rebuildCurrentSceneSubtitleBlocks() {
       const currentTime = getCurrentTime();
       const primaryTrack = getPrimaryTrack();
@@ -430,39 +452,77 @@
       const sCue = getCurrentCue(secondaryTrack, currentTime);
       const sText = cleanCueText(sCue);
 
+      // truth の一覧がまだ空のときは、現在の view を short-lived に hold するだけに留める。
       if (!Array.isArray(allPrimaryCues) || allPrimaryCues.length === 0) {
-        const currentBlock = {
-          startTime: pCue?.startTime ?? null,
-          endTime: pCue?.endTime ?? null,
-          primaryText: pText || "",
-          secondaryText: sText || "",
-          hasPrimarySignal: Boolean(pText),
-          hasSecondarySignal: Boolean(sText),
-          sourceReason: "nearbyRebuild:currentOnly",
+        const previousView = state.currentSubtitleView || null;
+        const previousBlock = state.currentSubtitleBlock || null;
+
+        const holdBlock = {
+          startTime:
+            pCue?.startTime ??
+            previousView?.currentBlock?.startTime ??
+            previousBlock?.startTime ??
+            null,
+          endTime:
+            pCue?.endTime ??
+            previousView?.currentBlock?.endTime ??
+            previousBlock?.endTime ??
+            null,
+          primaryText:
+            pText ||
+            previousView?.currentBlock?.primaryText ||
+            previousBlock?.primaryText ||
+            "",
+          secondaryText:
+            sText ||
+            previousView?.currentBlock?.secondaryText ||
+            previousBlock?.secondaryText ||
+            "",
+          hasPrimarySignal: Boolean(
+            pText ||
+            previousView?.currentBlock?.primaryText ||
+            previousBlock?.primaryText,
+          ),
+          hasSecondarySignal: Boolean(
+            sText ||
+            previousView?.currentBlock?.secondaryText ||
+            previousBlock?.secondaryText,
+          ),
+          sourceReason: "nearbyRebuildHold",
           updatedAt: Date.now(),
         };
 
-        setCurrentSubtitleBlock(currentBlock, "nearbyRebuild");
-        armNearbyRebuildGuard(currentBlock);
+        const holdView = {
+          currentBlock: holdBlock,
+          sourceReason: "nearbyRebuildHold",
+        };
 
-        logContent("current subtitle block updated", {
-          reason: "nearbyRebuild:currentOnly",
+        state.nearbyRebuildHoldView = holdView;
+        armNearbyRebuildGuard(holdBlock);
+
+        logContent("current subtitle view hold updated", {
+          reason: "nearbyRebuildHold",
           source: "nearbyRebuild",
-          sourceReason: currentBlock?.sourceReason ?? null,
+          sourceReason: holdBlock?.sourceReason ?? null,
           guardActive: Boolean(
             nearbyRebuildGuard?.consumeOnNextPrimaryCueChange,
           ),
-          startTime: currentBlock?.startTime ?? null,
-          endTime: currentBlock?.endTime ?? null,
-          hasPrimarySignal: Boolean(currentBlock?.hasPrimarySignal),
-          hasSecondarySignal: Boolean(currentBlock?.hasSecondarySignal),
+          withinSeekWindow: isWithinNearbyRebuildSeekWindow(),
+          startTime: holdBlock?.startTime ?? null,
+          endTime: holdBlock?.endTime ?? null,
+          hasPrimarySignal: Boolean(holdBlock?.hasPrimarySignal),
+          hasSecondarySignal: Boolean(holdBlock?.hasSecondarySignal),
         });
 
-        state.currentSubtitleView = null;
-        updateOverlayFromBlock(currentBlock);
+        // truth 台帳は触らず、current shared UI と overlay だけを短時間支える。
+        state.currentSubtitleView = holdView;
+        updateOverlayFromView(holdView);
 
         if (secondaryTrack) {
-          renderSecondarySubtitle(sText, secondaryTrack);
+          renderSecondarySubtitle(
+            holdBlock.secondaryText || "",
+            secondaryTrack,
+          );
         }
 
         renderPanel();
@@ -470,6 +530,7 @@
         return;
       }
 
+      // ここから先は、truth 台帳の近傍 window を再構成する通常の nearby rebuild。
       let closestIndex = 0;
       let closestDelta = Number.POSITIVE_INFINITY;
       for (let i = 0; i < allPrimaryCues.length; i++) {
@@ -552,6 +613,7 @@
         source: "nearbyRebuild",
         sourceReason: currentBlock?.sourceReason ?? null,
         guardActive: Boolean(nearbyRebuildGuard?.consumeOnNextPrimaryCueChange),
+        withinSeekWindow: isWithinNearbyRebuildSeekWindow(),
         startTime: currentBlock?.startTime ?? null,
         endTime: currentBlock?.endTime ?? null,
         hasPrimarySignal: Boolean(currentBlock?.hasPrimarySignal),
@@ -585,7 +647,7 @@
       renderPanel();
     }
 
-    // primary cue change を基準に full rebuild を行い、必要なら 1 回だけ nearby current を優先する。
+    // primary cue change を基準に full rebuild を行い、必要なら 1 回だけ nearby current / hold view を優先する。
     function onPrimaryCueChange() {
       logContent("cue-controller onPrimaryCueChange entered", {
         hasATVB: !!window.ATVB,
@@ -689,46 +751,7 @@
       };
 
       const preserveNearbyCurrent = shouldPreserveNearbyRebuildCurrentBlock();
-      const blockForDisplay = preserveNearbyCurrent
-        ? state.currentSubtitleBlock
-        : currentBlock;
-
-      if (preserveNearbyCurrent) {
-        logContent("current subtitle block updated", {
-          reason: "onPrimaryCueChange:preserveNearbyRebuild",
-          source: "nearbyRebuild",
-          sourceReason: state.currentSubtitleBlock?.sourceReason ?? null,
-          guardActive: Boolean(
-            nearbyRebuildGuard?.consumeOnNextPrimaryCueChange,
-          ),
-          startTime: state.currentSubtitleBlock?.startTime ?? null,
-          endTime: state.currentSubtitleBlock?.endTime ?? null,
-          hasPrimarySignal: Boolean(
-            state.currentSubtitleBlock?.hasPrimarySignal,
-          ),
-          hasSecondarySignal: Boolean(
-            state.currentSubtitleBlock?.hasSecondarySignal,
-          ),
-        });
-      } else {
-        setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange");
-        logContent("current subtitle block updated", {
-          reason: "onPrimaryCueChange",
-          source: "primaryCueChange",
-          sourceReason: currentBlock?.sourceReason ?? null,
-          guardActive: Boolean(
-            nearbyRebuildGuard?.consumeOnNextPrimaryCueChange,
-          ),
-          startTime: currentBlock?.startTime ?? null,
-          endTime: currentBlock?.endTime ?? null,
-          hasPrimarySignal: Boolean(currentBlock?.hasPrimarySignal),
-          hasSecondarySignal: Boolean(currentBlock?.hasSecondarySignal),
-        });
-      }
-
-      if (nearbyRebuildGuard?.consumeOnNextPrimaryCueChange) {
-        consumeNearbyRebuildGuard();
-      }
+      const holdView = state.nearbyRebuildHoldView || null;
 
       const overlaySequence = getSubtitleBlockSequence();
       const subtitleViewResolver = root.subtitleViewResolver || null;
@@ -742,12 +765,56 @@
             )
           : null;
 
-      state.currentSubtitleView = subtitleView;
+      const shouldUseHoldView =
+        preserveNearbyCurrent &&
+        holdView &&
+        (!subtitleView ||
+          (!subtitleView.currentBlock?.hasPrimarySignal &&
+            !subtitleView.currentBlock?.hasSecondarySignal));
 
-      if (subtitleView) {
+      if (shouldUseHoldView) {
+        logContent("current subtitle view hold used", {
+          reason: "onPrimaryCueChange:preserveNearbyRebuildHold",
+          source: "nearbyRebuild",
+          sourceReason: holdView.currentBlock?.sourceReason ?? null,
+          guardActive: Boolean(
+            nearbyRebuildGuard?.consumeOnNextPrimaryCueChange,
+          ),
+          withinSeekWindow: isWithinNearbyRebuildSeekWindow(),
+          startTime: holdView.currentBlock?.startTime ?? null,
+          endTime: holdView.currentBlock?.endTime ?? null,
+          hasPrimarySignal: Boolean(holdView.currentBlock?.hasPrimarySignal),
+          hasSecondarySignal: Boolean(
+            holdView.currentBlock?.hasSecondarySignal,
+          ),
+        });
+        consumeNearbyRebuildGuard();
+      } else {
+        clearNearbyRebuildGuard();
+        setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange");
+        logContent("current subtitle block updated", {
+          reason: "onPrimaryCueChange",
+          source: "primaryCueChange",
+          sourceReason: currentBlock?.sourceReason ?? null,
+          guardActive: Boolean(
+            nearbyRebuildGuard?.consumeOnNextPrimaryCueChange,
+          ),
+          withinSeekWindow: isWithinNearbyRebuildSeekWindow(),
+          startTime: currentBlock?.startTime ?? null,
+          endTime: currentBlock?.endTime ?? null,
+          hasPrimarySignal: Boolean(currentBlock?.hasPrimarySignal),
+          hasSecondarySignal: Boolean(currentBlock?.hasSecondarySignal),
+        });
+      }
+
+      if (shouldUseHoldView) {
+        state.currentSubtitleView = holdView;
+        updateOverlayFromView(holdView);
+      } else if (subtitleView) {
+        state.currentSubtitleView = subtitleView;
         updateOverlayFromView(subtitleView);
       } else {
-        updateOverlayFromBlock(blockForDisplay);
+        updateOverlayFromBlock(currentBlock);
       }
 
       if (secondaryTrack) {

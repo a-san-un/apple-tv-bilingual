@@ -104,6 +104,7 @@
     lastPrimaryRecoveryAttemptAt: 0,
     lastPrimarySnapshotAt: 0,
     lastObservedVideoTime: null,
+    lastLargeSeekAt: 0,
     lastPrimaryText: "",
     panelVisible: true,
     ejdictMap: null,
@@ -1089,6 +1090,14 @@
         : null;
 
       if (largeSeekDetected) {
+        state.lastLargeSeekAt = Date.now();
+
+        logContent("large seek detected", {
+          previousObservedTime,
+          currentVideoTime,
+          delta: Math.abs(currentVideoTime - previousObservedTime),
+        });
+
         panelUi.applyPanelState("sync_interval_large_seek_resync");
       }
 
