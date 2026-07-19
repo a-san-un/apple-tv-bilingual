@@ -224,10 +224,11 @@ chore: secondary recovery 観測と resolver probe を追加する
 ```md
 ### Phase X / 現在位置（短縮版）
 
-- [ ] docs 同期
-- [ ] truth / health / resolver の整理
-- [ ] UI / sync / binder の整理
-- [ ] テスト
+- [ ] 前提確認
+- [ ] 対象範囲の整理
+- [ ] 最小差分の実装
+- [ ] 動作確認
+- [ ] docs / 進捗反映
 - [ ] commit / push
 ```
 
