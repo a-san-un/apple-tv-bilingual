@@ -102,6 +102,7 @@
     lastAfterRenderSecondarySnapshotSignature: "",
     lastSecondarySyncContext: "",
     secondaryRecoveryMissCount: 0,
+    secondaryRecoveryWindowStartedAt: 0,
     lastPrimaryRecoveryAttemptAt: 0,
     lastPrimarySnapshotAt: 0,
     lastObservedVideoTime: null,
@@ -1171,14 +1172,34 @@
         });
       }
 
+      const runtimeSuggestsSecondaryStall =
+        hasFreshCurrentPrimary &&
+        secondaryCueText.length === 0 &&
+        Boolean(state.secondaryTrack) &&
+        secondaryActiveCues === 0;
+
+      if (!runtimeSuggestsSecondaryStall) {
+        state.secondaryRecoveryWindowStartedAt = 0;
+      } else if (!state.secondaryRecoveryWindowStartedAt) {
+        state.secondaryRecoveryWindowStartedAt = now;
+      }
+
+      const secondaryRecoveryWindowElapsed =
+        state.secondaryRecoveryWindowStartedAt > 0
+          ? now - state.secondaryRecoveryWindowStartedAt
+          : 0;
+
       const shouldRecoverSecondary =
-        mergedSubtitleHealth?.derived?.shouldRecoverSecondary === true ||
-        (hasFreshCurrentPrimary &&
-          !secondaryCueText &&
-          Boolean(state.secondaryTrack));
+        runtimeSuggestsSecondaryStall &&
+        secondaryRecoveryWindowElapsed >= 2000 &&
+        (
+          mergedSubtitleHealth?.derived?.shouldRecoverSecondary === true ||
+          mergedSubtitleHealth?.derived?.primaryHealthy === true
+        );
 
       if (mergedSubtitleHealth?.derived?.secondaryHealthy === true) {
         state.secondaryRecoveryMissCount = 0;
+        state.secondaryRecoveryWindowStartedAt = 0;
       } else if (shouldRecoverSecondary) {
         state.secondaryRecoveryMissCount += 1;
 
