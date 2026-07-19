@@ -1189,6 +1189,18 @@
         derived: mergedSubtitleHealth?.derived || null,
       });
 
+      if (recoveryDecision.action === "terminated") {
+        logContent("secondary recovery terminated", {
+          reason: "sync_interval",
+          effectiveSecondaryLanguage,
+          missCount: recoveryDecision.secondaryLane.missCount,
+          secondaryTrackFound: Boolean(state.secondaryTrack),
+          currentSecondaryTextLength: secondaryCueText.length,
+          primaryCueTextLength: primaryCueText.length,
+          currentPrimaryTextLength: currentPrimaryText.length,
+        });
+      }
+
       if (
         recoveryDecision.action === "recover" ||
         recoveryDecision.action === "force-rebind"

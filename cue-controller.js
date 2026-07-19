@@ -34,9 +34,9 @@
     let secondaryTrackBound = null;
     let lastMergedSubtitleHealth = null;
 
-    const SECONDARY_RECOVERY_WINDOW_MS = 2000;
-    const SECONDARY_FORCE_REBIND_MISS_COUNT = 3;
-    const SECONDARY_RECOVERY_MISS_LIMIT = 6;
+    const SECONDARY_RECOVERY_WINDOW_MS = 1000;
+    const SECONDARY_FORCE_REBIND_MISS_COUNT = 2;
+    const SECONDARY_RECOVERY_MISS_LIMIT = 8;
 
     function createLaneState(lane) {
       return {
@@ -108,13 +108,17 @@
       const secondarySequenceMissing =
         sequence?.currentPairMissingSecondary === true;
 
+      const secondaryRecovered =
+        runtime?.secondaryTrackFound === true &&
+        runtime?.secondaryActiveCues > 0;
+
       const secondaryLane = updateLaneState(laneStates.secondary, {
         now,
-        healthy: derived?.secondaryHealthy === true,
-        isMissing: secondaryRuntimeMissing && secondarySequenceMissing,
+        healthy: secondaryRecovered,
+        isMissing: secondaryRuntimeMissing,
       });
 
-      if (secondaryLane.healthy) {
+      if (secondaryRecovered) {
         resetLaneState(secondaryLane);
       }
 
