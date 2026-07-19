@@ -36,8 +36,8 @@ Issue #32 では、Apple TV+ 再生画面における字幕同期まわりを整
 secondary recovery の truth は **runtime first / merged assists** とする。
 
 - recovery trigger の最終判定は runtime 側のハード条件で行う
-- merged subtitle health（`MergedSubtitleHealth.derived.*`）は、第 2 段階の判定として使う
-  - recover を強める／抑える
+- merged subtitle health（`MergedSubtitleHealth.derived.*`）は第 2 段階の判定として使う
+  - recover を強める / 抑える
   - forceRebind へ上げる
   - probe を出す
     の補助 truth とする
@@ -75,17 +75,17 @@ secondary recovery の truth は **runtime first / merged assists** とする。
 
 probe は、runtime 条件は揃っているが rebind までは上げたくないケースの観測補助として使う。
 
-### overlay / panel / history のざっくり責務
+### overlay / panel / history の責務
 
 - **overlay**
-  - 通常時は current block 1 件の view を表示
-  - same-window / large seek では、同じ `startTime + endTime` を持つ表示グループ（`OverlayView`）を表示
+  - 通常時は current block 1 件の view を表示する
+  - same-window / large seek では、同じ `startTime + endTime` を持つ表示グループ（`OverlayView`）を表示する
   - main/sub を同じ group 内でそろえ、順序維持した上で重複行を dedupe する
   - 片側欠落時は truth を書き換えず、view 組み立て側で空のまま静的維持する
 
 - **panel**
-  - `PanelBlock[]` を描画入力とし、過去 / 現在 / 未来を同じ列で表示
-  - same-window window に対して `isWindowCurrent` / `isPanelEmphasized` / `isSequentialCurrent` を付与し、UX 上の現在行（再生マーク行）を解決
+  - `PanelBlock[]` を描画入力とし、過去 / 現在 / 未来を同じ列で表示する
+  - same-window window に対して `isWindowCurrent` / `isPanelEmphasized` / `isSequentialCurrent` を付与し、UX 上の現在行（再生マーク行）を解決する
   - panel current と truth current（`state="current"`）は分離して扱う
 
 - **history**
@@ -93,7 +93,7 @@ probe は、runtime 条件は揃っているが rebind までは上げたくな�
   - `subtitleHistory` は移行期間の補助構造とし、read/write 経路は段階的に縮小・削除する
   - history の追加契機は「block key が変わったとき」の 1 回だけとし、same-window 内の再評価や secondary 後追いでは追加しない
 
-### 次フェーズ（Phase J）の主題
+### Phase J の主題
 
 Phase J では次を主題とする。
 
@@ -104,6 +104,18 @@ Phase J では次を主題とする。
 - panel history を `blocks.past` / `PanelBlock[]` 由来へ寄せる初期計画を立てる
 - `subtitleHistory` の read/write を current / fallback から外し、history 描画専用へ縮小する最初のステップを決める
 - sync interval 側で runtime 条件の継続秒数を管理し、recovery 実行責務を明確化する
+
+### Phase J: large seek 時の secondary recovery 方針
+
+large seek 時（シークバーで大きくジャンプした場合など）は、primary と secondary で挙動を分けて扱う。
+
+- same-window（近距離）の移動では、現状どおり primary / secondary 両方の signal と text length が安定していることを前提に、追加の recovery は行わない
+- large seek では、`secondaryTrackFound === true` でも `currentSecondaryTextLength === 0` のまま missCount が増え続けるケースがあるため、sync interval ベースの secondary recovery に上限を設ける
+- secondary recovery の missCount が一定回数（例: 5〜8 回）を超えた場合、その blockRange では secondary recovery を打ち切り、secondary が表示されない区間として扱う
+- recovery 打ち切り時には、内部 state（例: `secondaryRecoveryState`）に「この contentKey / blockRange では secondary を諦めた」ことを記録し、同じ blockRange に対する sync interval からの再 recovery は行わない
+- 次の `onPrimaryCueChange` で block が変わったとき、またはユーザ操作による新しい large seek が発生したときに、secondary recovery の state をリセットし、再チャレンジを許可する
+- panel / overlay 上は、secondary を諦めた blockRange では primary のみを表示し、secondary 行は空（UI 上は非表示または空行）として扱う
+- secondary recovery のログには、missCount / forceRebind に加えて打ち切り判定の有無（例: `terminated` / `missLimit`）を含め、Phase J のテストで「どこまで recovery してどこで諦めたか」を観測できるようにする
 
 ---
 
@@ -198,7 +210,7 @@ panel list / history 全体の唯一 truth 列ではなく、panel list / histor
 - **same-window:** 同じ `startTime + endTime` を持つ複数 block
 - **表示グループ:** overlay / panel で same-window を 1 つの表示単位として扱うまとまり
   - key: `${startTime}::${endTime}`
-  - group 内で main/sub の行配列を組み立て、順序維持＋内容重複の dedupe を行う
+  - group 内で main/sub の行配列を組み立て、順序維持 + 内容重複の dedupe を行う
 
 ### overlay view（OverlayView）
 
@@ -218,7 +230,7 @@ panel list / history 全体の唯一 truth 列ではなく、panel list / histor
  */
 ```
 
-- `mainLines` / `subLines`: same-window group 内の順序維持＋dedupe済み行
+- `mainLines` / `subLines`: same-window group 内の順序維持 + dedupe 済み行
 - `shouldKeepVisible`: `isEmpty === true` でも clear せず維持すべき場合のフラグ
 - clear 条件は `isEmpty && !shouldKeepVisible` に限定する
 
@@ -308,23 +320,24 @@ runtime 条件で「secondary が止まっている可能性が高い」と判�
 
 ### 1. large seek 後の secondary 不復帰
 
-large seek 代表ケースでは、
+large seek 代表ケースでは、次の状態が観測されている。
 
 - `secondaryTrackFound = true`
 - `secondaryActiveCues = 0`
 - `currentSecondaryTextLength = 0`
-- content 側 fallback recovery は継続発火
+- content 側 fallback recovery は継続発火する
 - それでも sub が復帰しない
 
-という状態が観測されている。
-
-同じ区間で merged 側では
+同じ区間で merged 側では、次のようになることがある。
 
 - `derived.secondaryHealthy = true`
 - `derived.shouldRecoverSecondary = false`
 
-となることがあり、runtime と merged health の判定がズレている。  
+このため、runtime と merged health の判定がズレている。  
 これを runtime first / merged assists の方針で揃える必要がある。
+
+また、Phase J の large seek 実測では、`secondary recovery trigger` が `sync_interval` で継続発火し、missCount が増えても `currentSecondaryTextLength = 0` のまま副字幕が復帰しないケースが確認されている。  
+このため、large seek 時は「取れそうなら取るが、一定回数で諦める」上限制御が必要である。
 
 ### 2. current truth に過去 secondary が混入しうる
 
@@ -336,24 +349,21 @@ large seek 代表ケースでは、
 
 overlay が `blocks[currentIndex]` 1 件だけを描画していたため、same-window の複数行や large seek 直後で「メインだけの block」「サブ欠落 block」が見える時間帯が残った。
 
-same-window group を `OverlayView` で扱う方向へ移行したが、
+same-window group を `OverlayView` で扱う方向へ移行したが、次の点は引き続き整理が必要である。
 
 - どの条件で group 表示に切り替えるか
 - large seek 直後の欠落をどこまで許容するか
-
-といった overlay 表示ポリシーを整理する必要がある。
+- secondary を諦めた blockRange を panel / overlay でどう静かに表現するか
 
 ### 4. panel current と truth current のズレ
 
 same-window captions では、panel 上で「最初の行だけ再生マークが付き、後続が飛んで見える」挙動が残りやすい。
 
-これは、
+これは次の 3 つを `PanelBlock` 側で分けて扱うことで解消する方針とする。
 
 - strict current（truth）
 - same-window window current（UX 上の「今この窓を再生中」）
 - sequential current（窓内 line-level current）
-
-の 3 つを `PanelBlock` 側で分けて扱うことで解消する方針とする。
 
 ---
 
@@ -361,7 +371,7 @@ same-window captions では、panel 上で「最初の行だけ再生マーク�
 
 ### Phase 1〜2（履歴一本化と overlay イベント依存削減）
 
-- history 追加を `setCurrentSubtitleBlock()` に一本化し、二重 append を解消
+- history 追加を `setCurrentSubtitleBlock()` に一本化し、二重 append を解消した
 - overlay を primary cuechange ベースの current block 更新に揃え、短表示・点滅を抑制した
 
 ### Phase 3（blocks ベースの共通基盤）
@@ -383,6 +393,7 @@ same-window captions では、panel 上で「最初の行だけ再生マーク�
 - `SubtitleBlockSequence / UiSubtitleView / PanelBlock[]` の 3 段構成に沿って current cleanup の前提整理を進めている
 - history を `blocks.past` 由来へ寄せる前提を維持しつつ、`subtitleHistory` の縮退ステップを検討中
 - sync interval 側で runtime 条件の継続秒数を管理する方針を追加した
+- large seek 時の secondary recovery に missCount 上限を設け、一定回数で打ち切る方針を追加した
 
 ---
 
@@ -405,27 +416,42 @@ showSidebar の変更は UI state として扱い、subtitle pipeline restart �
 - overlay のメインだけ block / サブ欠落 / large seek 後の戻り方確認  
   → 両方を併用する
 
+### Phase J のテスト観点メモ
+
+Phase J では、少なくとも次の 4 系統でテストを揃える。
+
+- `large seek（seekbar 大ジャンプ）`
+- `same-window（panel 内 block click を含む近距離移動）`
+- `10秒送り戻し（再生コントロールボタン）`
+- `panel list / history（通常再生での履歴・current block health）`
+
+large seek では、特に次を観測対象とする。
+
+- `secondary recovery trigger` が missCount 上限で止まるか
+- `terminated` / `missLimit` がログに出るか
+- panel / overlay が secondary 無し区間で primary-only 表示へ静かに移るか
+
 ---
 
-## 関連ファイル（役割だけ）
+## 関連ファイル
 
-- `content.js`  
-  runtime state / currentSubtitleBlock 互換 / sync interval recovery / wiring
-- `cue-controller.js`  
-  primary / secondary cuechange 本流 / Sequence 再構築 / merged health 集約
-- `subtitle-blocks.js`  
-  `SubtitleBlockSequence` 構築 / secondary matching / `sequenceHealth`
-- `subtitle-view-resolver.js`  
-  current 系共通 view（`UiSubtitleView`）生成
-- `overlay-block-resolver.js`  
-  same-window group → `OverlayView` 生成
-- `overlay-controller.js`  
-  `OverlayView` の描画と clear 条件
-- `subtitle-block-resolver.js`  
-  Sequence → `PanelBlock[]`（`displayBlocks`）への正規化と派生フラグ付与
-- `panel-renderer.js` / `panel-ui.js`  
-  `PanelBlock[]` の描画と panel UI 側の secondary 読み取り
-- `subtitle-track-resolver.js`  
-  secondary track 候補解決と観測
-- `debug-logger.js` / `debug-panel.js`  
-  debug log の整形・表示と filter
+- `content.js`
+  - runtime state / currentSubtitleBlock 互換 / sync interval recovery / wiring
+- `cue-controller.js`
+  - primary / secondary cuechange 本流 / Sequence 再構築 / merged health 集約
+- `subtitle-blocks.js`
+  - `SubtitleBlockSequence` 構築 / secondary matching / `sequenceHealth`
+- `subtitle-view-resolver.js`
+  - current 系共通 view（`UiSubtitleView`）生成
+- `overlay-block-resolver.js`
+  - same-window group → `OverlayView` 生成
+- `overlay-controller.js`
+  - `OverlayView` の描画と clear 条件
+- `subtitle-block-resolver.js`
+  - Sequence → `PanelBlock[]`（`displayBlocks`）への正規化と派生フラグ付与
+- `panel-renderer.js` / `panel-ui.js`
+  - `PanelBlock[]` の描画と panel UI 側の secondary 読み取り
+- `subtitle-track-resolver.js`
+  - secondary track 候補解決と観測
+- `debug-logger.js` / `debug-panel.js`
+  - debug log の整形・表示と filter
