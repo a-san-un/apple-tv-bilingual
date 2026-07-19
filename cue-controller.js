@@ -198,6 +198,18 @@
           sequence.hasCurrentSecondary
         );
 
+      const sequenceSuggestsSecondaryGap =
+        sequence.currentPairMissingSecondary;
+
+      const shouldRecoverSecondary =
+        primaryHealthy &&
+        !secondaryHealthy &&
+        sequenceSuggestsSecondaryGap;
+
+      const shouldForceSecondaryRebind =
+        shouldRecoverSecondary &&
+        sequence.consecutiveCurrentMissingSecondary;
+
       return {
         runtime,
         currentCue,
@@ -205,15 +217,8 @@
         derived: {
           primaryHealthy,
           secondaryHealthy,
-          shouldRecoverSecondary:
-            primaryHealthy &&
-            !secondaryHealthy &&
-            sequence.currentPairMissingSecondary,
-          shouldForceSecondaryRebind:
-            primaryHealthy &&
-            !secondaryHealthy &&
-            sequence.currentPairMissingSecondary &&
-            sequence.consecutiveCurrentMissingSecondary,
+          shouldRecoverSecondary,
+          shouldForceSecondaryRebind,
         },
       };
     }
