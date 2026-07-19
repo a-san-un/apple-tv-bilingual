@@ -36,12 +36,12 @@ Issue #32 では、Apple TV+ 再生画面における字幕同期まわりを整
 secondary recovery の truth は **runtime first / merged assists** とする。
 
 - recovery trigger の最終判定は runtime 側のハード条件で行う
-- merged subtitle health（`MergedSubtitleHealth.derived.*`）は、第 2 段階の判定
+- merged subtitle health（`MergedSubtitleHealth.derived.*`）は、第 2 段階の判定として使う
   - recover を強める／抑える
   - forceRebind へ上げる
   - probe を出す
     の補助 truth とする
-- merged health を唯一の recovery truthにはしないが、ログ専用にも落とさない
+- merged health を唯一の recovery truth にはしないが、ログ専用にも落とさない
 
 初期ラインとして、runtime ハード条件は次を満たす場合に recovery trigger を許可する。
 
@@ -50,6 +50,8 @@ secondary recovery の truth は **runtime first / merged assists** とする。
 - `secondaryTrackFound === true`
 - `secondaryActiveCues === 0`
 - 上記が **2 秒以上継続**
+
+このとき `MergedSubtitleHealth.derived.*` は、runtime 条件を置き換えるためではなく、**runtime 条件で recovery 候補になったケースに対して recover / forceRebind / probe の強さを補助的に振り分けるための派生情報**として扱う。
 
 ### overlay / panel / history のざっくり責務
 
@@ -76,7 +78,7 @@ Phase J では次を主題とする。
 - `docs/issue-32-subtitle-sync-design.md` の JSDoc / 型名・フィールド名を、`subtitle-blocks` / `overlay-block-resolver` / `subtitle-view-resolver` / `subtitle-block-resolver` / `cue-controller` の現行実装に同期する
 - runtime ハード条件の式と継続秒数 N を、large seek 代表ケースを踏まえて確定する
 - `MergedSubtitleHealth.derived.*` の役割（recover 強化・forceRebind・probe 条件）を固定する
-- SubtitleBlockSequence / UiSubtitleView / PanelBlock[] の 3 段構成に沿って current 系 cleanup を開始する
+- `SubtitleBlockSequence / UiSubtitleView / PanelBlock[]` の 3 段構成に沿って current 系 cleanup を開始する
 - panel history を `blocks.past` / `PanelBlock[]` 由来へ寄せる初期計画を立てる
 - `subtitleHistory` の read/write を current / fallback から外し、history 描画専用へ縮小する最初のステップを決める
 
@@ -132,6 +134,7 @@ shape は次とする。
 
 - `state`: `past/current/future` の位置づけ
 - `stable`: seek / track 再解決 / secondary 後追いで再評価する余地
+- `meta.sequenceHealth`: current block と直前 current block の組み合わせから、secondary 欠落の継続有無を観測する補助 health 情報
 
 block の基本 key は少なくとも次の 3 要素を組み合わせる。
 
@@ -140,6 +143,9 @@ function buildBlockKey(block) {
   return `${block.startTime}::${block.endTime}::${block.primaryText}`;
 }
 ```
+
+実装上は `startTime` / `endTime` を固定小数点化し、`primaryText` を正規化した key を使う。  
+docs 上では概念表現として上記の 3 要素を示す。
 
 ### current block / current view
 
@@ -161,15 +167,15 @@ function buildBlockKey(block) {
  */
 ```
 
-`UiSubtitleView` は **current 表示用の共通 view** であり、panel list / history 全体の唯一 truth 列ではない。  
-panel list / history は `PanelBlock[]` を truth とする。
+`UiSubtitleView` は **current 表示用の共通 view** であり、実装上は `currentBlock` / `displayBlocks` / line 配列 / 可視維持フラグを持つ正規化 shape にそろえる。  
+panel list / history 全体の唯一 truth 列ではなく、panel list / history は `PanelBlock[]` を truth とする。
 
 ### same-window / 表示グループ
 
 - **same-window:** 同じ `startTime + endTime` を持つ複数 block
 - **表示グループ:** overlay / panel で same-window を 1 つの表示単位として扱うまとまり
   - key: `${startTime}::${endTime}`
-  - group 内で main/sub の行配列を組み立てる -順序維持＋内容重複の dedupe を行う
+  - group 内で main/sub の行配列を組み立て、順序維持＋内容重複の dedupe を行う
 
 ### overlay view（OverlayView）
 
@@ -190,7 +196,7 @@ panel list / history は `PanelBlock[]` を truth とする。
 ```
 
 - `mainLines` / `subLines`: same-window group 内の順序維持＋dedupe済み行
-- `shouldKeepVisible`: `isEmpty === true`でも clear せず維持すべき場合のフラグ
+- `shouldKeepVisible`: `isEmpty === true` でも clear せず維持すべき場合のフラグ
 - clear 条件は `isEmpty && !shouldKeepVisible` に限定する
 
 overlay は通常 `currentBlock` に基づく 2 行表示を行うが、same-window / large seek では `OverlayView` を描画単位とする。
@@ -265,9 +271,13 @@ runtime / current cue / sequence health を統合した health 情報。
 
 派生値の役割:
 
+- `primaryHealthy`: primary 側が通常動作しているかの補助判定
 - `secondaryHealthy`: 現在の secondary 状態の健康判定
-- `shouldRecoverSecondary`: 軽量 recovery を試すべきか
-- `shouldForceSecondaryRebind`: rebind を伴う強い recovery に進むべきか
+- `shouldRecoverSecondary`: 軽量 recovery を試すべきかの補助判定
+- `shouldForceSecondaryRebind`: rebind を伴う強い recovery に進むべきかの補助判定
+
+ここでの `derived.*` は recovery trigger の唯一条件ではない。  
+runtime 条件で「secondary が止まっている可能性が高い」と判断した後に、recover 強化 / forceRebind / probe を振り分けるための **merged assists** として扱う。
 
 ---
 
@@ -317,7 +327,7 @@ same-window captions では、panel 上で「最初の行だけ再生マーク�
 これは、
 
 - strict current（truth）
-- same-window window current（UX上の「今この窓を再生中」）
+- same-window window current（UX 上の「今この窓を再生中」）
 - sequential current（窓内 line-level current）
 
 の 3 つを `PanelBlock` 側で分けて扱うことで解消する方針とする。
@@ -347,7 +357,7 @@ same-window captions では、panel 上で「最初の行だけ再生マーク�
 
 - docs と現行実装の JSDoc / 型名・フィールド名を同期する
 - runtime ハード条件と `MergedSubtitleHealth.derived.*` の役割を固定する
-- SubtitleBlockSequence / UiSubtitleView / PanelBlock[] の 3 段構成に沿って current cleanup を開始し、history を `blocks.past` 由来へ寄せる
+- `SubtitleBlockSequence / UiSubtitleView / PanelBlock[]` の 3 段構成に沿って current cleanup を開始し、history を `blocks.past` 由来へ寄せる
 
 ---
 
@@ -379,17 +389,17 @@ showSidebar の変更は UI state として扱い、subtitle pipeline restart �
 - `cue-controller.js`  
   primary / secondary cuechange 本流 / Sequence 再構築 / merged health 集約
 - `subtitle-blocks.js`  
-  SubtitleBlockSequence 構築 / secondary matching / sequenceHealth
+  `SubtitleBlockSequence` 構築 / secondary matching / `sequenceHealth`
 - `subtitle-view-resolver.js`  
-  current 系共通 view（UiSubtitleView）生成
+  current 系共通 view（`UiSubtitleView`）生成
 - `overlay-block-resolver.js`  
-  same-window group → OverlayView 生成
+  same-window group → `OverlayView` 生成
 - `overlay-controller.js`  
-  OverlayView の描画と clear 条件
+  `OverlayView` の描画と clear 条件
 - `subtitle-block-resolver.js`  
-  Sequence → PanelBlock[]（displayBlocks）への正規化と派生フラグ付与
+  Sequence → `PanelBlock[]`（`displayBlocks`）への正規化と派生フラグ付与
 - `panel-renderer.js` / `panel-ui.js`  
-  PanelBlock[] の描画と panel UI 側の secondary 読み取り
+  `PanelBlock[]` の描画と panel UI 側の secondary 読み取り
 - `subtitle-track-resolver.js`  
   secondary track 候補解決と観測
 - `debug-logger.js` / `debug-panel.js`  
