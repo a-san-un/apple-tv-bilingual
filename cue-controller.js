@@ -1,6 +1,15 @@
+/*
+ * cue-controller.js
+ * - primary / secondary の cue change を受けて現在の字幕状態を更新する
+ * - subtitle blocks と current block を組み立て、overlay / panel 描画へつなぐ
+ * - secondary 欠落の観測と再同期、nearby rebuild の 1 回保護もここで扱う
+ */
+
 (() => {
   const root = (window.ATVB = window.ATVB || {});
 
+  // cue-controller 全体の依存を受け取り、
+  // cue change・subtitle blocks・overlay / panel 更新をまとめて扱う中核を作る。
   function createCueController({
     state,
     logContent,
@@ -33,11 +42,13 @@
     let secondaryTrackCleanup = null;
     let secondaryTrackBound = null;
     let lastMergedSubtitleHealth = null;
+    let nearbyRebuildGuard = null;
 
     const SECONDARY_RECOVERY_WINDOW_MS = 1000;
     const SECONDARY_FORCE_REBIND_MISS_COUNT = 2;
     const SECONDARY_RECOVERY_MISS_LIMIT = 8;
 
+    // lane ごとの欠落状態を保持する初期オブジェクトを作る。
     function createLaneState(lane) {
       return {
         lane,
@@ -56,6 +67,7 @@
       secondary: createLaneState("secondary"),
     };
 
+    // 欠落監視に使う lane state を初期状態へ戻す。
     function resetLaneState(laneState) {
       laneState.isMissing = false;
       laneState.missingSince = 0;
@@ -65,6 +77,7 @@
       laneState.lastDecision = "idle";
     }
 
+    // 現在の観測結果で lane state を更新する。
     function updateLaneState(laneState, { now, healthy, isMissing }) {
       laneState.healthy = healthy === true;
       laneState.isMissing = isMissing === true;
@@ -86,6 +99,7 @@
       return laneState;
     }
 
+    // secondary 欠落の継続時間と回数から、待機 / recover / force-rebind / terminated を判定する。
     function evaluateSecondaryRecovery({
       now,
       runtime,
@@ -144,10 +158,8 @@
 
       const shouldRecoverSecondary =
         secondaryLane.missingDurationMs >= SECONDARY_RECOVERY_WINDOW_MS &&
-        (
-          derived?.shouldRecoverSecondary === true ||
-          derived?.primaryHealthy === true
-        );
+        (derived?.shouldRecoverSecondary === true ||
+          derived?.primaryHealthy === true);
 
       if (!shouldRecoverSecondary) {
         secondaryLane.lastDecision = "idle";
@@ -190,10 +202,12 @@
       };
     }
 
+    // 現在 bind 済みの secondary track を返す。
     function getBoundSecondaryTrack() {
       return secondaryTrackBound;
     }
 
+    // bind 済みの secondary track listener を解除する。
     function unbindSecondarySubtitleTrack() {
       if (secondaryTrackCleanup) {
         secondaryTrackCleanup();
@@ -202,6 +216,7 @@
       secondaryTrackBound = null;
     }
 
+    // secondary cue change を受けて secondary 表示と primary 側更新を進める。
     function onCueChange(track) {
       if (track && DEBUG_SECONDARY_SUBS) {
         logContent(
@@ -217,6 +232,7 @@
       onPrimaryCueChange();
     }
 
+    // secondary track を bind して cuechange 監視を始める。
     function bindSecondarySubtitleTrack(track) {
       if (!track) return;
 
@@ -249,6 +265,7 @@
       onCueChange(track);
     }
 
+    // secondary track の再解決と再同期を行い、必要なら nearby rebuild まで進める。
     function syncSecondarySubtitleTrack(
       video,
       requestedLang,
@@ -300,6 +317,7 @@
       rebuildCurrentSceneSubtitleBlocks();
     }
 
+    // runtime / current cue / sequence から merged subtitle health を組み立てる。
     function buildMergedSubtitleHealth({
       primaryTrack,
       secondaryTrack,
@@ -343,31 +361,23 @@
 
       const primaryHealthy =
         runtime.primaryTrackFound &&
-        (
-          runtime.primaryActiveCues > 0 ||
+        (runtime.primaryActiveCues > 0 ||
           currentCue.hasPrimaryText ||
-          sequence.hasCurrentPrimary
-        );
+          sequence.hasCurrentPrimary);
 
       const secondaryHealthy =
         runtime.secondaryTrackFound &&
-        (
-          runtime.secondaryActiveCues > 0 ||
+        (runtime.secondaryActiveCues > 0 ||
           currentCue.hasSecondaryText ||
-          sequence.hasCurrentSecondary
-        );
+          sequence.hasCurrentSecondary);
 
-      const sequenceSuggestsSecondaryGap =
-        sequence.currentPairMissingSecondary;
+      const sequenceSuggestsSecondaryGap = sequence.currentPairMissingSecondary;
 
       const shouldRecoverSecondary =
-        primaryHealthy &&
-        !secondaryHealthy &&
-        sequenceSuggestsSecondaryGap;
+        primaryHealthy && !secondaryHealthy && sequenceSuggestsSecondaryGap;
 
       const shouldForceSecondaryRebind =
-        shouldRecoverSecondary &&
-        sequence.consecutiveCurrentMissingSecondary;
+        shouldRecoverSecondary && sequence.consecutiveCurrentMissingSecondary;
 
       return {
         runtime,
@@ -382,6 +392,31 @@
       };
     }
 
+    // nearby rebuild の 1 回保護を消費して解除する。
+    function consumeNearbyRebuildGuard() {
+      nearbyRebuildGuard = null;
+    }
+
+    // nearby rebuild 直後の current block を次の 1 回だけ保護する。
+    function armNearbyRebuildGuard(currentBlock) {
+      nearbyRebuildGuard = {
+        consumeOnNextPrimaryCueChange: true,
+        issuedAt: Date.now(),
+        blockStartTime: currentBlock?.startTime ?? null,
+        blockEndTime: currentBlock?.endTime ?? null,
+        sourceReason: currentBlock?.sourceReason ?? "nearbyRebuild",
+      };
+    }
+
+    // 次の primary cue change で nearby rebuild の current を優先するか判定する。
+    function shouldPreserveNearbyRebuildCurrentBlock() {
+      return Boolean(
+        nearbyRebuildGuard?.consumeOnNextPrimaryCueChange &&
+        state.currentSubtitleBlock?.sourceReason === "nearbyRebuild",
+      );
+    }
+
+    // 現在時刻近傍の cue だけで subtitle blocks を組み直し、current block を更新する。
     function rebuildCurrentSceneSubtitleBlocks() {
       const currentTime = getCurrentTime();
       const primaryTrack = getPrimaryTrack();
@@ -390,11 +425,51 @@
       const allPrimaryCues = getPrimaryTrackCues();
       const allSecondaryCues = getSecondaryTrackCues();
 
+      const pCue = getCurrentCue(primaryTrack, currentTime);
+      const pText = cleanCueText(pCue);
+      const sCue = getCurrentCue(secondaryTrack, currentTime);
+      const sText = cleanCueText(sCue);
+
       if (!Array.isArray(allPrimaryCues) || allPrimaryCues.length === 0) {
+        const currentBlock = {
+          startTime: pCue?.startTime ?? null,
+          endTime: pCue?.endTime ?? null,
+          primaryText: pText || "",
+          secondaryText: sText || "",
+          hasPrimarySignal: Boolean(pText),
+          hasSecondarySignal: Boolean(sText),
+          sourceReason: "nearbyRebuild:currentOnly",
+          updatedAt: Date.now(),
+        };
+
+        setCurrentSubtitleBlock(currentBlock, "nearbyRebuild");
+        armNearbyRebuildGuard(currentBlock);
+
+        logContent("current subtitle block updated", {
+          reason: "nearbyRebuild:currentOnly",
+          source: "nearbyRebuild",
+          sourceReason: currentBlock?.sourceReason ?? null,
+          guardActive: Boolean(
+            nearbyRebuildGuard?.consumeOnNextPrimaryCueChange,
+          ),
+          startTime: currentBlock?.startTime ?? null,
+          endTime: currentBlock?.endTime ?? null,
+          hasPrimarySignal: Boolean(currentBlock?.hasPrimarySignal),
+          hasSecondarySignal: Boolean(currentBlock?.hasSecondarySignal),
+        });
+
+        state.currentSubtitleView = null;
+        updateOverlayFromBlock(currentBlock);
+
+        if (secondaryTrack) {
+          renderSecondarySubtitle(sText, secondaryTrack);
+        }
+
+        renderPanel();
+
         return;
       }
 
-      // 現在時刻に最も近い primary cue を探す
       let closestIndex = 0;
       let closestDelta = Number.POSITIVE_INFINITY;
       for (let i = 0; i < allPrimaryCues.length; i++) {
@@ -409,7 +484,6 @@
         }
       }
 
-      // 前後 1〜2 個ぶんを対象にする（現在行 ±1）
       const windowStart = Math.max(0, closestIndex - 1);
       const windowEnd = Math.min(allPrimaryCues.length, closestIndex + 2);
       const windowPrimaryCues = allPrimaryCues.slice(windowStart, windowEnd);
@@ -420,6 +494,15 @@
         typeof blockApi.buildSubtitleBlockSequence === "function";
 
       if (!hasBuildSubtitleBlockSequence) {
+        logContent("nearby rebuild skipped", {
+          reason: "subtitle_blocks_api_missing",
+          primaryTrackFound: Boolean(primaryTrack),
+          primaryCuesLength: allPrimaryCues.length,
+          secondaryTrackFound: Boolean(secondaryTrack),
+          secondaryCuesLength: Array.isArray(allSecondaryCues)
+            ? allSecondaryCues.length
+            : -1,
+        });
         return;
       }
 
@@ -435,10 +518,6 @@
       setSubtitleBlocks(blockResult, "rebuildCurrentScene");
 
       const sequenceHealth = blockResult?.meta?.sequenceHealth || null;
-      const pCue = getCurrentCue(primaryTrack, currentTime);
-      const pText = cleanCueText(pCue);
-      const sCue = getCurrentCue(secondaryTrack, currentTime);
-      const sText = cleanCueText(sCue);
 
       const mergedSubtitleHealth = buildMergedSubtitleHealth({
         primaryTrack,
@@ -452,19 +531,32 @@
 
       lastMergedSubtitleHealth = mergedSubtitleHealth;
 
-      const currentBlock =
-        getCurrentSubtitleBlockFromSequence(blockResult) || {
-          startTime: pCue?.startTime ?? null,
-          endTime: pCue?.endTime ?? null,
-          primaryText: pText || "",
-          secondaryText: sText || "",
-          hasPrimarySignal: Boolean(pText),
-          hasSecondarySignal: Boolean(sText),
-          sourceReason: "rebuildCurrentScene:fallback",
-          updatedAt: Date.now(),
-        };
+      const currentBlock = getCurrentSubtitleBlockFromSequence(blockResult) || {
+        startTime: pCue?.startTime ?? null,
+        endTime: pCue?.endTime ?? null,
+        primaryText: pText || "",
+        secondaryText: sText || "",
+        hasPrimarySignal: Boolean(pText),
+        hasSecondarySignal: Boolean(sText),
+        sourceReason: "nearbyRebuild:fallback",
+        updatedAt: Date.now(),
+      };
 
-      setCurrentSubtitleBlock(currentBlock, "rebuildCurrentScene");
+      currentBlock.sourceReason = "nearbyRebuild";
+
+      setCurrentSubtitleBlock(currentBlock, "nearbyRebuild");
+      armNearbyRebuildGuard(currentBlock);
+
+      logContent("current subtitle block updated", {
+        reason: "nearbyRebuild",
+        source: "nearbyRebuild",
+        sourceReason: currentBlock?.sourceReason ?? null,
+        guardActive: Boolean(nearbyRebuildGuard?.consumeOnNextPrimaryCueChange),
+        startTime: currentBlock?.startTime ?? null,
+        endTime: currentBlock?.endTime ?? null,
+        hasPrimarySignal: Boolean(currentBlock?.hasPrimarySignal),
+        hasSecondarySignal: Boolean(currentBlock?.hasSecondarySignal),
+      });
 
       const overlaySequence = getSubtitleBlockSequence();
       const subtitleViewResolver = root.subtitleViewResolver || null;
@@ -493,6 +585,7 @@
       renderPanel();
     }
 
+    // primary cue change を基準に full rebuild を行い、必要なら 1 回だけ nearby current を優先する。
     function onPrimaryCueChange() {
       logContent("cue-controller onPrimaryCueChange entered", {
         hasATVB: !!window.ATVB,
@@ -584,20 +677,58 @@
         }
       }
 
-      const currentBlock =
-        getCurrentSubtitleBlockFromSequence(blockResult) || {
-          startTime: pCue?.startTime ?? null,
-          endTime: pCue?.endTime ?? null,
-          primaryText: pText || "",
-          secondaryText: sText || "",
-          hasPrimarySignal: Boolean(pText),
-          hasSecondarySignal: Boolean(sText),
-          sourceReason: "onPrimaryCueChange:fallback",
-          updatedAt: Date.now(),
-        };
+      const currentBlock = getCurrentSubtitleBlockFromSequence(blockResult) || {
+        startTime: pCue?.startTime ?? null,
+        endTime: pCue?.endTime ?? null,
+        primaryText: pText || "",
+        secondaryText: sText || "",
+        hasPrimarySignal: Boolean(pText),
+        hasSecondarySignal: Boolean(sText),
+        sourceReason: "onPrimaryCueChange:fallback",
+        updatedAt: Date.now(),
+      };
 
-      /* truth blocks から overlay view を解決して描画する。 */
-      setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange");
+      const preserveNearbyCurrent = shouldPreserveNearbyRebuildCurrentBlock();
+      const blockForDisplay = preserveNearbyCurrent
+        ? state.currentSubtitleBlock
+        : currentBlock;
+
+      if (preserveNearbyCurrent) {
+        logContent("current subtitle block updated", {
+          reason: "onPrimaryCueChange:preserveNearbyRebuild",
+          source: "nearbyRebuild",
+          sourceReason: state.currentSubtitleBlock?.sourceReason ?? null,
+          guardActive: Boolean(
+            nearbyRebuildGuard?.consumeOnNextPrimaryCueChange,
+          ),
+          startTime: state.currentSubtitleBlock?.startTime ?? null,
+          endTime: state.currentSubtitleBlock?.endTime ?? null,
+          hasPrimarySignal: Boolean(
+            state.currentSubtitleBlock?.hasPrimarySignal,
+          ),
+          hasSecondarySignal: Boolean(
+            state.currentSubtitleBlock?.hasSecondarySignal,
+          ),
+        });
+      } else {
+        setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange");
+        logContent("current subtitle block updated", {
+          reason: "onPrimaryCueChange",
+          source: "primaryCueChange",
+          sourceReason: currentBlock?.sourceReason ?? null,
+          guardActive: Boolean(
+            nearbyRebuildGuard?.consumeOnNextPrimaryCueChange,
+          ),
+          startTime: currentBlock?.startTime ?? null,
+          endTime: currentBlock?.endTime ?? null,
+          hasPrimarySignal: Boolean(currentBlock?.hasPrimarySignal),
+          hasSecondarySignal: Boolean(currentBlock?.hasSecondarySignal),
+        });
+      }
+
+      if (nearbyRebuildGuard?.consumeOnNextPrimaryCueChange) {
+        consumeNearbyRebuildGuard();
+      }
 
       const overlaySequence = getSubtitleBlockSequence();
       const subtitleViewResolver = root.subtitleViewResolver || null;
@@ -616,7 +747,7 @@
       if (subtitleView) {
         updateOverlayFromView(subtitleView);
       } else {
-        updateOverlayFromBlock(currentBlock);
+        updateOverlayFromBlock(blockForDisplay);
       }
 
       if (secondaryTrack) {
