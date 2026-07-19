@@ -38,6 +38,7 @@
 - 影響範囲を追いやすくし、修正時の事故を減らす
 - 将来的に必要な単位だけ安全に実ファイルへ切り出せる状態を作る
 - subtitle sync / recovery の改善も、`content.js` への追記で吸収せず、controller / resolver / helper 側へ責務移送して進められる構造にする
+- `content.js` を「状態と判定の本体」ではなく、「薄い wiring / lifecycle 入口」に近づける
 
 ---
 
@@ -56,6 +57,7 @@
 - comments / section boundary を使って、まずは `content.js` 内で責務境界を見える化する
 - UI 見た目調整の issue は、分割ロードマップの主線とは分けて扱い、必要な補足だけを残す
 - subtitle sync / recovery の改善も、`content.js` に状態や分岐を足し続けるのではなく、`cue-controller.js` / resolver / health helper 側へ責務移送する
+- `content.js` に何かを足す前に、「本当に wiring か」「controller / resolver に置けないか」を先に確認する
 - `content.js` は最終的に、薄い wiring / bootstrap / lifecycle 入口として残すことを目標にする
 
 ---
@@ -127,6 +129,8 @@ overlay は UI shell の一部だが、panel と同じ表示条件・同じ見�
 - current / history / recovery の truth 判定は、可能な限り resolver / controller 側へ寄せる
 - 同じ recovery 条件を `content.js` と controller 側の両方で持たない
 - 「旧 recovery state を残したまま新 recovery state を追加する」形は避け、責務移送後は旧 state 参照を段階的に消す
+- large seek のような time-based 事実は `content.js` で拾ってよいが、その解釈と利用は controller 側に寄せる
+- nearby rebuild / current hold / primary-only terminated のような UI 安定化も、truth / controller / resolver を起点に扱う
 
 ---
 
@@ -161,9 +165,46 @@ overlay は UI shell の一部だが、panel と同じ表示条件・同じ見�
 
 ---
 
-## 4. 実装順と現在の主線
+## 4. `content.js` に残すもの / 残さないもの
 
-### 4.1 実装順
+### 4.1 残すもの
+
+`content.js` に残すのは、主に次の責務である。
+
+- Apple TV+ 再生画面への attach / detach
+- lifecycle 管理
+- bootstrap / cleanup の入口
+- observer / timer の起動と停止
+- settings / storage / message bridge の配線
+- controller / resolver / renderer の呼び出し配線
+- large seek 検知のような、再生イベントから得られる薄い事実の記録
+
+### 4.2 残さないもの
+
+最終的に `content.js` から減らしていく対象は次である。
+
+- subtitle sync / recovery の本体判定
+- health 集約
+- current truth の決定
+- history truth の決定
+- same-window の詳細な表示解決
+- panel / overlay の描画入力の組み立て
+- track 候補解決の詳細
+- fallback truth の常設ロジック
+
+### 4.3 例外の扱い
+
+完全移送がまだ難しい期間は、`content.js` に薄い bridge を残してよい。
+
+- ただし bridge は「呼び出すだけ」「時刻や event を渡すだけ」に留める
+- state を増やす場合は、controller 側へ移るまでの一時的な最小差分に限る
+- 一時 state を入れたら、次バッチで消す出口を必ず意識する
+
+---
+
+## 5. 実装順と現在の主線
+
+### 5.1 実装順
 
 1. 純関数と独立 logger を切り出す
 2. subtitle track resolver を切り出す
@@ -179,24 +220,59 @@ overlay は UI shell の一部だが、panel と同じ表示条件・同じ見�
 - observer / bootstrap の調整で recovery 問題を無理に吸収しない
 - `content.js` に暫定フラグや一時 state を足す前に、「controller 側へ移せないか」を先に確認する
 
-### 4.2 Phase E / Issue #32 の位置づけ
+### 5.2 Issue #32 の位置づけ
 
-- Phase E は、UI shell / binder / cue / observer / bootstrap の境界を維持しつつ、`content.js` 後半を整理して bootstrap 的な薄い入口へ寄せるフェーズである
-- [#20](../issues/20), [#21](../issues/21), [#24](../issues/24), [#26](../issues/26) は Phase E の一部として進める
-- Issue #32（subtitle sync / recovery）は、Phase E 後半〜Phase J にまたがる設計・実装タスクとして扱い、subtitle sync の truth / health / recovery 境界を controller / resolver 側へ寄せる
+- Issue #32 は、subtitle sync / recovery を直すだけの issue ではない
+- 主目的は、subtitle sync の truth / health / recovery 境界を整理しながら、`content.js` の責務とコード量を減らすことにある
+- そのため、large seek / nearby rebuild / secondary recovery の修正も、`content.js` への追記ではなく controller / resolver への責務移送を優先する
+- `content.js` に残すのは、large seek 検知や sync interval 呼び出しのような配線部分だけとする
 
-### 4.3 現在の主線（2026-07 時点）
+### 5.3 現在の主線（2026-07 時点）
 
-- #24 では `attachTracks` / observer / bootstrap / 再初期化周辺の安定化を進める
-- Issue #32 では subtitle sync / recovery の改善を `content.js` 追記ではなく controller / resolver 側へ責務移送する
+- `cue-controller.js` へ primary / secondary cuechange 本流を集める
+- `SubtitleBlockSequence` を truth source とし、panel / overlay / current / history の起点を統一する
+- `subtitle-view-resolver.js` / `subtitle-block-resolver.js` を current / panel の正式入口へ寄せる
 - secondary recovery の判定責務は `content.js` から `cue-controller.js` 側へ寄せる
 - large seek 時の secondary recovery は、runtime 主体の missing / reset / miss limit 付き retry として controller 側で扱う
+- large seek 直後の UI 安定化は、nearby rebuild と short-lived hold を controller 側で扱う
 - 今後の改善も、`content.js` に recovery state や分岐を増やす方向ではなく、controller / resolver / helper の責務分割で進める
 
 ---
 
-## 5. 注意
+## 6. 進め方のルール
+
+### 6.1 小さいステップ
+
+- 1 回の変更は、できるだけ 1 責務に絞る
+- 「構造整理」と「仕様変更」が両方入るなら、可能なら分ける
+- 大きい貼り替えより、差分の意味が追える単位を優先する
+
+### 6.2 確認順
+
+- まず既存コードの責務位置を確認する
+- 次に「この責務をどこへ移すか」を決める
+- その後に最小差分で差し替える
+- 最後に実機確認とログ観測で戻り道を残す
+
+### 6.3 削除のルール
+
+- 新経路が安定するまで、旧経路の即時全面削除はしない
+- ただし旧経路と新経路が二重で走る状態は長く残さない
+- 「もう読まれていない state / helper / fallback」は、確認できしだい次バッチで消す
+
+### 6.4 docs 同期
+
+- 設計の正本は `docs/issue-32-subtitle-sync-design.md`
+- 分割原則の正本はこの `docs/contentjs-split-roadmap.md`
+- 進捗と優先順位は `docs/dev-roadmap.md`
+- 実装スレ / セッションメモは正本ではなく、作業ログとして扱う
+
+---
+
+## 7. 注意
 
 - Issue の進捗・完了状態、現在の優先順位は `docs/dev-roadmap.md` を正本とする
 - subtitle sync / recovery の設計詳細と runtime 方針は `docs/issue-32-subtitle-sync-design.md` に寄せる
 - この文書では、個々の issue の完了判定ではなく、「`content.js` をどう安全に薄くしていくか」の観点に限定して扱う
+- `content.js` の行数を減らすこと自体は重要だが、より重要なのは **責務が正しい場所へ移っていること** である
+- 逆に、行数が少し減っても controller / resolver 側の境界が曖昧なら、この文書の目的には達していない

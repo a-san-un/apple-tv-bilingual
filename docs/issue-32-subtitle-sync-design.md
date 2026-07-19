@@ -17,13 +17,14 @@ Issue #32 では、Apple TV+ 再生画面における subtitle sync / recovery �
 
 ## 2. 問題定義
 
-Issue #32 で主に扱う問題は次の 3 つである。
+Issue #32 で主に扱う問題は次の 4 つである。
 
 - large seek 後に primary は進むが、secondary が missing のまま戻らない、または戻るまでに時間がかかることがある
 - current / history / live cue / resolved block の境界が曖昧だと、過去 secondary の混入や履歴重複が起きやすい
 - overlay / panel が単一 current block 依存のままだと、same-window captions や seek 直後の片側欠落を自然に扱いにくい
+- large seek 直後の truth 再構築と current 維持が弱いと、一時的に current が空、または片側だけの不自然な block に落ちやすい
 
-現在の主課題は「secondary がまったく戻らない」ことの切り分けだけではなく、**戻るまでの復帰ラグを短くすること**である。
+現在の主課題は「secondary がまったく戻らない」ことの切り分けだけではなく、**戻るまでの復帰ラグを短くすること**と、**戻らない区間を primary-only で静かに処理すること**である。
 
 ---
 
@@ -54,12 +55,15 @@ subtitle UI の正解台帳は **`SubtitleBlockSequence`** に一本化する。
 /**
  * @typedef {Object} SubtitleBlock
  * @property {string} key
- * @property {number} startTime
- * @property {number} endTime
+ * @property {number | null} startTime
+ * @property {number | null} endTime
  * @property {string} primaryText
  * @property {string} secondaryText
  * @property {SubtitleState} state
  * @property {boolean} stable
+ * @property {boolean} hasPrimarySignal
+ * @property {boolean} hasSecondarySignal
+ * @property {string} [sourceReason]
  */
 
 /**
@@ -71,7 +75,6 @@ subtitle UI の正解台帳は **`SubtitleBlockSequence`** に一本化する。
  * @property {boolean} currentPairMissingSecondary
  * @property {boolean} previousPairMissingSecondary
  * @property {boolean} consecutiveCurrentMissingSecondary
- * @property {boolean} shouldRecoverSecondary
  */
 
 /**
@@ -96,6 +99,7 @@ subtitle UI の正解台帳は **`SubtitleBlockSequence`** に一本化する。
 - current block を UI 向けに正規化する
 - line 配列、可視維持、empty 判定をまとめる
 - panel list / history 全体の truth ではない
+- large seek 直後には short-lived hold view を一時的に持つことがある
 
 ```js
 /**
@@ -107,6 +111,7 @@ subtitle UI の正解台帳は **`SubtitleBlockSequence`** に一本化する。
  * @property {boolean} isStable
  * @property {boolean} shouldKeepVisible
  * @property {boolean} isEmpty
+ * @property {string} [sourceReason]
  */
 ```
 
@@ -122,8 +127,8 @@ subtitle UI の正解台帳は **`SubtitleBlockSequence`** に一本化する。
 /**
  * @typedef {Object} PanelBlock
  * @property {string} key
- * @property {number} startTime
- * @property {number} endTime
+ * @property {number | null} startTime
+ * @property {number | null} endTime
  * @property {string} primary
  * @property {string} secondary
  * @property {string[]} mainLines
@@ -158,6 +163,7 @@ secondary recovery の truth は **runtime first / merged assists** とする。
 - `MergedSubtitleHealth.derived.*` は recover / forceRebind / probe の補助判断に使う
 - merged health を唯一の recovery truth にはしない
 - observer は recovery 本体を持たず、再評価トリガだけを持つ
+- recovery 本線は **sync interval → controller 判定 → truth rebuild → UI redraw** の順で進める
 
 ### 4.2 runtime ハード条件
 
@@ -190,7 +196,8 @@ secondary recovery の truth は **runtime first / merged assists** とする。
  *   primaryTextLength: number,
  *   secondaryTextLength: number,
  *   hasPrimaryText: boolean,
- *   hasSecondaryText: boolean
+ *   hasSecondaryText: boolean,
+ *   hasFreshCurrentPrimary?: boolean
  * }} currentCue
  * @property {{
  *   hasCurrentBlock: boolean,
@@ -217,7 +224,30 @@ secondary recovery の truth は **runtime first / merged assists** とする。
 - `shouldRecoverSecondary`: 軽量 recovery を試すべきかの補助判定
 - `shouldForceSecondaryRebind`: rebind を伴う強い recovery に進むべきかの補助判定
 
-### 4.4 large seek 時の扱い
+### 4.4 lane state
+
+recovery の実行状態は lane state で持つ。
+
+- `primary` / `secondary` の lane state を同型で持つ
+- 現時点で実行対象は secondary lane のみとする
+- lane state は `healthy` / `isMissing` / `missingSince` / `missingDurationMs` / `missCount` / `terminated` / `lastDecision` を持つ
+- `terminated` は「この seek window / blockRange では secondary recovery を打ち切る」意味を持つ
+
+```js
+/**
+ * @typedef {Object} SubtitleLaneState
+ * @property {"primary" | "secondary"} lane
+ * @property {boolean} healthy
+ * @property {boolean} isMissing
+ * @property {number} missingSince
+ * @property {number} missingDurationMs
+ * @property {number} missCount
+ * @property {boolean} terminated
+ * @property {"idle" | "recover" | "force-rebind" | "terminated"} lastDecision
+ */
+```
+
+### 4.5 large seek 時の扱い
 
 large seek 時は、secondary recovery を miss limit 付きの runtime retry として扱う。
 
@@ -234,7 +264,19 @@ Phase J の現行調整では、次を暫定の運用値とする。
 - force-rebind 開始: 2 回目
 - miss limit: 8 回
 
-これらの値は調整対象だが、**無限 retry を避けつつ、戻るケースには再挑戦を許す** ことが設計意図である。
+これらの値は調整対象だが、**無限 retry を避けつつ、戻るケースには再挑戦を許す**ことが設計意図である。
+
+### 4.6 large seek 直後の truth 保護
+
+large seek 直後は、secondary sync 後に **近傍 truth rebuild** と **short-lived hold** を許す。
+
+- `content.js` 側は large seek を検知し、`lastLargeSeekAt` を記録する
+- `cue-controller.js` 側は `lastLargeSeekAt` を参照し、短い seek window の間だけ nearby hold を利用できる
+- hold は truth source ではなく、large seek 直後の UI 空白を避けるための一時 view である
+- hold / guard は latest-only とし、新しい nearby rebuild が来たら古い保護は上書きする
+- hold は次の `onPrimaryCueChange()` で 1 回だけ使い、その後は通常の truth 解決に戻す
+
+現在の first cut では、large seek 後の短時間だけ `nearbyRebuildHold` を current 表示に使い、truth 本体の書き換えは行わない。
 
 ---
 
@@ -271,6 +313,7 @@ panel は `PanelBlock[]` を描画入力とする。
 - 過去 / 現在 / 未来を同じ列で表示する
 - same-window group に対して `isWindowCurrent` / `isPanelEmphasized` / `isSequentialCurrent` を付与する
 - panel current と truth current は分離して扱う
+- large seek 直後の hold は panel list の truth を書き換えず、current 表示の短期補助としてのみ使う
 
 ### 5.3 history
 
@@ -279,6 +322,14 @@ history は最終的に `blocks.past` 由来へ縮退させる。
 - `subtitleHistory` は移行期間の補助構造とする
 - history の追加契機は「block key が変わったとき」の 1 回だけとする
 - same-window 再評価や secondary 後追いでは追加しない
+
+### 5.4 primary-only 区間
+
+secondary recovery が terminated に入った seek window では、UI は primary-only 区間として扱う。
+
+- primary 側 truth がある限り、overlay / panel current を静的に維持する
+- secondary missing を理由に current 全体を空へ落とさない
+- secondary 復帰後は通常の current block / view 解決へ戻す
 
 ---
 
@@ -292,6 +343,7 @@ history は最終的に `blocks.past` 由来へ縮退させる。
 - sync interval ベースの呼び出し
 - controller の戻り値受け取り
 - bootstrap / cleanup / UI 連携
+- large seek の検知と時刻記録
 
 `content.js` に recovery state や判定分岐を足し続ける方針は取らない。
 
@@ -305,6 +357,7 @@ history は最終的に `blocks.past` 由来へ縮退させる。
 - lane state / evaluateSecondaryRecovery
 - secondary recovery 判定
 - missCount / terminated 管理
+- nearby rebuild / hold guard / seek window 判定
 
 ### 6.3 resolver / helper
 
