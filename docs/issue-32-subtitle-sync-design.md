@@ -46,12 +46,34 @@ secondary recovery の truth は **runtime first / merged assists** とする。
 初期ラインとして、runtime ハード条件は次を満たす場合に recovery trigger を許可する。
 
 - `hasFreshCurrentPrimary === true`
+  - 初期定義: `runtime.primaryActiveCues > 0` を優先し、必要なら `currentCue.hasPrimaryText === true` を補助条件として扱う
 - `currentSecondaryTextLength === 0`
+  - `currentCue.secondaryTextLength === 0`
 - `secondaryTrackFound === true`
+  - `runtime.secondaryTrackFound === true`
 - `secondaryActiveCues === 0`
+  - `runtime.secondaryActiveCues === 0`
 - 上記が **2 秒以上継続**
 
+継続秒数 N（初期値 2 秒）の計測は、**sync interval 側**で行う。  
+`buildMergedSubtitleHealth()` は runtime / current cue / sequence の瞬間状態をまとめるが、「同じ runtime 条件が何秒継続したか」の管理と recovery 実行責務は sync interval 側に置く。
+
 このとき `MergedSubtitleHealth.derived.*` は、runtime 条件を置き換えるためではなく、**runtime 条件で recovery 候補になったケースに対して recover / forceRebind / probe の強さを補助的に振り分けるための派生情報**として扱う。
+
+初期整理として、`derived.*` の役割は次のように置く。
+
+- `primaryHealthy`
+  - primary 側が通常動作しているかの補助判定
+  - secondary recovery を考える前提条件として使う
+- `secondaryHealthy`
+  - secondary 側が現在正常に流れているかの補助判定
+  - runtime 条件上は「止まっている疑い」があっても、merged 上でまだ健全と見なせるかを確認する
+- `shouldRecoverSecondary`
+  - runtime ハード条件が成立したケースで、軽量 recovery を試すべきかの補助判定
+- `shouldForceSecondaryRebind`
+  - runtime ハード条件が成立したケースで、rebind を伴う強い recovery に進むべきかの補助判定
+
+probe は、runtime 条件は揃っているが rebind までは上げたくないケースの観測補助として使う。
 
 ### overlay / panel / history のざっくり責務
 
@@ -81,6 +103,7 @@ Phase J では次を主題とする。
 - `SubtitleBlockSequence / UiSubtitleView / PanelBlock[]` の 3 段構成に沿って current 系 cleanup を開始する
 - panel history を `blocks.past` / `PanelBlock[]` 由来へ寄せる初期計画を立てる
 - `subtitleHistory` の read/write を current / fallback から外し、history 描画専用へ縮小する最初のステップを決める
+- sync interval 側で runtime 条件の継続秒数を管理し、recovery 実行責務を明確化する
 
 ---
 
@@ -353,11 +376,13 @@ same-window captions では、panel 上で「最初の行だけ再生マーク�
 - `subtitle-view-resolver.js` を current 系共通入口として置き、panel current / overlay current をここへ寄せる方針を確定した
 - `MergedSubtitleHealth` / secondary resolver / fallback recovery を導入し、large seek 後の secondary 不復帰を health / recovery / resolver の不整合として観測できるようにした
 
-### Phase J（予定）
+### Phase J（進行中）
 
-- docs と現行実装の JSDoc / 型名・フィールド名を同期する
-- runtime ハード条件と `MergedSubtitleHealth.derived.*` の役割を固定する
-- `SubtitleBlockSequence / UiSubtitleView / PanelBlock[]` の 3 段構成に沿って current cleanup を開始し、history を `blocks.past` 由来へ寄せる
+- docs と現行実装の JSDoc / 型名・フィールド名を同期した
+- runtime ハード条件と `MergedSubtitleHealth.derived.*` の役割を固定中
+- `SubtitleBlockSequence / UiSubtitleView / PanelBlock[]` の 3 段構成に沿って current cleanup の前提整理を進めている
+- history を `blocks.past` 由来へ寄せる前提を維持しつつ、`subtitleHistory` の縮退ステップを検討中
+- sync interval 側で runtime 条件の継続秒数を管理する方針を追加した
 
 ---
 
