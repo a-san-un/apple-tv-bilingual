@@ -85,7 +85,7 @@ probe は、runtime 条件は揃っているが rebind までは上げたくな�
 
 - **panel**
   - `PanelBlock[]` を描画入力とし、過去 / 現在 / 未来を同じ列で表示する
-  - same-window window に対して `isWindowCurrent` / `isPanelEmphasized` / `isSequentialCurrent` を付与し、UX 上の現在行（再生マーク行）を解決する
+  - same-window group に対して `isWindowCurrent` / `isPanelEmphasized` / `isSequentialCurrent` を付与し、UX 上の現在行（再生マーク行）を解決する
   - panel current と truth current（`state="current"`）は分離して扱う
 
 - **history**
@@ -109,7 +109,7 @@ Phase J では次を主題とする。
 
 large seek 時（シークバーで大きくジャンプした場合など）は、primary と secondary で挙動を分けて扱う。
 
-- same-window（近距離）の移動では、現状どおり primary / secondary 両方の signal と text length が安定していることを前提に、追加の recovery は行わない
+- **near seek（近距離シーク）** では、現状どおり primary / secondary 両方の signal と text length が安定していることを前提に、追加の recovery は行わない
 - large seek では、`secondaryTrackFound === true` でも `currentSecondaryTextLength === 0` のまま missCount が増え続けるケースがあるため、sync interval ベースの secondary recovery に上限を設ける
 - secondary recovery の missCount が一定回数（例: 5〜8 回）を超えた場合、その blockRange では secondary recovery を打ち切り、secondary が表示されない区間として扱う
 - recovery 打ち切り時には、内部 state（例: `secondaryRecoveryState`）に「この contentKey / blockRange では secondary を諦めた」ことを記録し、同じ blockRange に対する sync interval からの再 recovery は行わない
@@ -205,12 +205,15 @@ docs 上では概念表現として上記の 3 要素を示す。
 `UiSubtitleView` は **current 表示用の共通 view** であり、実装上は `currentBlock` / `displayBlocks` / line 配列 / 可視維持フラグを持つ正規化 shape にそろえる。  
 panel list / history 全体の唯一 truth 列ではなく、panel list / history は `PanelBlock[]` を truth とする。
 
-### same-window / 表示グループ
+### same-window / 表示グループ / near seek
 
 - **same-window:** 同じ `startTime + endTime` を持つ複数 block
 - **表示グループ:** overlay / panel で same-window を 1 つの表示単位として扱うまとまり
   - key: `${startTime}::${endTime}`
   - group 内で main/sub の行配列を組み立て、順序維持 + 内容重複の dedupe を行う
+- **near seek:** 再生位置の近距離移動（例: ±10秒〜±30秒程度）
+  - same-window とは別概念
+  - near seek の結果として same-window group の再評価が起こることはあるが、用語としては分ける
 
 ### overlay view（OverlayView）
 
@@ -259,7 +262,7 @@ panel list / history 用の表示列。
 ```
 
 - `state`: truth 上の `past/current/future`
-- `isWindowCurrent`: same-window window が現在表示 window に属するか
+- `isWindowCurrent`: same-window group が現在表示 group に属するか
 - `isPanelEmphasized`: panel 上で「今再生中」と見せる強調行か
 - `isSequentialCurrent`: group 内 line-level current として選ばれた行
 
@@ -341,7 +344,7 @@ large seek 代表ケースでは、次の状態が観測されている。
 
 ### 2. current truth に過去 secondary が混入しうる
 
-以前は `computeCurrentSubtitleBlock()` で `lastSecondaryText` や previous current の secondary を current truth に混ぜる経路があり、large seek 後や same-time で「今の字幕」ではない secondary が current に残りうる状態だった。
+以前は `computeCurrentSubtitleBlock()` で `lastSecondaryText` や previous current の secondary を current truth に混ぜる経路があり、large seek 後や same-window で「今の字幕」ではない secondary が current に残りうる状態だった。
 
 現在は history fallback を current truth から外す方向へ寄せているが、「runtime 現在表示に history を混ぜない」方針をモデルレベルでも明示する必要がある。
 
@@ -362,7 +365,7 @@ same-window captions では、panel 上で「最初の行だけ再生マーク�
 これは次の 3 つを `PanelBlock` 側で分けて扱うことで解消する方針とする。
 
 - strict current（truth）
-- same-window window current（UX 上の「今この窓を再生中」）
+- same-window group current（UX 上の「今この窓を再生中」）
 - sequential current（窓内 line-level current）
 
 ---
@@ -394,6 +397,7 @@ same-window captions では、panel 上で「最初の行だけ再生マーク�
 - history を `blocks.past` 由来へ寄せる前提を維持しつつ、`subtitleHistory` の縮退ステップを検討中
 - sync interval 側で runtime 条件の継続秒数を管理する方針を追加した
 - large seek 時の secondary recovery に missCount 上限を設け、一定回数で打ち切る方針を追加した
+- same-window と near seek の用語を分離し、テスト観点の混線を解消する必要がある
 
 ---
 
@@ -416,20 +420,88 @@ showSidebar の変更は UI state として扱い、subtitle pipeline restart �
 - overlay のメインだけ block / サブ欠落 / large seek 後の戻り方確認  
   → 両方を併用する
 
-### Phase J のテスト観点メモ
+### テスト観点メモ
 
-Phase J では、少なくとも次の 4 系統でテストを揃える。
+Phase J では、少なくとも次の 5 系統でテストを揃える。
 
 - `large seek（seekbar 大ジャンプ）`
-- `same-window（panel 内 block click を含む近距離移動）`
+- `same-window group（同じ startTime + endTime を持つ複数 block の表示）`
+- `near seek（近距離シーク。例: ±10秒〜±30秒）`
 - `10秒送り戻し（再生コントロールボタン）`
 - `panel list / history（通常再生での履歴・current block health）`
+
+#### ケースA: large seek + 10秒送り/戻し
+
+##### デバッグログ用テキストフィルター
+
+- merged subtitle health snapshot
+- secondary recovery trigger
+- cue-controller secondary recovery observed
+- secondary resolver probe
+- synced subtitle state snapshot
+
+##### テスト手順
+
+1. 再生ページを開き、拡張機能を有効にする
+2. デバッグパネルを開き、上のフィルター文字列を使ってログを確認できるようにしておく
+3. 通常再生で primary/secondary が両方表示されている状態を確認する
+4. シークバーで 3〜5 分以上離れた位置へ大きくシークする（large seek）
+5. large seek 後 10 秒ほど、overlay/panel の primary/secondary 表示とログを確認する
+6. そのまま 10秒送りを数回、10秒戻しを数回行い、同様に overlay/panel とログを確認する
+7. 気になったログを必要な分だけコピーしておく
+
+##### テスト結果メモ（例）
+
+- ケース: ケースA（large seek + 10秒送り/戻し）
+- 実施: 未完了 / 完了
+- 判定: OK / NG / 要確認
+- タイトル:
+- 操作内容:
+- UI観測:
+- 出たログ:
+- 出なかったログ:
+- メモ:
 
 large seek では、特に次を観測対象とする。
 
 - `secondary recovery trigger` が missCount 上限で止まるか
 - `terminated` / `missLimit` がログに出るか
 - panel / overlay が secondary 無し区間で primary-only 表示へ静かに移るか
+
+#### ケースB: near seek（近距離シーク。例: ±30秒以内）
+
+##### デバッグログ用テキストフィルター
+
+- merged subtitle health snapshot
+- cuechange track probe
+- subtitle blocks api snapshot
+- synced subtitle state snapshot
+
+##### テスト手順
+
+1. 再生ページを開き、拡張機能を有効にする
+2. デバッグパネルを開き、上のフィルター文字列を使ってログを確認できるようにしておく
+3. 現在位置付近（±20〜30秒程度）の範囲で、シークバーを少しずつ動かす（near seek）
+4. 各シークごとに、overlay/panel の primary/secondary 表示とログを軽く確認する
+5. near seek なのに recovery が頻繁に走っていないかだけ意識して見る
+
+##### テスト結果メモ（例）
+
+- ケース: ケースB（near seek）
+- 実施: 未完了 / 完了
+- 判定: OK / NG / 要確認
+- タイトル:
+- シーク範囲:
+- UI観測:
+- 出たログ:
+- 出なかったログ:
+- メモ:
+
+near seek では、特に次を観測対象とする。
+
+- recovery が不要に連続発火していないか
+- primary / secondary の current 表示が安定しているか
+- same-window group 再評価が起きても panel / overlay が不自然に飛ばないか
 
 ---
 
