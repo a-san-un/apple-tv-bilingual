@@ -432,6 +432,16 @@
 
   const { normalizeSubtitleText, cleanCueText } = vttDeps;
 
+  // future module controller slots
+  // playbackContext は最初に外出ししやすい候補として、
+  // controller 受け皿をここに置く前提で整理を進める。
+  const playbackContextController =
+    window.ATVB?.createPlaybackContextController?.({
+      state,
+      logContentSubtitle,
+      subtitleHistoryMaxPerContent: SUBTITLE_HISTORY_MAX_PER_CONTENT,
+    }) ?? null;
+
   const {
     buildSubtitleBlockSequence = () => ({
       blocks: [],
@@ -575,11 +585,27 @@
   // playback / content context coordinator helpers
   // content.js に残す上位入口として、再生対象の把握と content context の切替だけを扱う。
   // subtitle sync / recovery / DOM 描画の詳細は下位 helper 側へ寄せる。
+  //
+  // 将来の playbackContext module 候補:
+  // - getPlaybackContext
+  // - getVideoAndDialog
+  // - isPlaybackPageReady
+  // - getPlaybackContextLogPayload
+  // - resolvePlaybackContentKey
+  // - getCurrentVideoSrcKey
+  // - syncHistoryContextWithPlayback
+  //
+  // まずは context 解決と history context 切替だけを外出し候補にし、
+  // appendSubtitleHistory や panel / render 側責務はここへ混ぜない。
   // -----------------------------------------------------------------------------
 
   // 再生準備の判定に必要な DOM / track 状態を集める。
   // 字幕同期や UI 更新の判断はここで持たない。
   function getPlaybackContext() {
+    if (playbackContextController?.getPlaybackContext) {
+      return playbackContextController.getPlaybackContext();
+    }
+
     const video = document.querySelector("video");
     const playbackDialog = document.querySelector("dialog.playback-view");
     const playbackView = document.querySelector(
@@ -600,6 +626,10 @@
   }
 
   function getVideoAndDialog() {
+    if (playbackContextController?.getVideoAndDialog) {
+      return playbackContextController.getVideoAndDialog();
+    }
+
     const ctx = getPlaybackContext();
     if (!ctx.isPlaybackReady) return null;
 
@@ -609,10 +639,20 @@
   }
 
   function isPlaybackPageReady() {
+    if (playbackContextController?.isPlaybackPageReady) {
+      return playbackContextController.isPlaybackPageReady();
+    }
+
     return getPlaybackContext().isPlaybackReady;
   }
 
+  // playback context detection helpers
+  // playback readiness の観測結果を、logging や上位判断へ渡すための補助関数群。
   function getPlaybackContextLogPayload() {
+    if (playbackContextController?.getPlaybackContextLogPayload) {
+      return playbackContextController.getPlaybackContextLogPayload();
+    }
+
     const ctx = getPlaybackContext();
     return {
       hasVideo: Boolean(ctx.video),
@@ -623,7 +663,13 @@
     };
   }
 
+  // content key resolver helpers
+  // 現在の再生対象から安定した content key を組み立てるための下位 helper 群。
   function normalizeContentKeyPart(value) {
+    if (playbackContextController?.normalizeContentKeyPart) {
+      return playbackContextController.normalizeContentKeyPart(value);
+    }
+
     return String(value || "")
       .trim()
       .replace(/\s+/g, " ")
@@ -631,6 +677,10 @@
   }
 
   function normalizeMediaSourceKey(rawSrc) {
+    if (playbackContextController?.normalizeMediaSourceKey) {
+      return playbackContextController.normalizeMediaSourceKey(rawSrc);
+    }
+
     const src = String(rawSrc || "").trim();
     if (!src) return "";
 
@@ -643,6 +693,10 @@
   }
 
   function getPlaybackTitleKey() {
+    if (playbackContextController?.getPlaybackTitleKey) {
+      return playbackContextController.getPlaybackTitleKey();
+    }
+
     const rawTitle = String(document.title || "");
     const cleanedTitle = rawTitle
       .replace(/\s*[|｜-]\s*apple tv\+\s*$/i, "")
@@ -652,6 +706,10 @@
   }
 
   function resolvePlaybackContentKey(ctx = getPlaybackContext()) {
+    if (playbackContextController?.resolvePlaybackContentKey) {
+      return playbackContextController.resolvePlaybackContentKey(ctx);
+    }
+
     const mediaSourceKey = normalizeMediaSourceKey(
       ctx.video?.currentSrc || ctx.video?.getAttribute("src") || "",
     );
@@ -680,17 +738,31 @@
   }
 
   function getCurrentVideoSrcKey(video = state.video) {
+    if (playbackContextController?.getCurrentVideoSrcKey) {
+      return playbackContextController.getCurrentVideoSrcKey(video);
+    }
+
     return normalizeMediaSourceKey(
       video?.currentSrc || video?.getAttribute("src") || "",
     );
   }
 
+  // playback history context helpers
+  // content key ごとの履歴バケット切替と保存先選択だけを担当する。
   function getHistoryBucketForContentKey(contentKey) {
+    if (playbackContextController?.getHistoryBucketForContentKey) {
+      return playbackContextController.getHistoryBucketForContentKey(contentKey);
+    }
+
     if (!contentKey) return null;
     return state.subtitleHistoryStore.get(contentKey) || null;
   }
 
   function loadHistoryForContentKey(contentKey) {
+    if (playbackContextController?.loadHistoryForContentKey) {
+      return playbackContextController.loadHistoryForContentKey(contentKey);
+    }
+
     const bucket = getHistoryBucketForContentKey(contentKey);
     const items = Array.isArray(bucket?.items) ? bucket.items : [];
     state.subtitleHistory = items.slice(-SUBTITLE_HISTORY_MAX_PER_CONTENT);
@@ -700,6 +772,13 @@
     contentKey,
     history = state.subtitleHistory,
   ) {
+    if (playbackContextController?.saveHistoryForContentKey) {
+      return playbackContextController.saveHistoryForContentKey(
+        contentKey,
+        history,
+      );
+    }
+
     if (!contentKey) return;
     const items = Array.isArray(history)
       ? history.slice(-SUBTITLE_HISTORY_MAX_PER_CONTENT)
@@ -711,6 +790,13 @@
   }
 
   function switchHistoryContext(nextContentKey, reason = "unknown") {
+    if (playbackContextController?.switchHistoryContext) {
+      return playbackContextController.switchHistoryContext(
+        nextContentKey,
+        reason,
+      );
+    }
+
     const resolvedContentKey = nextContentKey || "content:unknown";
     const previousContentKey = state.currentContentKey;
 
@@ -734,6 +820,10 @@
   }
 
   function syncHistoryContextWithPlayback(reason = "unknown") {
+    if (playbackContextController?.syncHistoryContextWithPlayback) {
+      return playbackContextController.syncHistoryContextWithPlayback(reason);
+    }
+
     return switchHistoryContext(resolvePlaybackContentKey(), reason);
   }
 
@@ -3480,6 +3570,8 @@
     };
   }
 
+  // reinitialize entry helpers
+  // 現在の playback context を取り直し、再初期化入口へ渡すための補助関数群。
   function refreshPlaybackContextForReinitialize() {
     const found = getVideoAndDialog();
     if (found) {
@@ -3498,6 +3590,8 @@
     return reinitializeSubtitlePipeline(reason);
   }
 
+  // track resolve retry helpers
+  // video_changed 後に track 解決が遅れるケースだけを対象に retry を管理する。
   // [binder/cue: recovery] track resolve retry タイマーを管理する。
   function scheduleTrackResolveRetry(reason = "video_changed") {
     clearTrackResolveRetryTimers();
@@ -3553,6 +3647,8 @@
   // 設定を再読込し、現在の video / track に対して subtitle pipeline を再解決する。
   // UI 全体の teardown / rebuild までは行わない軽量な再初期化入口。
 
+  // reinitialize result / settings bridge helpers
+  // 再初期化結果の後処理と settings snapshot の state 反映を橋渡しする。
   function applyVideoChangedReinitializeResult(result) {
     if (!result) return;
 

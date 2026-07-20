@@ -41,6 +41,7 @@
         "runtime-observers.js",
         "playback-controls-layout.js",
         "settings-runtime.js",
+        "playbackContext.js",
         "content.js"
       ],
       "css": [
