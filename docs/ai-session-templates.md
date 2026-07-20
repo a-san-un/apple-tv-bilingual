@@ -206,7 +206,7 @@ fix: secondary runtime recovery 条件を Phase J 仕様に揃える (Issue #32)
 
 ## 実装メモ
 
-- [YYYY-MM-DD hh:mm] セッション #N
+- [YYYY-MM-DD] セッション #N
   - 検討したこと:
     - 箇条書きで 2〜4 行程度
   - 実施したこと:
