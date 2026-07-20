@@ -164,18 +164,34 @@ secondary recovery の truth は **runtime first / merged assists** とする。
 - merged health を唯一の recovery truth にはしない
 - observer は recovery 本体を持たず、再評価トリガだけを持つ
 - recovery 本線は **sync interval → controller 判定 → truth rebuild → UI redraw** の順で進める
+- controller では、runtime missing の入口判定と lane state の継続時間管理を主担当とし、merged assists は recovery 実行可否の補助判定として重ねる
 
 ### 4.2 runtime ハード条件
 
-少なくとも次を満たす場合に secondary recovery 候補とみなす。
+secondary recovery 候補は、**runtime missing を lane state へ入れる条件**として定義する。
+
+少なくとも次を満たす場合に、secondary を「recover を検討すべき missing」とみなす。
 
 - `hasFreshCurrentPrimary === true`
 - `currentSecondaryTextLength === 0`
 - `secondaryTrackFound === true`
 - `secondaryActiveCues === 0`
-- 上記が一定時間以上継続している
 
-継続秒数 N の計測と recovery 実行責務は **sync interval 側** に置く。
+実装上は、この条件を `secondaryRuntimeMissing` 相当の判定として扱い、secondary lane の `isMissing` に反映する。
+
+そのうえで、次の条件を満たしたときに recovery 実行候補へ進める。
+
+- 上記 missing が一定時間以上継続している
+- かつ、merged assists が「primary は動いており、secondary gap は recovery 対象である」と補助的に示している
+
+継続秒数 N の計測責務は **lane state / controller 側** に置く。  
+sync interval は controller 判定を定期的に駆動するが、missing の開始時刻・継続時間・missCount の管理は controller 内で行う。
+
+Phase J の現行採用値では、継続秒数 N は次とする。
+
+- `recovery window: 1000ms`
+
+この値は docs 上の確定値とし、large seek 後の secondary missing を過剰に即時 rebind せず、短い正常揺れを吸収するための待機時間とする。
 
 ### 4.3 merged assists
 
@@ -224,6 +240,17 @@ secondary recovery の truth は **runtime first / merged assists** とする。
 - `shouldRecoverSecondary`: 軽量 recovery を試すべきかの補助判定
 - `shouldForceSecondaryRebind`: rebind を伴う強い recovery に進むべきかの補助判定
 
+`derived.*` は runtime ハード条件の代替ではなく、**runtime missing が成立した後に、その missing が recovery 対象として妥当かを補助的に絞り込む層**とする。
+
+Phase J の現行実装では、概ね次の考え方で組み立てる。
+
+- `primaryHealthy`: primary track / primary cues / primary text / current primary block のいずれかで primary 側の生存を確認する
+- `secondaryHealthy`: secondary track / secondary cues / secondary text / current secondary block のいずれかで secondary 側の生存を確認する
+- `shouldRecoverSecondary`: `primaryHealthy && !secondaryHealthy && sequence.currentPairMissingSecondary`
+- `shouldForceSecondaryRebind`: `shouldRecoverSecondary && sequence.consecutiveCurrentMissingSecondary`
+
+つまり、runtime が missing を示し、sequence health も current pair 上の欠落を示しているときに、merged assists は「この gap は secondary recovery 対象である」と後押しする。
+
 ### 4.4 lane state
 
 recovery の実行状態は lane state で持つ。
@@ -232,6 +259,10 @@ recovery の実行状態は lane state で持つ。
 - 現時点で実行対象は secondary lane のみとする
 - lane state は `healthy` / `isMissing` / `missingSince` / `missingDurationMs` / `missCount` / `terminated` / `lastDecision` を持つ
 - `terminated` は「この seek window / blockRange では secondary recovery を打ち切る」意味を持つ
+- `isMissing` は runtime missing 判定の結果を保持する
+- `missingSince` / `missingDurationMs` は missing の継続時間を保持する
+- `missCount` は recovery 実行回数の上限管理に使う
+- `lastDecision` は `idle` / `recover` / `force-rebind` / `terminated` のどこにいるかを表す
 
 ```js
 /**
@@ -247,6 +278,17 @@ recovery の実行状態は lane state で持つ。
  */
 ```
 
+secondary lane の評価は、概ね次の順で進める。
+
+1. runtime ハード条件から `isMissing` を決める
+2. `isMissing` が false なら `idle`
+3. `terminated` なら retry せず `terminated`
+4. `missingDurationMs >= recoveryWindow` になるまで待機する
+5. 閾値を超えたら `derived.*` を補助条件として見て、`recover` または `force-rebind` を決める
+6. `missCount` が上限を超えたら `terminated` に移行する
+
+この順序により、runtime first / merged assists の責務分担を、controller 内の state machine として追えるようにする。
+
 ### 4.5 large seek 時の扱い
 
 large seek 時は、secondary recovery を miss limit 付きの runtime retry として扱う。
@@ -258,13 +300,19 @@ large seek 時は、secondary recovery を miss limit 付きの runtime retry �
 - 打ち切り後は `terminated` として primary-only 表示へ切り替える
 - `terminated` は次 block または新しい seek で reset されうる
 
-Phase J の現行調整では、次を暫定の運用値とする。
+Phase J の現行採用値では、次を運用値とする。
 
 - recovery window: 1 秒
 - force-rebind 開始: 2 回目
 - miss limit: 8 回
 
-これらの値は調整対象だが、**無限 retry を避けつつ、戻るケースには再挑戦を許す**ことが設計意図である。
+これらの値の意図は次のとおり。
+
+- **recovery window 1 秒**: primary 復帰直後の短い揺れを即時 miss として叩かず、secondary cue の自然な遅れを待つ
+- **force-rebind 開始 2 回目**: 1 回目は軽量 recovery に留め、連続 miss に入ったときだけ強い再接続へ進む
+- **miss limit 8 回**: 無限 retry を避けつつ、戻るケースには複数回の再挑戦を許す
+
+terminated に入った seek window では、以後その window 内の secondary missing を「recover 不能」とみなし、UI は primary-only 区間として静かに処理する。
 
 ### 4.6 large seek 直後の truth 保護
 
@@ -358,6 +406,14 @@ secondary recovery が terminated に入った seek window では、UI は prima
 - secondary recovery 判定
 - missCount / terminated 管理
 - nearby rebuild / hold guard / seek window 判定
+
+特に Phase J では、次の責務を `cue-controller.js` に集約する。
+
+- runtime missing の入口判定
+- lane state の継続時間管理
+- merged assists の補助判定との合成
+- large seek window ごとの retry / terminate 制御
+- primary-only 表示へ落とすための recovery decision の返却
 
 ### 6.3 resolver / helper
 
