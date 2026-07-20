@@ -1,11 +1,12 @@
-/*
- * cue-controller.js
- * - primary / secondary の cue change を受けて現在の字幕状態を更新する
- * - subtitle blocks と current block を組み立て、overlay / panel 描画へつなぐ
- * - secondary 欠落の観測と再同期、nearby rebuild の 1 回保護もここで扱う
- */
+// =============================================================
+// Apple TV+ Bilingual Subtitles - cue-controller.js
+// version: 2.6.3
+// 役割: cue change を起点に current subtitle / subtitle blocks / overlay / panel 更新を統括する。
+// Phase J: secondary missing の runtime 監視、recovery 判定、nearby rebuild の 1 回保護を担当する。
+// =============================================================
 
 (() => {
+  // ATVB 名前空間を取得し、cue controller を公開する先を固定する。
   const root = (window.ATVB = window.ATVB || {});
 
   // cue-controller 全体の依存を受け取り、
@@ -39,16 +40,31 @@
     updateOverlayFromBlock,
     renderPanel,
   }) {
+    // 現在 bind されている secondary listener の解除関数を保持する。
     let secondaryTrackCleanup = null;
+
+    // 現在 bind 済みの secondary track を保持する。
     let secondaryTrackBound = null;
+
+    // 最新の merged subtitle health を観測・外部参照用に保持する。
     let lastMergedSubtitleHealth = null;
+
+    // nearby rebuild の current block 保護を 1 回だけ成立させる guard を保持する。
     let nearbyRebuildGuard = null;
 
+    // nearby rebuild 直後に一時利用する hold view の格納先を初期化する。
     state.nearbyRebuildHoldView ??= null;
 
+    // secondary missing が recovery 対象になるまで待つ継続時間を定義する。
     const SECONDARY_RECOVERY_WINDOW_MS = 1000;
+
+    // repeated miss 後に force-rebind へ進める missCount の下限を定義する。
     const SECONDARY_FORCE_REBIND_MISS_COUNT = 2;
+
+    // recovery 試行を打ち切って terminated に入る missCount 上限を定義する。
     const SECONDARY_RECOVERY_MISS_LIMIT = 8;
+
+    // large seek 直後として nearby rebuild を許可する時間窓を定義する。
     const NEARBY_REBUILD_SEEK_WINDOW_MS = 4000;
 
     // lane ごとの欠落状態を保持する初期オブジェクトを作る。
@@ -65,6 +81,7 @@
       };
     }
 
+    // primary / secondary の lane state を 1 か所で管理する。
     const laneStates = {
       primary: createLaneState("primary"),
       secondary: createLaneState("secondary"),
@@ -102,7 +119,9 @@
       return laneState;
     }
 
-    // secondary 欠落の継続時間と回数から、待機 / recover / force-rebind / terminated を判定する。
+    // secondary lane の runtime missing が一定時間続き、
+    // merged assists も recovery 対象と示したときだけ recover / force-rebind / terminated を判定する。
+    // 主に large seek 後の secondary missing を対象とし、通常再生での短い gap はここでは扱わない。
     function evaluateSecondaryRecovery({
       now,
       runtime,
@@ -116,15 +135,14 @@
         isMissing: false,
       });
 
+      // runtime 上「primary は進んでいるのに secondary だけ空」の missing 条件を定義する。
       const secondaryRuntimeMissing =
         currentCue?.hasFreshCurrentPrimary === true &&
         currentCue?.secondaryTextLength === 0 &&
         runtime?.secondaryTrackFound === true &&
         runtime?.secondaryActiveCues === 0;
 
-      const secondarySequenceMissing =
-        sequence?.currentPairMissingSecondary === true;
-
+      // runtime 上 secondary cue が復活した状態を recovered とみなす。
       const secondaryRecovered =
         runtime?.secondaryTrackFound === true &&
         runtime?.secondaryActiveCues > 0;
@@ -159,10 +177,10 @@
         };
       }
 
+      // recovery window を超え、merged assists も recovery 対象と示したときだけ再試行へ進める。
       const shouldRecoverSecondary =
         secondaryLane.missingDurationMs >= SECONDARY_RECOVERY_WINDOW_MS &&
-        (derived?.shouldRecoverSecondary === true ||
-          derived?.primaryHealthy === true);
+        derived?.shouldRecoverSecondary === true;
 
       if (!shouldRecoverSecondary) {
         secondaryLane.lastDecision = "idle";
@@ -187,6 +205,7 @@
         };
       }
 
+      // consecutive miss が続く場合は force-rebind 側へ進める。
       const shouldForceSecondaryRebind =
         derived?.shouldForceSecondaryRebind === true ||
         secondaryLane.missCount >= SECONDARY_FORCE_REBIND_MISS_COUNT;
@@ -277,7 +296,10 @@
     ) {
       if (!video) return;
 
+      // 表示更新を抑止するかどうかを受け取る。
       const suppressRender = options.suppressRender === true;
+
+      // bind 済み track をいったん外して再取得するかを受け取る。
       const forceRebind = options.forceRebind === true;
 
       if (DEBUG_SECONDARY_SUBS) {
@@ -320,7 +342,9 @@
       rebuildCurrentSceneSubtitleBlocks();
     }
 
-    // runtime / current cue / sequence から merged subtitle health を組み立てる。
+    // runtime / current cue / sequence を 1 つにまとめ、
+    // controller が recovery 判定に使う merged subtitle health を組み立てる。
+    // truth source は SubtitleBlockSequence 側の sequenceHealth で、runtime は補助観測として扱う。
     function buildMergedSubtitleHealth({
       primaryTrack,
       secondaryTrack,
@@ -330,6 +354,7 @@
       sText,
       sequenceHealth,
     }) {
+      // 現在 bind / active な track 状態を runtime 観測値としてまとめる。
       const runtime = {
         primaryTrackFound: Boolean(primaryTrack),
         secondaryTrackFound: Boolean(secondaryTrack),
@@ -337,15 +362,18 @@
         secondaryActiveCues: getTrackActiveCuesLength(secondaryTrack),
       };
 
+      // 現在 cue と text の有無を current cue 観測値としてまとめる。
       const currentCue = {
         hasPrimaryCue: Boolean(pCue),
         hasSecondaryCue: Boolean(sCue),
+        hasFreshCurrentPrimary: Boolean(pCue) && Boolean(pText),
         primaryTextLength: pText.length,
         secondaryTextLength: sText.length,
         hasPrimaryText: Boolean(pText),
         hasSecondaryText: Boolean(sText),
       };
 
+      // SubtitleBlockSequence 由来の current pair health を sequence 観測値としてまとめる。
       const sequence = {
         hasCurrentBlock: Boolean(sequenceHealth?.hasCurrentBlock),
         hasCurrentPrimary: Boolean(sequenceHealth?.hasCurrentPrimary),
@@ -362,23 +390,28 @@
         ),
       };
 
+      // primary lane が現在十分に観測できているかを derived health として求める。
       const primaryHealthy =
         runtime.primaryTrackFound &&
         (runtime.primaryActiveCues > 0 ||
           currentCue.hasPrimaryText ||
           sequence.hasCurrentPrimary);
 
+      // secondary lane が現在十分に観測できているかを derived health として求める。
       const secondaryHealthy =
         runtime.secondaryTrackFound &&
         (runtime.secondaryActiveCues > 0 ||
           currentCue.hasSecondaryText ||
           sequence.hasCurrentSecondary);
 
+      // sequence が「current pair で secondary gap がある」と示しているかを補助 truth に使う。
       const sequenceSuggestsSecondaryGap = sequence.currentPairMissingSecondary;
 
+      // runtime missing を再試行してよい候補かを derived 判定として求める。
       const shouldRecoverSecondary =
         primaryHealthy && !secondaryHealthy && sequenceSuggestsSecondaryGap;
 
+      // consecutive gap が続く場合に force-rebind 側へ進めるべきかを derived 判定として求める。
       const shouldForceSecondaryRebind =
         shouldRecoverSecondary && sequence.consecutiveCurrentMissingSecondary;
 
@@ -395,15 +428,18 @@
       };
     }
 
+    // nearby rebuild の 1 回保護状態と hold view をまとめて解除する。
     function clearNearbyRebuildGuard() {
       nearbyRebuildGuard = null;
       state.nearbyRebuildHoldView = null;
     }
 
+    // 次の primary cue change で消費する予定だった guard だけを取り下げる。
     function consumeNearbyRebuildGuard() {
       nearbyRebuildGuard = null;
     }
 
+    // 現在が large seek 直後の nearby rebuild 許可 window 内かを判定する。
     function isWithinNearbyRebuildSeekWindow() {
       const lastLargeSeekAt = Number(state.lastLargeSeekAt ?? 0);
       if (!lastLargeSeekAt) return false;
@@ -457,6 +493,7 @@
         const previousView = state.currentSubtitleView || null;
         const previousBlock = state.currentSubtitleBlock || null;
 
+        // hold 用の current block を直前 view / block と現在 cue から補完して作る。
         const holdBlock = {
           startTime:
             pCue?.startTime ??
@@ -492,6 +529,7 @@
           updatedAt: Date.now(),
         };
 
+        // overlay / panel が参照する hold view を current block 付きで組み立てる。
         const holdView = {
           currentBlock: holdBlock,
           sourceReason: "nearbyRebuildHold",
@@ -530,7 +568,7 @@
         return;
       }
 
-      // ここから先は、truth 台帳の近傍 window を再構成する通常の nearby rebuild。
+      // primary cue 一覧から現在時刻に最も近い cue index を求める。
       let closestIndex = 0;
       let closestDelta = Number.POSITIVE_INFINITY;
       for (let i = 0; i < allPrimaryCues.length; i++) {
@@ -545,11 +583,15 @@
         }
       }
 
+      // current 近傍だけを切り出した primary window を nearby rebuild 入力として使う。
       const windowStart = Math.max(0, closestIndex - 1);
       const windowEnd = Math.min(allPrimaryCues.length, closestIndex + 2);
       const windowPrimaryCues = allPrimaryCues.slice(windowStart, windowEnd);
+
+      // secondary は full cues を使い、pairing 側に探索余地を残す。
       const windowSecondaryCues = allSecondaryCues;
 
+      // subtitle blocks API の有無を nearby rebuild 前に確認する。
       const blockApi = window.ATVB?.subtitleBlocks || {};
       const hasBuildSubtitleBlockSequence =
         typeof blockApi.buildSubtitleBlockSequence === "function";
@@ -567,6 +609,7 @@
         return;
       }
 
+      // nearby rebuild 用の入力から SubtitleBlockSequence を再構成する。
       const blockResult = blockApi.buildSubtitleBlockSequence({
         primaryCues: windowPrimaryCues,
         secondaryCues: windowSecondaryCues,
@@ -592,6 +635,7 @@
 
       lastMergedSubtitleHealth = mergedSubtitleHealth;
 
+      // sequence current が取れない場合でも最低限の fallback block を作る。
       const currentBlock = getCurrentSubtitleBlockFromSequence(blockResult) || {
         startTime: pCue?.startTime ?? null,
         endTime: pCue?.endTime ?? null,
@@ -620,6 +664,7 @@
         hasSecondarySignal: Boolean(currentBlock?.hasSecondarySignal),
       });
 
+      // panel / overlay 共通 view を sequence から解決する。
       const overlaySequence = getSubtitleBlockSequence();
       const subtitleViewResolver = root.subtitleViewResolver || null;
       const subtitleView =
@@ -670,6 +715,7 @@
         });
       }
 
+      // full rebuild に使う subtitle blocks API の有無を確認する。
       const blockApi = window.ATVB?.subtitleBlocks || {};
       const hasBuildSubtitleBlockSequence =
         typeof blockApi.buildSubtitleBlockSequence === "function";
@@ -739,6 +785,7 @@
         }
       }
 
+      // current sequence block が取れない場合でも current UI 更新用の fallback block を作る。
       const currentBlock = getCurrentSubtitleBlockFromSequence(blockResult) || {
         startTime: pCue?.startTime ?? null,
         endTime: pCue?.endTime ?? null,
@@ -750,9 +797,13 @@
         updatedAt: Date.now(),
       };
 
+      // nearby rebuild 保護を使うかどうかを現在の guard / seek window から判定する。
       const preserveNearbyCurrent = shouldPreserveNearbyRebuildCurrentBlock();
+
+      // nearby rebuild 直後の hold view を current UI 保護用に参照する。
       const holdView = state.nearbyRebuildHoldView || null;
 
+      // panel / overlay 共通 view を sequence から解決する。
       const overlaySequence = getSubtitleBlockSequence();
       const subtitleViewResolver = root.subtitleViewResolver || null;
       const subtitleView =
@@ -765,6 +816,7 @@
             )
           : null;
 
+      // current subtitleView が空に近い場合だけ hold view を優先して UI 空白を避ける。
       const shouldUseHoldView =
         preserveNearbyCurrent &&
         holdView &&
@@ -837,6 +889,7 @@
     };
   }
 
+  // cue controller factory を ATVB 名前空間へ公開する。
   root.cueController = {
     createCueController,
   };
