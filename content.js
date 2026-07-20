@@ -1351,6 +1351,182 @@
     panelUi.applyPanelState("sync_interval_large_seek_resync");
   }
 
+  function logSecondarySyncContextIfNeeded({
+    previousSecondaryTrack,
+    effectiveSecondaryLanguage,
+    secondaryActiveCues,
+    primaryActiveCues,
+    secondaryCueText,
+    primaryCueText,
+    currentPrimaryText,
+    hasFreshCurrentPrimary,
+    mergedSubtitleHealth,
+  }) {
+    const syncContextSummary = JSON.stringify({
+      trackCount: state.video?.textTracks?.length ?? 0,
+      primaryTrackFound: Boolean(state.primaryTrack),
+      secondaryTrackFound: Boolean(state.secondaryTrack),
+      secondaryTrackLanguage: state.secondaryTrack?.language || "",
+      secondaryActiveCues,
+      primaryActiveCues,
+      primaryCueTextLength: primaryCueText.length,
+      currentPrimaryTextLength: currentPrimaryText.length,
+      hasFreshCurrentPrimary,
+    });
+
+    const shouldLogSyncContext =
+      previousSecondaryTrack !== state.secondaryTrack ||
+      syncContextSummary !== state.lastSecondarySyncContext;
+
+    if (!shouldLogSyncContext) return;
+
+    state.lastSecondarySyncContext = syncContextSummary;
+    logContent(
+      "secondary track sync context",
+      buildSecondarySyncLogPayload({
+        effectiveSecondaryLanguage,
+        secondaryActiveCues,
+        primaryActiveCues,
+        secondaryCueText,
+        primaryCueText,
+        currentPrimaryText,
+        hasFreshCurrentPrimary,
+        mergedSubtitleHealth,
+        extra: {
+          reason: "sync_interval",
+        },
+      }),
+    );
+  }
+
+  function logSecondaryRecoveryTermination({
+    recoveryDecision,
+    effectiveSecondaryLanguage,
+    secondaryActiveCues,
+    primaryActiveCues,
+    secondaryCueText,
+    primaryCueText,
+    currentPrimaryText,
+    hasFreshCurrentPrimary,
+    mergedSubtitleHealth,
+  }) {
+    if (recoveryDecision.action !== "terminated") return;
+
+    logContent(
+      "secondary recovery terminated",
+      buildSecondarySyncLogPayload({
+        effectiveSecondaryLanguage,
+        secondaryActiveCues,
+        primaryActiveCues,
+        secondaryCueText,
+        primaryCueText,
+        currentPrimaryText,
+        hasFreshCurrentPrimary,
+        mergedSubtitleHealth,
+        extra: {
+          reason: "sync_interval",
+          missCount: recoveryDecision.secondaryLane.missCount,
+        },
+      }),
+    );
+  }
+
+  function runSecondaryResolverProbeIfNeeded({
+    effectiveSecondaryLanguage,
+    secondaryCueText,
+  }) {
+    if (!DEBUG_PANEL_PROBE) return;
+
+    const secondaryCandidates =
+      resolverDeps.getSecondarySubtitleTrackCandidates(
+        state.video,
+        effectiveSecondaryLanguage,
+      );
+    const resolvedSecondaryTrack =
+      resolverDeps.resolveSecondarySubtitleTrack(
+        state.video,
+        effectiveSecondaryLanguage,
+      );
+
+    logContent("secondary resolver probe", {
+      reason: "sync_interval",
+      effectiveSecondaryLanguage,
+      currentSecondaryTrackLanguage: state.secondaryTrack?.language || "",
+      currentSecondaryTrackKind: state.secondaryTrack?.kind || "",
+      currentSecondaryTrackMode: state.secondaryTrack?.mode || "",
+      currentSecondaryCuesLength: resolverDeps.getTrackCuesLength(
+        state.secondaryTrack,
+      ),
+      currentSecondaryActiveCuesLength: getTrackActiveCuesLength(
+        state.secondaryTrack,
+      ),
+      currentSecondaryCueTextLength: secondaryCueText.length,
+      resolvedSecondaryTrackLanguage: resolvedSecondaryTrack?.language || "",
+      resolvedSecondaryTrackKind: resolvedSecondaryTrack?.kind || "",
+      resolvedSecondaryTrackMode: resolvedSecondaryTrack?.mode || "",
+      resolvedSecondaryCuesLength: resolverDeps.getTrackCuesLength(
+        resolvedSecondaryTrack,
+      ),
+      resolvedSecondaryActiveCuesLength: getTrackActiveCuesLength(
+        resolvedSecondaryTrack,
+      ),
+      resolvedSecondaryCueTextLength: normalizeSubtitleText(
+        getCurrentCueText(resolvedSecondaryTrack),
+      ).length,
+      secondaryCandidates,
+    });
+  }
+
+  function triggerSecondaryRecovery({
+    recoveryDecision,
+    effectiveSecondaryLanguage,
+    secondaryActiveCues,
+    primaryActiveCues,
+    secondaryCueText,
+    primaryCueText,
+    currentPrimaryText,
+    hasFreshCurrentPrimary,
+    mergedSubtitleHealth,
+  }) {
+    if (
+      recoveryDecision.action !== "recover" &&
+      recoveryDecision.action !== "force-rebind"
+    ) {
+      return;
+    }
+
+    runSecondaryResolverProbeIfNeeded({
+      effectiveSecondaryLanguage,
+      secondaryCueText,
+    });
+
+    logContent(
+      "secondary recovery trigger",
+      buildSecondarySyncLogPayload({
+        effectiveSecondaryLanguage,
+        secondaryActiveCues,
+        primaryActiveCues,
+        secondaryCueText,
+        primaryCueText,
+        currentPrimaryText,
+        hasFreshCurrentPrimary,
+        mergedSubtitleHealth,
+        extra: {
+          reason: "sync_interval",
+          missCount: recoveryDecision.secondaryLane.missCount,
+          forceRebind: recoveryDecision.action === "force-rebind",
+          terminated: recoveryDecision.secondaryLane.terminated,
+          missLimitReached: recoveryDecision.action === "terminated",
+        },
+      }),
+    );
+
+    syncSecondarySubtitleTrack({
+      reason: recoveryDecision.reason,
+      forceRebind: recoveryDecision.action === "force-rebind",
+    });
+  }
+
   // sync interval 内の secondary recovery pass をまとめる。
   // ここでは通常同期で bound track をそろえた後、
   // runtime / current cue / merged subtitle health を採取し、
@@ -1392,40 +1568,17 @@
     // 3) secondary health の変化があったときだけ、
     //    sync interval 時点の context をログする。
     // -------------------------------------------------------------
-    const syncContextSummary = JSON.stringify({
-      trackCount: state.video?.textTracks?.length ?? 0,
-      primaryTrackFound: Boolean(state.primaryTrack),
-      secondaryTrackFound: Boolean(state.secondaryTrack),
-      secondaryTrackLanguage: state.secondaryTrack?.language || "",
+    logSecondarySyncContextIfNeeded({
+      previousSecondaryTrack,
+      effectiveSecondaryLanguage,
       secondaryActiveCues,
       primaryActiveCues,
-      primaryCueTextLength: primaryCueText.length,
-      currentPrimaryTextLength: currentPrimaryText.length,
+      secondaryCueText,
+      primaryCueText,
+      currentPrimaryText,
       hasFreshCurrentPrimary,
+      mergedSubtitleHealth,
     });
-    const shouldLogSyncContext =
-      previousSecondaryTrack !== state.secondaryTrack ||
-      syncContextSummary !== state.lastSecondarySyncContext;
-
-    if (shouldLogSyncContext) {
-      state.lastSecondarySyncContext = syncContextSummary;
-      logContent(
-        "secondary track sync context",
-        buildSecondarySyncLogPayload({
-          effectiveSecondaryLanguage,
-          secondaryActiveCues,
-          primaryActiveCues,
-          secondaryCueText,
-          primaryCueText,
-          currentPrimaryText,
-          hasFreshCurrentPrimary,
-          mergedSubtitleHealth,
-          extra: {
-            reason: "sync_interval",
-          },
-        }),
-      );
-    }
 
     // -------------------------------------------------------------
     // 4) Phase J の runtime / sequence 条件で
@@ -1449,106 +1602,33 @@
       derived: mergedSubtitleHealth?.derived || null,
     });
 
-    if (recoveryDecision.action === "terminated") {
-      logContent(
-        "secondary recovery terminated",
-        buildSecondarySyncLogPayload({
-          effectiveSecondaryLanguage,
-          secondaryActiveCues,
-          primaryActiveCues,
-          secondaryCueText,
-          primaryCueText,
-          currentPrimaryText,
-          hasFreshCurrentPrimary,
-          mergedSubtitleHealth,
-          extra: {
-            reason: "sync_interval",
-            missCount: recoveryDecision.secondaryLane.missCount,
-          },
-        }),
-      );
-    }
+    logSecondaryRecoveryTermination({
+      recoveryDecision,
+      effectiveSecondaryLanguage,
+      secondaryActiveCues,
+      primaryActiveCues,
+      secondaryCueText,
+      primaryCueText,
+      currentPrimaryText,
+      hasFreshCurrentPrimary,
+      mergedSubtitleHealth,
+    });
 
-    if (
-      recoveryDecision.action === "recover" ||
-      recoveryDecision.action === "force-rebind"
-    ) {
-      // -------------------------------------------------------------
-      // 5) debug probe が有効なときだけ、resolver 観点の候補 / 解決結果も採取する。
-      //    recovery 条件そのものは上の evaluateSecondaryRecovery() が決める。
-      // -------------------------------------------------------------
-      if (DEBUG_PANEL_PROBE) {
-        const secondaryCandidates =
-          resolverDeps.getSecondarySubtitleTrackCandidates(
-            state.video,
-            effectiveSecondaryLanguage,
-          );
-        const resolvedSecondaryTrack =
-          resolverDeps.resolveSecondarySubtitleTrack(
-            state.video,
-            effectiveSecondaryLanguage,
-          );
-
-        logContent("secondary resolver probe", {
-          reason: "sync_interval",
-          effectiveSecondaryLanguage,
-          currentSecondaryTrackLanguage: state.secondaryTrack?.language || "",
-          currentSecondaryTrackKind: state.secondaryTrack?.kind || "",
-          currentSecondaryTrackMode: state.secondaryTrack?.mode || "",
-          currentSecondaryCuesLength: resolverDeps.getTrackCuesLength(
-            state.secondaryTrack,
-          ),
-          currentSecondaryActiveCuesLength: getTrackActiveCuesLength(
-            state.secondaryTrack,
-          ),
-          currentSecondaryCueTextLength: secondaryCueText.length,
-          resolvedSecondaryTrackLanguage:
-            resolvedSecondaryTrack?.language || "",
-          resolvedSecondaryTrackKind: resolvedSecondaryTrack?.kind || "",
-          resolvedSecondaryTrackMode: resolvedSecondaryTrack?.mode || "",
-          resolvedSecondaryCuesLength: resolverDeps.getTrackCuesLength(
-            resolvedSecondaryTrack,
-          ),
-          resolvedSecondaryActiveCuesLength: getTrackActiveCuesLength(
-            resolvedSecondaryTrack,
-          ),
-          resolvedSecondaryCueTextLength: normalizeSubtitleText(
-            getCurrentCueText(resolvedSecondaryTrack),
-          ).length,
-          secondaryCandidates,
-        });
-      }
-
-      // -------------------------------------------------------------
-      // 6) recovery / force-rebind が必要なときだけ、
-      //    missing 判定の結果として明示的に secondary 再同期を要求する。
-      // -------------------------------------------------------------
-      logContent(
-        "secondary recovery trigger",
-        buildSecondarySyncLogPayload({
-          effectiveSecondaryLanguage,
-          secondaryActiveCues,
-          primaryActiveCues,
-          secondaryCueText,
-          primaryCueText,
-          currentPrimaryText,
-          hasFreshCurrentPrimary,
-          mergedSubtitleHealth,
-          extra: {
-            reason: "sync_interval",
-            missCount: recoveryDecision.secondaryLane.missCount,
-            forceRebind: recoveryDecision.action === "force-rebind",
-            terminated: recoveryDecision.secondaryLane.terminated,
-            missLimitReached: recoveryDecision.action === "terminated",
-          },
-        }),
-      );
-
-      syncSecondarySubtitleTrack({
-        reason: recoveryDecision.reason,
-        forceRebind: recoveryDecision.action === "force-rebind",
-      });
-    }
+    // -------------------------------------------------------------
+    // 5) recovery / force-rebind が必要なときだけ、
+    //    missing 判定の結果として明示的に secondary 再同期を要求する。
+    // -------------------------------------------------------------
+    triggerSecondaryRecovery({
+      recoveryDecision,
+      effectiveSecondaryLanguage,
+      secondaryActiveCues,
+      primaryActiveCues,
+      secondaryCueText,
+      primaryCueText,
+      currentPrimaryText,
+      hasFreshCurrentPrimary,
+      mergedSubtitleHealth,
+    });
 
     return {
       now,
