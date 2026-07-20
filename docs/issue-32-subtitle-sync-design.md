@@ -4,27 +4,29 @@
 
 Issue #32 では、Apple TV+ 再生画面における subtitle sync / recovery の設計方針を整理し、右側字幕パネルと画面下部 overlay の表示を安定させる。
 
-この文書の主目的は次の 4 点である。
+この文書の主目的は次の 5 点である。
 
 - 履歴の重複をなくし、「1 セリフ基本 1 表示ブロック」に近づける
 - overlay の点滅・短表示・片側欠落時の不自然な clear を止める
 - panel / overlay / current / history を、同じ字幕ブロック列モデルで扱えるようにする
 - large seek 後の secondary missing / recovery を、truth / runtime / health / resolver / UI の各層で追えるようにする
+- `content.js` を subtitle sync / recovery の本体から外し、controller / resolver 側へ責務移送しやすい設計にする
 
-この文書は subtitle sync / recovery の**設計正本**であり、実装差分・進捗管理・調査ログの置き場ではない。
+この文書は subtitle sync / recovery の **設計正本** であり、実装差分・進捗管理・調査ログの置き場ではない。
 
 ---
 
 ## 2. 問題定義
 
-Issue #32 で主に扱う問題は次の 4 つである。
+Issue #32 で主に扱う問題は次の 5 つである。
 
 - large seek 後に primary は進むが、secondary が missing のまま戻らない、または戻るまでに時間がかかることがある
 - current / history / live cue / resolved block の境界が曖昧だと、過去 secondary の混入や履歴重複が起きやすい
 - overlay / panel が単一 current block 依存のままだと、same-window captions や seek 直後の片側欠落を自然に扱いにくい
 - large seek 直後の truth 再構築と current 維持が弱いと、一時的に current が空、または片側だけの不自然な block に落ちやすい
+- panel の自動追従とユーザスクロールが競合すると、一時停止中や閲覧中にスクロール位置が不自然に戻ることがある
 
-現在の主課題は「secondary がまったく戻らない」ことの切り分けだけではなく、**戻るまでの復帰ラグを短くすること**と、**戻らない区間を primary-only で静かに処理すること**である。
+現在の主課題は「secondary がまったく戻らない」ことの切り分けだけではなく、**戻るまでの復帰ラグを短くすること**、**戻らない区間を primary-only で静かに処理すること**、そして **通常再生中のちらつきやスクロール競合を抑えること** である。
 
 ---
 
@@ -151,6 +153,17 @@ truth 境界は次のように固定する。
 - `subtitleHistory` は current truth や fallback truth に使わない
 - runtime 現在表示に history を混ぜない
 
+### 3.5 playback context 境界
+
+subtitle sync 設計の周辺文脈として、playback page context / content key / history context は subtitle truth とは分離して扱う。
+
+- playback page の DOM / track readiness 判定
+- content key 解決
+- contentKey ごとの history bucket 切替
+
+これらは subtitle sync の truth source ではなく、**再生対象の切替文脈** として扱う。  
+そのため、`playbackContext.js` の責務は `SubtitleBlockSequence` や recovery 判定と混ぜず、history 文脈切替の補助に留める。
+
 ---
 
 ## 4. runtime / recovery 方針
@@ -165,6 +178,7 @@ secondary recovery の truth は **runtime first / merged assists** とする。
 - observer は recovery 本体を持たず、再評価トリガだけを持つ
 - recovery 本線は **sync interval → controller 判定 → truth rebuild → UI redraw** の順で進める
 - controller では、runtime missing の入口判定と lane state の継続時間管理を主担当とし、merged assists は recovery 実行可否の補助判定として重ねる
+- `content.js` は recovery 本体を持たず、large seek 時刻や sync interval 起動などの薄い wiring に留める
 
 ### 4.2 runtime ハード条件
 
@@ -326,6 +340,16 @@ large seek 直後は、secondary sync 後に **近傍 truth rebuild** と **shor
 
 現在の first cut では、large seek 後の短時間だけ `nearbyRebuildHold` を current 表示に使い、truth 本体の書き換えは行わない。
 
+### 4.7 通常再生時の hold 制御
+
+hold / rebuild 系の保護は large seek 向けの補助手段であり、通常再生時の常用ロジックにはしない。
+
+- 通常再生では `nearbyRebuildHold` / `preserveNearbyRebuildHold` の効きを最小限にする
+- 一時停止中や通常の cue 進行中に、hold が overlay の短表示やちらつき原因にならないようにする
+- large seek 用の強い保護と、通常再生用の軽い安定化は分けて扱う
+
+この境界により、「large seek 後の空白を防ぐための保護」が通常時の UX を悪化させないようにする。
+
 ---
 
 ## 5. UI 方針
@@ -379,6 +403,18 @@ secondary recovery が terminated に入った seek window では、UI は prima
 - secondary missing を理由に current 全体を空へ落とさない
 - secondary 復帰後は通常の current block / view 解決へ戻す
 
+### 5.5 panel スクロール方針
+
+panel スクロールは、truth current への自動追従とユーザ手動操作を分離して扱う。
+
+- panel current の算出は truth / view 側で決める
+- 実際の scroll 反映は UI 層の責務とする
+- ユーザが手動スクロールした直後は、一時的に自動追従を抑制する
+- 一時停止中は自動追従を弱めるか停止し、閲覧中のスクロールを優先する
+- auto-follow の再開条件は、再生再開・一定時間経過・明示的 current jump のいずれかに限定する
+
+この境界により、「current は進んでいるが、今はユーザが過去行を読んでいる」という状態を素直に扱えるようにする。
+
 ---
 
 ## 6. 実装境界
@@ -392,6 +428,7 @@ secondary recovery が terminated に入った seek window では、UI は prima
 - controller の戻り値受け取り
 - bootstrap / cleanup / UI 連携
 - large seek の検知と時刻記録
+- playback context controller や各 resolver の接続
 
 `content.js` に recovery state や判定分岐を足し続ける方針は取らない。
 
@@ -424,6 +461,7 @@ resolver / helper は view / panel / same-window / health 判定の補助を担�
 - `overlay-block-resolver.js`: same-window group → `OverlayView`
 - `subtitle-block-resolver.js`: sequence → `PanelBlock[]`
 - `subtitle-track-resolver.js`: secondary track 候補解決と観測
+- `playbackContext.js`: playback page context / content key / history context
 
 ### 6.4 UI 層
 
@@ -432,6 +470,7 @@ UI 層は truth を直接持たず、view を描画する。
 - overlay は `OverlayView` を描画する
 - panel は `PanelBlock[]` を描画する
 - UI 層は recovery 判定や current truth の書き換えを行わない
+- panel のスクロール制御は UI 層で扱うが、truth current の判定は持たない
 
 ---
 
@@ -444,6 +483,7 @@ UI 層は truth を直接持たず、view を描画する。
 - セッション単位の調査ログや実況メモ
 - runtime パラメータの細かい試行履歴
 - grep / filter 文字列のような一時的な debug 手順
+- `content.js` 分割順そのもののロードマップ詳細
 
 進捗・優先順位は `docs/dev-roadmap.md` を参照する。  
 `content.js` 分割の原則は `docs/contentjs-split-roadmap.md` を参照する。
@@ -453,6 +493,7 @@ UI 層は truth を直接持たず、view を描画する。
 ## 8. 関連ファイル
 
 - `content.js`
+- `playbackContext.js`
 - `cue-controller.js`
 - `subtitle-blocks.js`
 - `subtitle-view-resolver.js`
