@@ -571,6 +571,14 @@
     return state.dialogEl || document.body;
   }
 
+  // -----------------------------------------------------------------------------
+  // playback / content context coordinator helpers
+  // content.js に残す上位入口として、再生対象の把握と content context の切替だけを扱う。
+  // subtitle sync / recovery / DOM 描画の詳細は下位 helper 側へ寄せる。
+  // -----------------------------------------------------------------------------
+
+  // 再生準備の判定に必要な DOM / track 状態を集める。
+  // 字幕同期や UI 更新の判断はここで持たない。
   function getPlaybackContext() {
     const video = document.querySelector("video");
     const playbackDialog = document.querySelector("dialog.playback-view");
@@ -768,6 +776,8 @@
     return cleanCueText(getCurrentCue(track, time));
   }
 
+  // secondary subtitle render 時の debug log 用 payload。
+  // DOM 重複や cue 解決結果を短く追える最小情報だけをまとめる。
   function getSecondaryRenderLogPayload(text, track, elementCount) {
     return {
       textPreview: String(text || "").slice(0, 40),
@@ -777,6 +787,84 @@
     };
   }
 
+  // secondary subtitle 要素は panel host 配下と既存 panel 配下の両方を考慮しつつ、
+  // data 属性 / class のどちらでも拾えるようにしておく。
+  function getSecondarySubtitleElements() {
+    return document.querySelectorAll(
+      "[data-secondary-subtitle], .dual-subtitles-secondary",
+    );
+  }
+
+  function countSecondarySubtitleElements() {
+    return getSecondarySubtitleElements().length;
+  }
+
+  // 既存要素が古い class / data 属性の片方しか持っていない場合でも、
+  // 現行セレクタで再利用できるように normalize する。
+  function normalizeSecondarySubtitleElement(el) {
+    if (!el) return null;
+
+    if (!el.hasAttribute("data-secondary-subtitle")) {
+      el.setAttribute("data-secondary-subtitle", "");
+    }
+    if (!el.classList.contains("dual-subtitles-secondary")) {
+      el.classList.add("dual-subtitles-secondary");
+    }
+
+    return el;
+  }
+
+  // secondary subtitle を差し込む panel host を確保する。
+  // host がまだ無い場合だけ right panel を生成し、再取得して返す。
+  function getOrCreatePanelHost() {
+    let panelHost = getTarget().querySelector("#atv-panel-host");
+    if (!panelHost) {
+      panelUi.createRightPanel();
+      panelHost = getTarget().querySelector("#atv-panel-host");
+    }
+    return panelHost || null;
+  }
+
+  // secondary subtitle panel 本体を通常 DOM / shadowRoot の両方から探し、
+  // 見つかった既存 panel には現行セレクタを補って再利用しやすくする。
+  function findSecondarySubtitlePanel(panelHost) {
+    let panel = document.querySelector("[data-dual-subtitles-panel]");
+    if (!panel) {
+      panel = document.querySelector(".dual-subtitles-panel");
+    }
+    if (!panel && panelHost?.shadowRoot) {
+      panel = panelHost.shadowRoot.querySelector(
+        "[data-dual-subtitles-panel], .dual-subtitles-panel",
+      );
+    }
+
+    if (panel && panelHost?.shadowRoot?.contains(panel)) {
+      panel.setAttribute("data-dual-subtitles-panel", "");
+      panel.classList.add("dual-subtitles-panel");
+    }
+
+    return panel || null;
+  }
+
+  // panel host 直下の secondary subtitle 要素は表示しない。
+  // 実表示は slot / panel shell 側に委ねるため、直下要素は hidden layer として扱う。
+  function ensurePanelSlotLayerStyle() {
+    if (document.getElementById(PANEL_SLOT_LAYER_STYLE_ID)) return;
+
+    const style = document.createElement("style");
+    style.id = PANEL_SLOT_LAYER_STYLE_ID;
+    style.textContent = `
+      #atv-panel-host > .dual-subtitles-secondary,
+      #atv-panel-host > [data-secondary-subtitle] {
+        display: none !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  // secondary subtitle 表示先の element を 1 個だけ保証する。
+  // 既存要素が複数あれば先頭だけ残して normalize し、
+  // 何も無ければ panel host / panel shell を確保して新規作成する。
   function ensureSecondarySubtitleElement() {
     const requestedSettings = state.requestedContentSettings || {};
     const effectiveSettings = {
@@ -797,14 +885,14 @@
 
     ensurePanelSlotLayerStyle();
 
-    const allExisting = document.querySelectorAll(
-      "[data-secondary-subtitle], .dual-subtitles-secondary",
-    );
+    const allExisting = getSecondarySubtitleElements();
     if (allExisting.length > 1) {
-      const keep = allExisting[0];
+      const keep = normalizeSecondarySubtitleElement(allExisting[0]);
+
       for (let i = 1; i < allExisting.length; i++) {
         allExisting[i].remove();
       }
+
       if (DEBUG_SECONDARY_SUBS) {
         logContent(
           "secondary duplicate elements cleaned",
@@ -815,53 +903,25 @@
           ),
         );
       }
-      if (!keep.hasAttribute("data-secondary-subtitle")) {
-        keep.setAttribute("data-secondary-subtitle", "");
-      }
-      if (!keep.classList.contains("dual-subtitles-secondary")) {
-        keep.classList.add("dual-subtitles-secondary");
-      }
+
       return keep;
     }
 
     if (allExisting.length === 1) {
-      const only = allExisting[0];
-      if (!only.hasAttribute("data-secondary-subtitle")) {
-        only.setAttribute("data-secondary-subtitle", "");
-      }
-      if (!only.classList.contains("dual-subtitles-secondary")) {
-        only.classList.add("dual-subtitles-secondary");
-      }
-      return only;
+      return normalizeSecondarySubtitleElement(allExisting[0]);
     }
 
-    let panelHost = getTarget().querySelector("#atv-panel-host");
-    if (!panelHost) {
-      panelUi.createRightPanel();
-      panelHost = getTarget().querySelector("#atv-panel-host");
-    }
+    const panelHost = getOrCreatePanelHost();
     if (!panelHost) return null;
 
-    // createRightPanel may have already ensured it during setup.
     const ensuredAfterPanel = document.querySelector(
       "[data-secondary-subtitle]",
     );
-    if (ensuredAfterPanel) return ensuredAfterPanel;
-
-    let panel = document.querySelector("[data-dual-subtitles-panel]");
-    if (!panel) {
-      panel = document.querySelector(".dual-subtitles-panel");
-    }
-    if (!panel && panelHost.shadowRoot) {
-      panel = panelHost.shadowRoot.querySelector(
-        "[data-dual-subtitles-panel], .dual-subtitles-panel",
-      );
+    if (ensuredAfterPanel) {
+      return normalizeSecondarySubtitleElement(ensuredAfterPanel);
     }
 
-    if (panel && panelHost.shadowRoot?.contains(panel)) {
-      panel.setAttribute("data-dual-subtitles-panel", "");
-      panel.classList.add("dual-subtitles-panel");
-    }
+    findSecondarySubtitlePanel(panelHost);
 
     const el = document.createElement("div");
     el.setAttribute("data-secondary-subtitle", "");
@@ -872,31 +932,18 @@
     if (DEBUG_SECONDARY_SUBS) {
       logContent("secondary element ensured");
     }
+
     return el;
   }
 
-  function ensurePanelSlotLayerStyle() {
-    if (document.getElementById(PANEL_SLOT_LAYER_STYLE_ID)) return;
-
-    const style = document.createElement("style");
-    style.id = PANEL_SLOT_LAYER_STYLE_ID;
-    style.textContent = `
-      #atv-panel-host > .dual-subtitles-secondary,
-      #atv-panel-host > [data-secondary-subtitle] {
-        display: none !important;
-      }
-    `;
-    document.head.appendChild(style);
-  }
-
   // [render: panel shell apply]
+  // secondary subtitle の描画は、要素確保 → cue text 解決 → idle clear 判定 →
+  // text / language 反映、の順で行う。
   function renderSecondarySubtitle(text, track) {
     let el = ensureSecondarySubtitleElement();
     if (!el) return;
 
-    const elementCountBefore = document.querySelectorAll(
-      "[data-secondary-subtitle], .dual-subtitles-secondary",
-    ).length;
+    const elementCountBefore = countSecondarySubtitleElements();
     if (elementCountBefore > 1) {
       if (DEBUG_SECONDARY_SUBS) {
         logContent(
@@ -915,13 +962,12 @@
     }
     if (!el) return;
 
+    const elementCount = countSecondarySubtitleElements();
     const activeCuesLength = getTrackActiveCuesLength(track);
+
     let resolvedText = text || "";
     if (!resolvedText && activeCuesLength > 0) {
       resolvedText = getCurrentCueText(track) || "";
-      const elementCount = document.querySelectorAll(
-        "[data-secondary-subtitle], .dual-subtitles-secondary",
-      ).length;
       if (DEBUG_SECONDARY_SUBS) {
         logContent(
           "secondary cue text resolved",
@@ -930,12 +976,7 @@
       }
     }
 
-    const elementCount = document.querySelectorAll(
-      "[data-secondary-subtitle], .dual-subtitles-secondary",
-    ).length;
-
     resolvedText = normalizeSubtitleText(resolvedText);
-
     let finalText = resolvedText;
     const now = Date.now();
 
@@ -964,13 +1005,11 @@
       lastSecondarySignalAt > 0 &&
       now - lastSecondarySignalAt > SECONDARY_SUBTITLE_IDLE_CLEAR_MS
     ) {
-      if (el.textContent) {
-        if (DEBUG_SECONDARY_SUBS) {
-          logContent(
-            "secondary subtitle cleared after idle timeout",
-            getSecondaryRenderLogPayload("", track, elementCount),
-          );
-        }
+      if (el.textContent && DEBUG_SECONDARY_SUBS) {
+        logContent(
+          "secondary subtitle cleared after idle timeout",
+          getSecondaryRenderLogPayload("", track, elementCount),
+        );
       }
       lastSecondaryText = "";
       lastSecondaryTextAt = 0;
@@ -986,6 +1025,7 @@
 
     el.textContent = finalText;
     el.dataset.language = track?.language || "";
+
     logSubtitlePanelState("after-renderSecondarySubtitle");
   }
 
@@ -1032,256 +1072,425 @@
     }
   }
 
-  function syncSecondarySubtitleTrack(
+  // cueController の secondary track 同期を content.js から呼ぶための低レベル helper。
+  // 通常同期では、video / language / render 関数を明示して bind 状態をそろえる。
+  function syncSecondarySubtitleTrackBinding(
     video,
     requestedLang,
-    renderSecondarySubtitle,
+    renderFn,
+    options = {},
   ) {
     cueController.syncSecondarySubtitleTrack(
       video,
       requestedLang,
-      renderSecondarySubtitle,
+      renderFn,
+      options,
     );
   }
 
+  // secondary missing 復旧のための再同期要求を処理する。
+  // ここでは現在の state から video / language を解決し、
+  // 必要なら forceRebind を付けて cueController 側へ再同期を委譲する。
+  function syncSecondarySubtitleTrack({
+    reason = "unknown",
+    forceRebind = false,
+  } = {}) {
+    const video = state.video;
+    const requestedLang =
+      state.requestedSecondaryLang || state.contentSettings.secondaryLang;
+
+    if (!video || !requestedLang) return;
+
+    logContent("secondary track resync requested", {
+      reason,
+      forceRebind,
+      requestedLang,
+    });
+
+    syncSecondarySubtitleTrackBinding(
+      video,
+      requestedLang,
+      renderSecondarySubtitle,
+      {
+        forceRebind,
+        suppressRender: true,
+      },
+    );
+
+    state.secondaryTrack = cueController.getBoundSecondaryTrack();
+  }
+
+  function buildSecondarySyncLogPayload({
+    effectiveSecondaryLanguage,
+    secondaryActiveCues,
+    primaryActiveCues,
+    secondaryCueText,
+    primaryCueText,
+    currentPrimaryText,
+    hasFreshCurrentPrimary,
+    mergedSubtitleHealth = null,
+    extra = {},
+  }) {
+    return {
+      effectiveSecondaryLanguage,
+      trackCount: state.video?.textTracks?.length ?? 0,
+      primaryTrackFound: Boolean(state.primaryTrack),
+      secondaryTrackFound: Boolean(state.secondaryTrack),
+      secondaryTrackLanguage: state.secondaryTrack?.language || "",
+      secondaryActiveCues,
+      primaryActiveCues,
+      currentSecondaryTextLength: secondaryCueText.length,
+      primaryCueTextLength: primaryCueText.length,
+      currentPrimaryTextLength: currentPrimaryText.length,
+      hasFreshCurrentPrimary,
+      mergedPrimaryHealthy:
+        mergedSubtitleHealth?.derived?.primaryHealthy ?? null,
+      mergedSecondaryHealthy:
+        mergedSubtitleHealth?.derived?.secondaryHealthy ?? null,
+      mergedShouldRecoverSecondary:
+        mergedSubtitleHealth?.derived?.shouldRecoverSecondary ?? null,
+      mergedShouldForceSecondaryRebind:
+        mergedSubtitleHealth?.derived?.shouldForceSecondaryRebind ?? null,
+      secondaryRecoveryMissCount:
+        cueController.getLaneStates().secondary.missCount,
+      ...extra,
+    };
+  }
+
+  // sync interval で secondary / primary の runtime snapshot をまとめて採取する。
+  // 判定ロジック本体ではなく、evaluateSecondaryRecovery() や
+  // primary recovery 判定に渡す材料を 1 箇所で揃えるための helper。
+  function buildSyncIntervalSubtitleSnapshot(now) {
+    const secondaryActiveCues = getTrackActiveCuesLength(state.secondaryTrack);
+    const primaryActiveCues = getTrackActiveCuesLength(state.primaryTrack);
+    const secondaryCueText = normalizeSubtitleText(
+      getCurrentCueText(state.secondaryTrack),
+    );
+    const primaryCueText = normalizeSubtitleText(
+      getCurrentCueText(state.primaryTrack),
+    );
+    const currentPrimaryText = normalizeSubtitleText(
+      state.currentSubtitleBlock?.primaryText || state.lastPrimaryText || "",
+    );
+    const hasPrimaryLiveSignal =
+      primaryActiveCues > 0 || Boolean(primaryCueText);
+    const hasFreshCurrentPrimary =
+      Boolean(currentPrimaryText) &&
+      state.lastCurrentSubtitleBlockAt > 0 &&
+      now - state.lastCurrentSubtitleBlockAt <= 3000;
+    const hasSecondarySignal =
+      secondaryActiveCues > 0 || Boolean(secondaryCueText);
+    const hasPrimarySignal = hasPrimaryLiveSignal || hasFreshCurrentPrimary;
+
+    return {
+      secondaryActiveCues,
+      primaryActiveCues,
+      secondaryCueText,
+      primaryCueText,
+      currentPrimaryText,
+      hasPrimaryLiveSignal,
+      hasFreshCurrentPrimary,
+      hasSecondarySignal,
+      hasPrimarySignal,
+      mergedSubtitleHealth: getMergedSubtitleHealthSnapshot(),
+    };
+  }
+
+  // sync interval ごとに、video / dialog 差し替えと content key の切り替わりを監視する。
+  // 再生対象が変わった場合は subtitle pipeline を再初期化し、
+  // 同一再生内の content key 変更だけなら history / panel を追従させる。
+  function syncIntervalRefreshPlaybackContext() {
+    const found = getVideoAndDialog();
+    const nextVideo = found?.video || state.video;
+    const nextVideoSrcKey = getCurrentVideoSrcKey(nextVideo);
+    const hasCurrentSrcChanged =
+      Boolean(nextVideoSrcKey) &&
+      Boolean(state.lastVideoSrcKey) &&
+      nextVideoSrcKey !== state.lastVideoSrcKey;
+
+    if (hasCurrentSrcChanged) {
+      logContent("currentSrc changed", {
+        previousVideoSrcKey: state.lastVideoSrcKey,
+        nextVideoSrcKey,
+      });
+    }
+
+    if (found && (found.video !== state.video || hasCurrentSrcChanged)) {
+      state.video = found.video;
+      state.dialogEl = found.dialog;
+      state.lastVideoSrcKey = nextVideoSrcKey;
+      state.lastObservedVideoTime = null;
+      reloadSettingsAndReinitialize("video_changed");
+      return;
+    }
+
+    if (found && state.video) {
+      const switched = syncHistoryContextWithPlayback("content_key_changed");
+      if (switched) {
+        renderCurrentSnapshot();
+        renderPanel();
+      }
+    }
+  }
+
+  // sync interval 観測ベースで large seek を検知する。
+  // large seek 後は nearby rebuild / short-lived hold が効く前提で、
+  // panel state も seek 後の再同期モードへ寄せる。
+  function syncIntervalDetectLargeSeek() {
+    const currentVideoTime = Number(state.video?.currentTime ?? 0);
+    const previousObservedTime = Number(state.lastObservedVideoTime);
+    const largeSeekDetected =
+      Number.isFinite(previousObservedTime) &&
+      Number.isFinite(currentVideoTime) &&
+      Math.abs(currentVideoTime - previousObservedTime) > 6;
+
+    state.lastObservedVideoTime = Number.isFinite(currentVideoTime)
+      ? currentVideoTime
+      : null;
+
+    if (!largeSeekDetected) return;
+
+    state.lastLargeSeekAt = Date.now();
+
+    logContent("large seek detected", {
+      previousObservedTime,
+      currentVideoTime,
+      delta: Math.abs(currentVideoTime - previousObservedTime),
+    });
+
+    panelUi.applyPanelState("sync_interval_large_seek_resync");
+  }
+
+  // sync interval 内の secondary recovery pass をまとめる。
+  // ここでは通常同期で bound track をそろえた後、
+  // runtime / current cue / merged subtitle health を採取し、
+  // Phase J の条件で secondary recovery を評価する。
+  function syncIntervalRunSecondaryRecoveryPass(effectiveSecondaryLanguage) {
+    // -------------------------------------------------------------
+    // 1) secondary track の通常同期を 1 回だけ走らせる。
+    //    ここは「現在の video / language に対して今どの track を束ねるか」を
+    //    揃える通常同期であり、missing を理由にした recovery 再試行ではない。
+    // -------------------------------------------------------------
+    const previousSecondaryTrack = state.secondaryTrack;
+    syncSecondarySubtitleTrackBinding(
+      state.video,
+      effectiveSecondaryLanguage,
+      renderSecondarySubtitle,
+      { suppressRender: true },
+    );
+    state.secondaryTrack = cueController.getBoundSecondaryTrack();
+
+    // -------------------------------------------------------------
+    // 2) sync interval 時点の runtime / cue / current block snapshot を採取する。
+    //    evaluateSecondaryRecovery() と primary recovery 判定に渡す材料を
+    //    helper からまとめて受け取る。
+    // -------------------------------------------------------------
+    const now = Date.now();
+    const {
+      secondaryActiveCues,
+      primaryActiveCues,
+      secondaryCueText,
+      primaryCueText,
+      currentPrimaryText,
+      hasFreshCurrentPrimary,
+      hasSecondarySignal,
+      hasPrimarySignal,
+      mergedSubtitleHealth,
+    } = buildSyncIntervalSubtitleSnapshot(now);
+
+    // -------------------------------------------------------------
+    // 3) secondary health の変化があったときだけ、
+    //    sync interval 時点の context をログする。
+    // -------------------------------------------------------------
+    const syncContextSummary = JSON.stringify({
+      trackCount: state.video?.textTracks?.length ?? 0,
+      primaryTrackFound: Boolean(state.primaryTrack),
+      secondaryTrackFound: Boolean(state.secondaryTrack),
+      secondaryTrackLanguage: state.secondaryTrack?.language || "",
+      secondaryActiveCues,
+      primaryActiveCues,
+      primaryCueTextLength: primaryCueText.length,
+      currentPrimaryTextLength: currentPrimaryText.length,
+      hasFreshCurrentPrimary,
+    });
+    const shouldLogSyncContext =
+      previousSecondaryTrack !== state.secondaryTrack ||
+      syncContextSummary !== state.lastSecondarySyncContext;
+
+    if (shouldLogSyncContext) {
+      state.lastSecondarySyncContext = syncContextSummary;
+      logContent(
+        "secondary track sync context",
+        buildSecondarySyncLogPayload({
+          effectiveSecondaryLanguage,
+          secondaryActiveCues,
+          primaryActiveCues,
+          secondaryCueText,
+          primaryCueText,
+          currentPrimaryText,
+          hasFreshCurrentPrimary,
+          mergedSubtitleHealth,
+          extra: {
+            reason: "sync_interval",
+          },
+        }),
+      );
+    }
+
+    // -------------------------------------------------------------
+    // 4) Phase J の runtime / sequence 条件で
+    //    secondary recovery の要否を判定する。
+    // -------------------------------------------------------------
+    const recoveryDecision = cueController.evaluateSecondaryRecovery({
+      now,
+      runtime: {
+        primaryTrackFound: Boolean(state.primaryTrack),
+        secondaryTrackFound: Boolean(state.secondaryTrack),
+        primaryActiveCues,
+        secondaryActiveCues,
+      },
+      currentCue: {
+        primaryTextLength: primaryCueText.length,
+        secondaryTextLength: secondaryCueText.length,
+        currentPrimaryTextLength: currentPrimaryText.length,
+        hasFreshCurrentPrimary,
+      },
+      sequence: mergedSubtitleHealth?.sequence || null,
+      derived: mergedSubtitleHealth?.derived || null,
+    });
+
+    if (recoveryDecision.action === "terminated") {
+      logContent(
+        "secondary recovery terminated",
+        buildSecondarySyncLogPayload({
+          effectiveSecondaryLanguage,
+          secondaryActiveCues,
+          primaryActiveCues,
+          secondaryCueText,
+          primaryCueText,
+          currentPrimaryText,
+          hasFreshCurrentPrimary,
+          mergedSubtitleHealth,
+          extra: {
+            reason: "sync_interval",
+            missCount: recoveryDecision.secondaryLane.missCount,
+          },
+        }),
+      );
+    }
+
+    if (
+      recoveryDecision.action === "recover" ||
+      recoveryDecision.action === "force-rebind"
+    ) {
+      // -------------------------------------------------------------
+      // 5) debug probe が有効なときだけ、resolver 観点の候補 / 解決結果も採取する。
+      //    recovery 条件そのものは上の evaluateSecondaryRecovery() が決める。
+      // -------------------------------------------------------------
+      if (DEBUG_PANEL_PROBE) {
+        const secondaryCandidates =
+          resolverDeps.getSecondarySubtitleTrackCandidates(
+            state.video,
+            effectiveSecondaryLanguage,
+          );
+        const resolvedSecondaryTrack =
+          resolverDeps.resolveSecondarySubtitleTrack(
+            state.video,
+            effectiveSecondaryLanguage,
+          );
+
+        logContent("secondary resolver probe", {
+          reason: "sync_interval",
+          effectiveSecondaryLanguage,
+          currentSecondaryTrackLanguage: state.secondaryTrack?.language || "",
+          currentSecondaryTrackKind: state.secondaryTrack?.kind || "",
+          currentSecondaryTrackMode: state.secondaryTrack?.mode || "",
+          currentSecondaryCuesLength: resolverDeps.getTrackCuesLength(
+            state.secondaryTrack,
+          ),
+          currentSecondaryActiveCuesLength: getTrackActiveCuesLength(
+            state.secondaryTrack,
+          ),
+          currentSecondaryCueTextLength: secondaryCueText.length,
+          resolvedSecondaryTrackLanguage:
+            resolvedSecondaryTrack?.language || "",
+          resolvedSecondaryTrackKind: resolvedSecondaryTrack?.kind || "",
+          resolvedSecondaryTrackMode: resolvedSecondaryTrack?.mode || "",
+          resolvedSecondaryCuesLength: resolverDeps.getTrackCuesLength(
+            resolvedSecondaryTrack,
+          ),
+          resolvedSecondaryActiveCuesLength: getTrackActiveCuesLength(
+            resolvedSecondaryTrack,
+          ),
+          resolvedSecondaryCueTextLength: normalizeSubtitleText(
+            getCurrentCueText(resolvedSecondaryTrack),
+          ).length,
+          secondaryCandidates,
+        });
+      }
+
+      // -------------------------------------------------------------
+      // 6) recovery / force-rebind が必要なときだけ、
+      //    missing 判定の結果として明示的に secondary 再同期を要求する。
+      // -------------------------------------------------------------
+      logContent(
+        "secondary recovery trigger",
+        buildSecondarySyncLogPayload({
+          effectiveSecondaryLanguage,
+          secondaryActiveCues,
+          primaryActiveCues,
+          secondaryCueText,
+          primaryCueText,
+          currentPrimaryText,
+          hasFreshCurrentPrimary,
+          mergedSubtitleHealth,
+          extra: {
+            reason: "sync_interval",
+            missCount: recoveryDecision.secondaryLane.missCount,
+            forceRebind: recoveryDecision.action === "force-rebind",
+            terminated: recoveryDecision.secondaryLane.terminated,
+            missLimitReached: recoveryDecision.action === "terminated",
+          },
+        }),
+      );
+
+      syncSecondarySubtitleTrack({
+        reason: recoveryDecision.reason,
+        forceRebind: recoveryDecision.action === "force-rebind",
+      });
+    }
+
+    return {
+      now,
+      hasSecondarySignal,
+      hasPrimarySignal,
+    };
+  }
+
+  // sync interval 本体では、
+  // playback context 更新 → large seek 検知 → secondary recovery pass →
+  // 必要時のみ primary recovery という順序で処理する。
   function ensureSecondaryTrackSyncInterval() {
     if (secondaryTrackSyncInterval) return;
 
     secondaryTrackSyncInterval = window.setInterval(() => {
       if (state.restarting) return;
 
-      const found = getVideoAndDialog();
-      const nextVideo = found?.video || state.video;
-      const nextVideoSrcKey = getCurrentVideoSrcKey(nextVideo);
-      const hasCurrentSrcChanged =
-        Boolean(nextVideoSrcKey) &&
-        Boolean(state.lastVideoSrcKey) &&
-        nextVideoSrcKey !== state.lastVideoSrcKey;
-
-      if (hasCurrentSrcChanged) {
-        logContent("currentSrc changed", {
-          previousVideoSrcKey: state.lastVideoSrcKey,
-          nextVideoSrcKey,
-        });
-      }
-
-      if (found && (found.video !== state.video || hasCurrentSrcChanged)) {
-        state.video = found.video;
-        state.dialogEl = found.dialog;
-        state.lastVideoSrcKey = nextVideoSrcKey;
-        state.lastObservedVideoTime = null;
-        reloadSettingsAndReinitialize("video_changed");
-      } else if (found && state.video) {
-        const switched = syncHistoryContextWithPlayback("content_key_changed");
-        if (switched) {
-          renderCurrentSnapshot();
-          renderPanel();
-        }
-      }
-
-      const currentVideoTime = Number(state.video?.currentTime ?? 0);
-      const previousObservedTime = Number(state.lastObservedVideoTime);
-      const largeSeekDetected =
-        Number.isFinite(previousObservedTime) &&
-        Number.isFinite(currentVideoTime) &&
-        Math.abs(currentVideoTime - previousObservedTime) > 6;
-      state.lastObservedVideoTime = Number.isFinite(currentVideoTime)
-        ? currentVideoTime
-        : null;
-
-      if (largeSeekDetected) {
-        state.lastLargeSeekAt = Date.now();
-
-        logContent("large seek detected", {
-          previousObservedTime,
-          currentVideoTime,
-          delta: Math.abs(currentVideoTime - previousObservedTime),
-        });
-
-        panelUi.applyPanelState("sync_interval_large_seek_resync");
-      }
+      syncIntervalRefreshPlaybackContext();
+      syncIntervalDetectLargeSeek();
 
       const effectiveSecondaryLanguage =
         state.requestedSecondaryLang || state.contentSettings.secondaryLang;
       if (!state.video || !effectiveSecondaryLanguage) return;
 
-      const previousSecondaryTrack = state.secondaryTrack;
-      cueController.syncSecondarySubtitleTrack(
-        state.video,
-        effectiveSecondaryLanguage,
-        renderSecondarySubtitle,
-        { suppressRender: true },
-      );
-      state.secondaryTrack = cueController.getBoundSecondaryTrack();
+      const { now, hasSecondarySignal, hasPrimarySignal } =
+        syncIntervalRunSecondaryRecoveryPass(effectiveSecondaryLanguage);
 
-      const secondaryActiveCues = getTrackActiveCuesLength(
-        state.secondaryTrack,
-      );
-      const primaryActiveCues = getTrackActiveCuesLength(state.primaryTrack);
-      const secondaryCueText = normalizeSubtitleText(
-        getCurrentCueText(state.secondaryTrack),
-      );
-      const primaryCueText = normalizeSubtitleText(
-        getCurrentCueText(state.primaryTrack),
-      );
-      const currentPrimaryText = normalizeSubtitleText(
-        state.currentSubtitleBlock?.primaryText || state.lastPrimaryText || "",
-      );
-      const hasPrimaryLiveSignal =
-        primaryActiveCues > 0 || Boolean(primaryCueText);
-      const now = Date.now();
-      const hasFreshCurrentPrimary =
-        Boolean(currentPrimaryText) &&
-        state.lastCurrentSubtitleBlockAt > 0 &&
-        now - state.lastCurrentSubtitleBlockAt <= 3000;
-      const hasSecondarySignal =
-        secondaryActiveCues > 0 || Boolean(secondaryCueText);
-      const hasPrimarySignal = hasPrimaryLiveSignal || hasFreshCurrentPrimary;
-
-      const syncContextSummary = JSON.stringify({
-        trackCount: state.video?.textTracks?.length ?? 0,
-        primaryTrackFound: Boolean(state.primaryTrack),
-        secondaryTrackFound: Boolean(state.secondaryTrack),
-        secondaryTrackLanguage: state.secondaryTrack?.language || "",
-        secondaryActiveCues,
-        primaryActiveCues,
-        primaryCueTextLength: primaryCueText.length,
-        currentPrimaryTextLength: currentPrimaryText.length,
-        hasFreshCurrentPrimary,
-      });
-      const shouldLogSyncContext =
-        previousSecondaryTrack !== state.secondaryTrack ||
-        syncContextSummary !== state.lastSecondarySyncContext;
-      const mergedSubtitleHealth = getMergedSubtitleHealthSnapshot();
-      if (shouldLogSyncContext) {
-        state.lastSecondarySyncContext = syncContextSummary;
-        logContent("secondary track sync context", {
-          reason: "sync_interval",
-          effectiveSecondaryLanguage,
-          trackCount: state.video?.textTracks?.length ?? 0,
-          primaryTrackFound: Boolean(state.primaryTrack),
-          secondaryTrackFound: Boolean(state.secondaryTrack),
-          secondaryTrackLanguage: state.secondaryTrack?.language || "",
-          secondaryActiveCues,
-          primaryActiveCues,
-          primaryCueTextLength: primaryCueText.length,
-          currentPrimaryTextLength: currentPrimaryText.length,
-          hasFreshCurrentPrimary,
-          mergedPrimaryHealthy:
-            mergedSubtitleHealth?.derived?.primaryHealthy ?? null,
-          mergedSecondaryHealthy:
-            mergedSubtitleHealth?.derived?.secondaryHealthy ?? null,
-          mergedShouldRecoverSecondary:
-            mergedSubtitleHealth?.derived?.shouldRecoverSecondary ?? null,
-          mergedShouldForceSecondaryRebind:
-            mergedSubtitleHealth?.derived?.shouldForceSecondaryRebind ?? null,
-          secondaryRecoveryMissCount:
-            cueController.getLaneStates().secondary.missCount,
-        });
-      }
-
-      const recoveryDecision = cueController.evaluateSecondaryRecovery({
-        now,
-        runtime: {
-          primaryTrackFound: Boolean(state.primaryTrack),
-          secondaryTrackFound: Boolean(state.secondaryTrack),
-          primaryActiveCues,
-          secondaryActiveCues,
-        },
-        currentCue: {
-          primaryTextLength: primaryCueText.length,
-          secondaryTextLength: secondaryCueText.length,
-          currentPrimaryTextLength: currentPrimaryText.length,
-          hasFreshCurrentPrimary,
-        },
-        sequence: mergedSubtitleHealth?.sequence || null,
-        derived: mergedSubtitleHealth?.derived || null,
-      });
-
-      if (recoveryDecision.action === "terminated") {
-        logContent("secondary recovery terminated", {
-          reason: "sync_interval",
-          effectiveSecondaryLanguage,
-          missCount: recoveryDecision.secondaryLane.missCount,
-          secondaryTrackFound: Boolean(state.secondaryTrack),
-          currentSecondaryTextLength: secondaryCueText.length,
-          primaryCueTextLength: primaryCueText.length,
-          currentPrimaryTextLength: currentPrimaryText.length,
-        });
-      }
-
-      if (
-        recoveryDecision.action === "recover" ||
-        recoveryDecision.action === "force-rebind"
-      ) {
-        if (DEBUG_PANEL_PROBE) {
-          const secondaryCandidates =
-            resolverDeps.getSecondarySubtitleTrackCandidates(
-              state.video,
-              effectiveSecondaryLanguage,
-            );
-          const resolvedSecondaryTrack =
-            resolverDeps.resolveSecondarySubtitleTrack(
-              state.video,
-              effectiveSecondaryLanguage,
-            );
-
-          logContent("secondary resolver probe", {
-            reason: "sync_interval",
-            effectiveSecondaryLanguage,
-            currentSecondaryTrackLanguage: state.secondaryTrack?.language || "",
-            currentSecondaryTrackKind: state.secondaryTrack?.kind || "",
-            currentSecondaryTrackMode: state.secondaryTrack?.mode || "",
-            currentSecondaryCuesLength: resolverDeps.getTrackCuesLength(
-              state.secondaryTrack,
-            ),
-            currentSecondaryActiveCuesLength: getTrackActiveCuesLength(
-              state.secondaryTrack,
-            ),
-            currentSecondaryCueTextLength: secondaryCueText.length,
-            resolvedSecondaryTrackLanguage:
-              resolvedSecondaryTrack?.language || "",
-            resolvedSecondaryTrackKind: resolvedSecondaryTrack?.kind || "",
-            resolvedSecondaryTrackMode: resolvedSecondaryTrack?.mode || "",
-            resolvedSecondaryCuesLength: resolverDeps.getTrackCuesLength(
-              resolvedSecondaryTrack,
-            ),
-            resolvedSecondaryActiveCuesLength: getTrackActiveCuesLength(
-              resolvedSecondaryTrack,
-            ),
-            resolvedSecondaryCueTextLength: normalizeSubtitleText(
-              getCurrentCueText(resolvedSecondaryTrack),
-            ).length,
-            secondaryCandidates,
-          });
-        }
-
-        logContent("secondary recovery trigger", {
-          reason: "sync_interval",
-          effectiveSecondaryLanguage,
-          missCount: recoveryDecision.secondaryLane.missCount,
-          forceRebind: recoveryDecision.action === "force-rebind",
-          terminated: recoveryDecision.secondaryLane.terminated,
-          missLimitReached: recoveryDecision.action === "terminated",
-          secondaryTrackFound: Boolean(state.secondaryTrack),
-          currentSecondaryTextLength: secondaryCueText.length,
-          primaryCueTextLength: primaryCueText.length,
-          currentPrimaryTextLength: currentPrimaryText.length,
-        });
-
-        syncSecondarySubtitleTrack({
-          reason: recoveryDecision.reason,
-          forceRebind: recoveryDecision.action === "force-rebind",
-        });
-      }
-
+      // secondary はあるが primary が欠ける場合だけ、
+      // sync interval 経由の primary recovery を試行する。
       const trackCount = state.video?.textTracks?.length ?? 0;
       const shouldAttemptPrimaryRecovery =
         hasSecondarySignal && !hasPrimarySignal && trackCount > 1;
-
-      // [binder/cue: recovery - sync interval path]
-      // secondary signal はあるが primary signal が無い場合、
-      // sync interval 経由で primary recovery を試行する。
 
       if (!shouldAttemptPrimaryRecovery) {
         if (hasPrimarySignal) {
@@ -3127,7 +3336,7 @@
 
     // [attach: secondary] secondary resolver / binder は sync helper 側へ委譲する。
     if (secondaryLang) {
-      cueController.syncSecondarySubtitleTrack(
+      syncSecondarySubtitleTrackBinding(
         video,
         secondaryLang,
         renderSecondarySubtitle,
@@ -3208,8 +3417,15 @@
     });
   }
 
+  // -----------------------------------------------------------------------------
+  // reinitialize / restart coordinator helpers
+  // subtitle pipeline の再解決・再接続を起動する上位入口。
+  // 個別の track resolver / binder / render 詳細は下位 helper に委譲する。
+  // -----------------------------------------------------------------------------
+
   // [binder/cue: recovery] attach / recovery の再初期化入口。
   // track 再選択・listener 再接続・panel 反映を最小差分でまとめて行う。
+  // 個別の resolver / binder 実装詳細はここに溜め込まない。
   function reinitializeSubtitlePipeline(reason = "unknown") {
     const switched = syncHistoryContextWithPlayback(reason);
     clearInternalSubtitleState(reason);
@@ -3361,6 +3577,8 @@
     state.contentSettings = { ...snapshot.effectiveSettings };
   }
 
+  // settings 再読込と subtitle pipeline 再初期化をつなぐ上位入口。
+  // 設定ロード後の個別処理は既存 helper に委譲する。
   function reloadSettingsAndReinitialize(reason = "unknown") {
     if (state.restarting) return;
 
