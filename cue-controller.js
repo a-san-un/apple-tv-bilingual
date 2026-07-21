@@ -137,7 +137,7 @@
 
       // runtime 上「primary は進んでいるのに secondary だけ空」の missing 条件を定義する。
       const secondaryRuntimeMissing =
-        currentCue?.hasFreshCurrentPrimary === true &&
+        derived?.primaryHealthy === true &&
         currentCue?.secondaryTextLength === 0 &&
         runtime?.secondaryTrackFound === true &&
         runtime?.secondaryActiveCues === 0;
@@ -177,10 +177,11 @@
         };
       }
 
-      // recovery window を超え、merged assists も recovery 対象と示したときだけ再試行へ進める。
+      // 待機窓超過後は、derived の recovery hint が未確定でも、
+      // runtime 上の missing 継続を優先して recovery を進める。
       const shouldRecoverSecondary =
         secondaryLane.missingDurationMs >= SECONDARY_RECOVERY_WINDOW_MS &&
-        derived?.shouldRecoverSecondary === true;
+        (derived?.shouldRecoverSecondary === true || secondaryLane.isMissing);
 
       if (!shouldRecoverSecondary) {
         secondaryLane.lastDecision = "idle";

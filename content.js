@@ -1191,6 +1191,8 @@
 
     if (!video || !requestedLang) return;
 
+    const previousTrack = state.secondaryTrack;
+
     logContent("secondary track resync requested", {
       reason,
       forceRebind,
@@ -1208,6 +1210,26 @@
     );
 
     state.secondaryTrack = cueController.getBoundSecondaryTrack();
+    const currentTrack = state.secondaryTrack;
+
+    if (!currentTrack) {
+      logContent("secondary sync result: no track resolved (clearing)", {
+        reason,
+        forceRebind,
+      });
+    } else if (previousTrack !== currentTrack || forceRebind) {
+      logContent("secondary sync result: track re-bound", {
+        reason,
+        forceRebind,
+        trackLang: currentTrack.language || "",
+      });
+    } else {
+      logContent("secondary sync result: same track (no re-bind needed)", {
+        reason,
+        forceRebind,
+        trackLang: currentTrack.language || "",
+      });
+    }
   }
 
   function buildSecondarySyncLogPayload({
@@ -1601,6 +1623,14 @@
       sequence: mergedSubtitleHealth?.sequence || null,
       derived: mergedSubtitleHealth?.derived || null,
     });
+
+    if (recoveryDecision.action !== "idle") {
+      logContent("secondary recovery action evaluated", {
+        action: recoveryDecision.action,
+        reason: recoveryDecision.reason,
+        missCount: recoveryDecision.secondaryLane?.missCount ?? null,
+      });
+    }
 
     logSecondaryRecoveryTermination({
       recoveryDecision,

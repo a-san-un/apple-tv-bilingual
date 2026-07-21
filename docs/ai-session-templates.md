@@ -196,7 +196,7 @@ fix: secondary runtime recovery 条件を Phase J 仕様に揃える (Issue #32)
 ## 4. 進捗メモテンプレ
 
 ```md
-## 今回のゴール
+## このスレッドのゴール
 
 - [ ] 今回のセッションで何を「終わった」とみなすかを 3〜10 項目くらいで書く
 - [ ] 真実源側（blocks / sequence）か表示側（panel / overlay / history）か、どこを主に触る回かを明示する

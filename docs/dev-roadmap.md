@@ -1,7 +1,7 @@
 # phase-3 実装ロードマップ
 
 > **対象ブランチ**: `issue-32-content-core-split`  
-> **最終更新**: 2026-07-20  
+> **最終更新**: 2026-07-21  
 > **マージ先**: `main`
 
 この文書は、phase-3 全体の **実装順・issue 状態・現在位置・次の主線** を管理する親ドキュメントである。
@@ -38,15 +38,20 @@
 - Issue #32（subtitle sync / recovery）は、Phase E 後半〜Phase J にまたがる設計・実装タスクとして進行中
 - 現在の主線は **#24 / Issue #32** として、`attachTracks` / observer / bootstrap の安定化と、subtitle sync の truth / health / recovery 境界整理を進めること
 - 特に、secondary recovery の判定責務を `content.js` から `cue-controller.js` 側へ寄せ、large seek 後の復帰挙動を runtime 主体で安定化することが中心課題である
-- 現在は「secondary が戻らない」状態の切り分けから一歩進み、「戻るが少し時間がかかる」「戻らない区間を primary-only で静かに処理する」調整段階に入っている
+- 現時点では「secondary が戻らない」状態の切り分けから一歩進み、
+  - 「large seek 後に recovery / force-rebind が正しく走っているか」
+  - 「実際に track が re-bind されているか」
+  - 「それでも Apple TV+ 側が JA track を復帰させない区間があるのか」
+    をログで切り分けできる段階まで到達している
 - popup / dictionary / AI タブ拡張 (#10) は、構造整理と subtitle sync 改善の後段として扱う
 - `content.js` の責務整理は、巨大ファイルを一気に割るのではなく **coordinator を残しつつ周辺責務を段階的に外へ出す** 方針で進行中
 - 最初の実ファイル分割単位として `playbackContext.js` が追加され、`content.js` から controller 優先 + local fallback で接続されている
+- large seek 後の secondary recovery については、waiting window / missCount / force-rebind / terminated のフローを整理し、Runtime First（実測優先）方針の first cut まで入っている
 
 ### 現在の優先順
 
-1. #24 / Issue #32 Phase J: secondary recovery の復帰ラグ調整と observer / bootstrap 周辺の整理の継続
-2. Phase E 後半: `content.js` 後半の coordinator / layout / reinitialize / playbackContext の責務整理
+1. #24 / Issue #32 Phase J: secondary recovery の Runtime First 化・復帰ラグ観測・observer / bootstrap 周辺の整理の継続
+2. Phase E 後半: `content.js` 後半の coordinator / layout / reinitialize / playbackContext の責務整理（行数削減・重複削減を含む）
 3. #10: subtitle popup UI / dictionary / AI タブ拡張
 
 ---
@@ -78,21 +83,41 @@ Issue #32 は、subtitle sync / recovery を `content.js` 追記ではなく con
 - large seek 直後の UI 空白は nearby rebuild と short-lived hold で一時保護する
 - 戻らない seek window は miss limit 到達後に primary-only terminated へ切り替える
 - `content.js` は coordinator / logging / bridge 的な役割に絞り、subtitle sync / recovery の詳細判定は controller 側へ寄せる
+- large seek 後の Runtime First 方針として、
+  - recovery window（約 1 秒）到達前は derived 判定（merged assists）を尊重し idle を維持する
+  - recovery window 超過後は、derived の揺れにかかわらず runtime の missing 継続（`secondaryLane.isMissing`）を優先して recovery を進める
+    を first cut として採用した
+- recovery 判定の数値構造（window 1秒 / force-rebind 開始タイミング / miss limit 8回）は現行を維持しつつ、gating と観測を強化する方針とした
 
 ### 2.3 現時点の到達点
 
-2026-07-20 時点で、Issue #32 / Phase J は次の first cut まで到達している。
+2026-07-21 時点で、Issue #32 / Phase J は次の first cut まで到達している。
 
 - large seek 後の近傍 truth rebuild を追加
 - nearby rebuild の latest-only hold を導入
 - secondary recovery window / force-rebind 開始 / miss limit を controller 側へ寄せた
 - miss limit 到達後は `terminated` として primary-only 区間へ落とす挙動を確認した
+- `evaluateSecondaryRecovery()` の gating を Runtime First 方針に沿って緩和し、
+  - waiting window 前は `derived.shouldRecoverSecondary` を尊重し idle を維持
+  - waiting window 超過後は runtime missing 継続（`secondaryLane.isMissing`）を優先して recovery を進める
+    変更を導入した
 - secondary subtitle DOM 管理系を 1 グループとして整理し、探索・正規化・panel host 確保・描画を見出しベースで再構成した
 - sync interval 系 6 関数を 1 グループとして整理し、runtime snapshot / playback context / seek 判定 / secondary recovery / primary recovery を段階構成で扱えるようにした
 - `content.js` 後半に coordinator / playbackContext / reinitialize / retry / result bridge の見出しを追加し、責務の入口を可視化した
 - `playbackContext.js` を新規追加し、playback page context / content key / subtitle history context を controller として分離した
 - `manifest.json` に `playbackContext.js` を追加し、`content.js` から `window.ATVB.createPlaybackContextController` 経由で参照する構成にした
 - playbackContext 対象 14 関数を controller 優先 + local fallback で段階接続し、既存挙動を壊さずに分割を導入した
+- `content.js` 側で secondary recovery 判定結果と sync 実行結果を観測するログを追加し、
+  - `secondary recovery action evaluated { action, reason, missCount }`
+  - `secondary sync result: no track resolved (clearing)`
+  - `secondary sync result: track re-bound { forceRebind, trackLang }`
+  - `secondary sync result: same track (no re-bind needed)`
+    により、「判定」「trigger」「再バインドの有無」を切り分けられるようにした
+- large seek 後の実ログから、
+  - recovery / force-rebind 判定は想定どおり進んでいる
+  - `syncSecondarySubtitleTrack()` による re-bind 試行も行われている
+  - それでも一部タイトル / 区間で Apple TV+ 側 JA track が active cues を復帰させないケースがある
+    ことを確認し、拡張側ロジックと基盤側挙動の境界を明文化した
 - コミット / プッシュまで完了している
 
 この段階では「secondary が戻らないケースを壊さず扱える」基盤は入っているが、miss limit 値や primary-only fallback 条件の微調整、大シーク後の secondary 欠落・通常再生中のちらつき・パネルスクロール競合については後続の調整対象とする。
@@ -170,6 +195,8 @@ observer / layout / bootstrap の起動・再初期化・再接続を薄い配�
 - `playbackContext.js` が新規追加されている
 - `manifest.json` に `playbackContext.js` が追加されている
 - playbackContext 対象 14 関数が controller 優先 + local fallback で接続されている
+- secondary recovery の Runtime First 方針と miss limit / primary-only fallback の挙動が、Issue #32 / Phase J の first cut として実装されている
+- large seek 後の recovery 判定と sync 実行結果を観測できるログが追加されており、拡張側と Apple TV+ 側挙動の境界を説明しやすくなっている
 
 ### 並行 UI 調整タスク
 
@@ -196,17 +223,21 @@ Phase E と Issue #32 の主線が一段落した後で、popup / dictionary / A
 
 ### 5.2 #32 側
 
-- secondary recovery の miss limit / window の数値調整
-- primary-only fallback の採用条件見直し
+- secondary recovery の miss limit / window の数値調整（現状の 1秒 / 2回目 force-rebind / 8回 miss limit をベースに微調整が必要か検討）
+- primary-only fallback の採用条件見直し（ユーザ体感とログの両面から）
 - current / panel / overlay の truth 境界整理の継続
 - nearby rebuild / short-lived hold の利用条件を必要最小限に保つ
-- large seek 後に secondary が戻らないケースを、`evaluateSecondaryRecovery` / `syncSecondarySubtitleTrackBinding` 周辺で切り分ける
+- large seek 後に secondary が戻らないケースを、
+  - `evaluateSecondaryRecovery`（判定）
+  - `triggerSecondaryRecovery`（trigger）
+  - `syncSecondarySubtitleTrackBinding`（sync 実行）
+    周辺で観測し、Apple TV+ 側挙動と拡張側ロジックの境界を docs に落とす
 - panel 自動追従とユーザスクロール競合の緩和方針を決める
 
 ### 5.3 content.js / playbackContext 側
 
 - `playbackContext` の local fallback をいつ外すか基準を決める
-- 安定確認後に `content.js` 側の重複実装を削る段取りを設計する
+- 安定確認後に `content.js` 側の重複実装を削る段取りを設計する（行数削減ラウンドを別途立てる）
 - `reinitialize` / `playback controls layout` / `initial cue recovery` を次の分割候補として、見出しレベルのグルーピングを `content.js` に反映する
 
 ### 5.4 docs / Issue 側
@@ -214,7 +245,8 @@ Phase E と Issue #32 の主線が一段落した後で、popup / dictionary / A
 - 設計の正本は `docs/issue-32-subtitle-sync-design.md`
 - 分割原則の正本は `docs/contentjs-split-roadmap.md`
 - この `docs/dev-roadmap.md` は進捗・現在位置・優先順だけに集中させる
-- `playbackContext` 分割導入と現在位置の更新を、Issue #32 コメントにも短く反映する
+- `playbackContext` 分割導入と current Phase J の Runtime First / 観測強化の状況を、Issue #32 コメントにも短く反映する
+- recovery 系の追加調査や設計変更を行う際の「NLM への相談テンプレ」（今回のゴール / 触る層 / 変更しない範囲 / 欲しい答え）を `docs/ai-session-templates.md` からリンクする
 
 ---
 
@@ -226,3 +258,4 @@ Phase E と Issue #32 の主線が一段落した後で、popup / dictionary / A
 - AI セッション運用のテンプレは `docs/ai-session-templates.md` に寄せる
 - 現在の主線は #24 / #32 であり、後続 UI タスクはこの主線を崩さない範囲で扱う
 - `playbackContext.js` は phase-3 分割方針に沿った最初の実ファイル分割単位であり、今後の分割も同様に「小さなステップ」を基本とする
+- recovery ロジックや観測設計の見直しは、今後も NLM を前提に相談しつつ、提案 diff は必ずローカルでの確認フェーズ（grep / sed / 実ログテスト）を経て採用可否を判断する

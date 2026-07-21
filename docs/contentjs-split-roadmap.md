@@ -39,6 +39,7 @@
 - 将来的に必要な単位だけ安全に実ファイルへ切り出せる状態を作る
 - subtitle sync / recovery の改善も、`content.js` への追記で吸収せず、controller / resolver / helper 側へ責務移送して進められる構造にする
 - `content.js` を「状態と判定の本体」ではなく、「薄い wiring / lifecycle 入口」に近づける
+- 今後の NLM 併用前提の作業でも、「NLM に small diff を書かせやすい責務境界」を docs とコードの両方で明確にしておく
 
 ---
 
@@ -60,6 +61,7 @@
 - subtitle sync / recovery の改善も、`content.js` に状態や分岐を足し続けるのではなく、`cue-controller.js` / resolver / health helper 側へ責務移送する
 - `content.js` に何かを足す前に、「本当に wiring か」「controller / resolver に置けないか」を先に確認する
 - `content.js` は最終的に、薄い wiring / bootstrap / lifecycle 入口として残すことを目標にする
+- NLM を使う場合も、まず「どの責務をどこへ寄せるか」を人間側で固定し、その範囲の small diff だけを相談対象にする
 
 ---
 
@@ -124,6 +126,7 @@ secondary subtitle の DOM 管理は、UI shell / render 側の中でも独立�
 - `ensureSecondarySubtitleElement()` を中核にして、探索・正規化・host 確保・描画を 1 セクションとして保つ
 - subtitle text の truth 決定や recovery 判定は持たせず、受け取った入力を描画する責務に留める
 - 将来 `secondaryDom.js` 相当に切り出す場合も、このグループを最小単位にする
+- 今回の Phase では、まず section boundary と観測性を整え、次の分割候補として扱う
 
 ---
 
@@ -156,6 +159,7 @@ secondary subtitle の DOM 管理は、UI shell / render 側の中でも独立�
 - 「旧 recovery state を残したまま新 recovery state を追加する」形は避け、責務移送後は旧 state 参照を段階的に消す
 - large seek のような time-based 事実は `content.js` で拾ってよいが、その解釈と利用は controller 側に寄せる
 - nearby rebuild / current hold / primary-only terminated のような UI 安定化も、truth / controller / resolver を起点に扱う
+- recovery 判定の数値や runtime 条件を `content.js` 側に重複保持しない
 
 ### 3.2.1 playbackContext
 
@@ -201,6 +205,7 @@ secondary subtitle の DOM 管理は、UI shell / render 側の中でも独立�
 - `content.js` からは `playbackContextController?.xxx()` で参照し、当面は local fallback を残す
 - local fallback は安定確認後に撤去し、`content.js` 側の重複実装を削る
 - `appendSubtitleHistory` のような「履歴追加と UI 連携」に近い責務は、この単位には混ぜない
+- 今回の sanity check により、導入後構成は問題なく、次は fallback 撤去条件を定義する段階に入っている
 
 ### 3.2.2 sync interval
 
@@ -229,6 +234,11 @@ sync interval 系は、Issue #32 の runtime recovery をつなぐ orchestrator 
 - recovery 材料の採取は `buildSyncIntervalSubtitleSnapshot()` に集約する
 - secondary recovery 本体は `syncIntervalRunSecondaryRecoveryPass()` にまとめる
 - 判定そのものは `cue-controller.js` / recovery helper 側へ寄せ、`content.js` には復帰フローの配線だけを残す
+- `content.js` に追加するのは原則として観測と trigger 配線だけに留め、runtime missing / missCount / terminated 判定の本体は持たせない
+- 今回の更新により、
+  - `secondary recovery action evaluated`
+  - `secondary sync result: ...`
+    を出す観測点が入ったため、次の分割では「実行 orchestration」と「判定本体」をより切り分けやすくなっている
 
 ---
 
@@ -260,6 +270,7 @@ sync interval 系は、Issue #32 の runtime recovery をつなぐ orchestrator 
 - retry / timer は controller のロジックと混ぜず、起動・再接続の補助に留める
 - unconfigured flow は例外経路ではなく、通常の初期状態として破綻しない構造を保つ
 - subtitle sync / recovery の本体ロジックは持たず、controller / resolver の評価を再トリガする入口に留める
+- #24 の主線と混線しないよう、subtitle sync の不具合を observer 側の条件追加だけで吸収しない
 
 ### 3.3.1 reinitialize / retry / result bridge
 
@@ -300,6 +311,7 @@ sync interval 系は、Issue #32 の runtime recovery をつなぐ orchestrator 
 - large seek 検知のような、再生イベントから得られる薄い事実の記録
 - `window.ATVB` controller 群の組み立てと受け渡し
 - coordinator としての上位入口の維持
+- 観測ログの入口（ただし判定本体ではなく、controller の結果を記録する役割に限る）
 
 ### 4.2 残さないもの
 
@@ -315,6 +327,7 @@ sync interval 系は、Issue #32 の runtime recovery をつなぐ orchestrator 
 - fallback truth の常設ロジック
 - content key / history context の詳細実装
 - 大きな DOM グループの個別生成・正規化ロジック
+- runtime missing / force-rebind / miss limit / terminated などの recovery 条件そのもの
 
 ### 4.3 例外の扱い
 
@@ -324,6 +337,7 @@ sync interval 系は、Issue #32 の runtime recovery をつなぐ orchestrator 
 - state を増やす場合は、controller 側へ移るまでの一時的な最小差分に限る
 - 一時 state を入れたら、次バッチで消す出口を必ず意識する
 - local fallback を残す場合も、恒久化せず、撤去条件を docs か進捗メモで明示する
+- NLM から提案された差分も、bridge を太らせる形なら採らず、controller 側へ寄せられないかを先に見直す
 
 ---
 
@@ -345,6 +359,7 @@ sync interval 系は、Issue #32 の runtime recovery をつなぐ orchestrator 
 - observer / bootstrap の調整で recovery 問題を無理に吸収しない
 - `content.js` に暫定フラグや一時 state を足す前に、「controller 側へ移せないか」を先に確認する
 - 今回の進捗では、5 と 6 の中間段階として `secondary subtitle DOM` / `sync interval` / `playbackContext` の境界整理と一部実分割まで進んでいる
+- 次の一手は、「観測を入れたまま content.js を太らせない」ことを守りながら、reinitialize / layout / initial recovery のいずれかを小さく切ることにある
 
 ### 5.2 Issue #32 の位置づけ
 
@@ -353,8 +368,9 @@ sync interval 系は、Issue #32 の runtime recovery をつなぐ orchestrator 
 - そのため、large seek / nearby rebuild / secondary recovery の修正も、`content.js` への追記ではなく controller / resolver への責務移送を優先する
 - `content.js` に残すのは、large seek 検知や sync interval 呼び出しのような配線部分だけとする
 - `playbackContext.js` の追加は、この方針に沿った最初の実ファイル分割例である
+- 今回の更新で、secondary recovery の gating は `cue-controller.js` 側に寄せ、`content.js` 側には観測と trigger 配線のみを残す方向がさらに明確になった
 
-### 5.3 現在の主線（2026-07-20 時点）
+### 5.3 現在の主線（2026-07-21 時点）
 
 - `cue-controller.js` へ primary / secondary cuechange 本流を集める
 - `SubtitleBlockSequence` を truth source とし、panel / overlay / current / history の起点を統一する
@@ -362,8 +378,13 @@ sync interval 系は、Issue #32 の runtime recovery をつなぐ orchestrator 
 - secondary recovery の判定責務は `content.js` から `cue-controller.js` 側へ寄せる
 - large seek 時の secondary recovery は、runtime 主体の missing / reset / miss limit 付き retry として controller 側で扱う
 - large seek 直後の UI 安定化は、nearby rebuild と short-lived hold を controller 側で扱う
-- `content.js` の後半では、まずコメント / section boundary による責務可視化を先行し、その後に実ファイル分割へ進む
+- `content.js` の後半では、まず comments / section boundary による責務可視化を先行し、その後に実ファイル分割へ進む
 - 現時点で `playbackContext.js` は追加済みで、対象 14 関数が controller 優先 + local fallback で接続されている
+- `cue-controller.js` 側では、waiting window 超過後に runtime missing 継続を優先する Runtime First の first cut が導入済みである
+- `content.js` 側には
+  - `secondary recovery action evaluated`
+  - `secondary sync result: ...`
+    の観測が追加され、判定本体と実行結果の切り分けがしやすくなっている
 - 次の有力候補は `reinitialize pipeline` / `playback controls layout` / `initial cue recovery` である
 - 今後の改善も、`content.js` に recovery state や分岐を増やす方向ではなく、controller / resolver / helper の責務分割で進める
 
@@ -385,6 +406,7 @@ sync interval 系は、Issue #32 の runtime recovery をつなぐ orchestrator 
 - その後に最小差分で差し替える
 - 最後に実機確認とログ観測で戻り道を残す
 - 実ファイル分割時は、構文確認 → manifest 読み込み順確認 → controller 接続確認 → 実ブラウザ観測の順で見る
+- NLM を使うときも、この順番は崩さない。先にコードを確認し、相談対象の責務を固定してから small diff を依頼する
 
 ### 6.3 削除のルール
 
@@ -400,6 +422,7 @@ sync interval 系は、Issue #32 の runtime recovery をつなぐ orchestrator 
 - 進捗と優先順位は `docs/dev-roadmap.md`
 - 実装スレ / セッションメモは正本ではなく、作業ログとして扱う
 - `playbackContext` のような実分割が入った場合は、この文書へ「分割単位・接続方式・fallback 方針」を反映する
+- Runtime First 化や観測ログ追加のように、「まだ content.js に残しているが将来外へ出したい責務」も、この文書で境界を明示しておく
 
 ---
 
@@ -422,6 +445,12 @@ sync interval 系は、Issue #32 の runtime recovery をつなぐ orchestrator 
 - secondary subtitle DOM 管理
 - sync interval orchestration
 
+補足:
+
+- `sync interval orchestration` は候補だが、先に `cue-controller.js` 側へ寄せるべき判定責務が残っていないか確認してから切る
+- `secondary subtitle DOM 管理` は 1 グループとしてまとまっているため、次の実分割候補として扱いやすい
+- `reinitialize` / retry / result bridge は #24 側の整理とも接続しやすいため、有力候補である
+
 ### 7.3 後続候補
 
 - panel / overlay 入力整形のさらなる切り出し
@@ -437,4 +466,5 @@ sync interval 系は、Issue #32 の runtime recovery をつなぐ orchestrator 
 - この文書では、個々の issue の完了判定ではなく、「`content.js` をどう安全に薄くしていくか」の観点に限定して扱う
 - `content.js` の行数を減らすこと自体は重要だが、より重要なのは **責務が正しい場所へ移っていること** である
 - 逆に、行数が少し減っても controller / resolver 側の境界が曖昧なら、この文書の目的には達していない
-- 今回の `playbackContext.js` 導入は、今後の分割でも「小さな責務単位を選び、コメント整理 → 実分割 → 段階接続 → fallback 撤去」の順で進めるべきことを示す先例として扱う
+- 今回の `playbackContext.js` 導入は、今後の分割でも「小さな責務単位を選び、comments 整理 → 実分割 → 段階接続 → fallback 撤去」の順で進めるべきことを示す先例として扱う
+- recovery ロジックや観測設計について NLM を使う場合も、この文書で定義した責務境界を優先し、`content.js` に安易に state や分岐を足さないことを前提とする
