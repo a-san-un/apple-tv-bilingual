@@ -764,7 +764,10 @@ secondary subtitle の DOM 管理は、UI shell / render 側の中でも独立�
 方針:
 
 - `ensureSecondarySubtitleElement()` を中核にして、探索・正規化・host 確保・描画を 1 セクションとして保つ
-- truth 決定や recovery 判定は持たせず、受け取った入力を描画する責務に留める
+- `ensureSecondarySubtitleElement()` は必要になった時に host / shell を確保する lazy initialization の入口として扱う
+- `renderSecondarySubtitle()` は truth 決定や recovery 判定を持たず、受け取った入力を描画する責務に留める
+- secondary subtitle DOM は Apple TV+ の right panel / slot 構造への依存を吸収する infrastructure 層として扱う
+- 古いセレクタや data 属性差分の吸収は `getSecondarySubtitleElements()` を入口に集約する
 - 将来 `secondaryDom.js` 相当に切り出す場合も、このグループを分割単位として扱う
 
 ### 9.2 binder / cue logic
@@ -819,7 +822,9 @@ sync interval 系は runtime recovery をつなぐ orchestrator 層として 1 �
 
 - `ensureSecondaryTrackSyncInterval()` は orchestrator として処理順だけを担当する
 - recovery 材料の採取は `buildSyncIntervalSubtitleSnapshot()` に集約する
+- `buildSyncIntervalSubtitleSnapshot()` が作る snapshot は、recovery 判定層へ渡す入力境界として扱う
 - secondary recovery 本体は `syncIntervalRunSecondaryRecoveryPass()` にまとめる
+- `syncIntervalRunSecondaryRecoveryPass()` は単なる helper 群ではなく、sync interval 内の secondary recovery を束ねる sub-orchestrator として扱う
 - 判定そのものは `cue-controller.js` / recovery helper 側へ寄せ、`content.js` には復帰フローの配線だけを残す
 
 ### 9.3 playback context
@@ -875,7 +880,7 @@ sync interval 系は runtime recovery をつなぐ orchestrator 層として 1 �
 - retry / timer は controller のロジックと混ぜず、起動・再接続の補助に留める
 - unconfigured flow は例外経路ではなく、通常の初期状態として破綻しない構造を保つ
 
-#### 9.4.1 reinitialize / retry / result bridge
+##### 9.4.1 reinitialize / retry / result bridge
 
 再初期化系は observer / bootstrap 側に残しつつ、1 セクションとして明示的に整理する。
 
@@ -884,16 +889,19 @@ sync interval 系は runtime recovery をつなぐ orchestrator 層として 1 �
 - reinitialize entry helpers
 - track resolve retry helpers
 - reinitialize result / settings bridge helpers
+- `reinitialize-coordinator.js`
 
 責務:
 
 - 現在の playback context を取り直して再初期化入口へ渡す
 - `video_changed` 後に track 解決が遅れるケースの retry 管理
-- 再初期化結果の後処理と settings snapshot の state 反映
+- settings snapshot の state 反映
+- 再初期化結果の評価と、retry 継続 / 停止の後処理橋渡し
 
 方針:
 
 - `reinitializeSubtitlePipeline` は「重い本体」、周辺 helper は「入口 / retry / 結果反映」に分けて読む
+- `syncIntervalRefreshPlaybackContext()` は sync interval orchestration 側の入口として残し、reinitialize 専用の entry helper とは分けて扱う
 - 再初期化の判定や retry 条件を複数箇所で重複保持しない
 - 今後の分割候補として、entry / retry / result bridge の境界が保てる粒度で整理する
 
@@ -921,6 +929,55 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
 - `playback-controls-layout.js` を playback controls layout 実装の正本として扱う
 - `content.js` には薄い bridge のみを残し、新しい判定や state を足さない
 - bridge が太らないようにし、layout 判定本体や managed style 実装は module 側へ寄せる
+
+#### 9.4.3 runtime observers
+
+runtime-observers.js は、Apple TV+ 再生画面における DOM の構造変化やリサイズを監視し、再接続・再評価・再配置のトリガーを統括する。
+
+対象:
+
+- 各種 Observer ライフサイクル (`startPlaybackControlLayoutObservers`, `stopPlaybackControlLayoutObservers`)
+- DOM 再接続 bridge (`refreshPlaybackControlResizeObserverTargets`)
+- レイアウト変更検知 (`playbackControlsMutationObserver`, `playbackControlsResizeHandler`)
+- 再初期化 / リカバリ論理入口 (`handleVideoChanged`, `handleContentKeyChanged`)
+
+責務:
+
+- `MutationObserver` や `ResizeObserver` インスタンスの生成・保持・破棄管理
+- 監視対象要素（footer, panel 等）の自己解決、および要素が再生成された際の自動再バインド
+- 膨大な DOM 変化から「レイアウト再評価が必要なケース」のみを抽出するフィルタリング
+- `video.src` や content key の変更を論理的な事実として検知し、上位の coordinator へ通知する機能
+
+方針:
+
+- 実装詳細の隠蔽: Observer インスタンスや具体的なフィルタ条件（どの属性変化を無視するか等）はモジュール内のプライベートな状態として保持し、`content.js` に意識させない
+- 抽象イベント通知: 生の `MutationRecord` をそのまま coordinator へ渡さず、`onLayoutLikelyChanged` のような意味のある抽象化された通知として発行することで、bridge を太らせない
+- 戦略的配線の維持: ライフサイクルの起動（boot 時）や、通知を受けた後の「どの controller を呼ぶか」といった高レベルな意思決定（strategic routing）のみを `content.js` に残す
+- モジュール間連携: 監視対象の解決には `playback-controls-layout.js` の `getTargets()` 等を利用し、要素探索のロジックが複数モジュールに分散するのを防ぐ
+
+### 9.5 content.js の物理構造
+
+`content.js` は最終的に thin coordinator として、論理セクションごとの見出しを保ちながら物理配置を整理する。
+
+目的:
+
+- 実ファイル分割前でも、責務の混在を防ぎながら `content.js` を読める状態に保つ
+- docs 上で定義した責務境界を、`content.js` 内のコメント見出しと配置ルールへ落とし込む
+- 次ラウンドでの物理移送を、論理的リスクの少ない cut & paste に近づける
+
+構成方針:
+
+- UI shell / render 系は 1 セクションに寄せ、secondary subtitle DOM 管理をその内部グループとして保つ
+- sync interval orchestration は binder / cue logic 配下の独立セクションとして保ち、定期実行の順序制御だけを `content.js` に残す
+- playback context 系 helper は再生対象文脈の bridge としてまとまりを維持し、truth / history / UI 表示本体とは混ぜない
+- reinitialize / retry / result bridge、playback controls layout、runtime observers、bootstrap / cleanup は observer / layout / bootstrap 配下の見出しで区画整理する
+- 実装詳細を増やさず、`content.js` には module 間の初期化・イベント配送・多重実行防止ガードのような上位配線を残す
+
+運用ルール:
+
+- Apple TV+ 固有のセレクタ文字列、重い DOM 掘削、複雑な timer / retry 条件、recovery 判定本体は `content.js` に常設しない
+- 未分割期間でも、対象関数は必ず定義済みセクション配下へ寄せ、責務の飛び地を増やさない
+- 新しい処理を追加する場合も、まず既存セクションのどこに属するかを決め、属せない場合は設計正本側を先に更新する
 
 ---
 
@@ -1033,6 +1090,7 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
 
 - `content.js`
 - `playbackContext.js`
+- `reinitialize-coordinator.js`
 - `cue-controller.js`
 - `subtitle-blocks.js`
 - `subtitle-view-resolver.js`
@@ -1063,6 +1121,8 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
   - secondary track 候補解決と観測
 - `playbackContext.js`
   - playback page context / content key / history context
+- `reinitialize-coordinator.js`
+  - subtitle pipeline の再初期化フロー、track resolve retry、settings / result bridge の coordinator
 - `playback-controls-layout.js`
   - controls の位置・幅・translate 管理
 - `runtime-observers.js`

@@ -98,6 +98,7 @@ Issue #32 の流れの中で、すでに次の到達点がある。
 - secondary recovery は runtime first / merged assists で扱う方針が固まっている
 - `cue-controller.js` 側に lane state / recovery 判定を寄せる方向が固まっている
 - `playbackContext.js` が最初の実ファイル分割単位として導入済みである
+- `reinitialize-coordinator.js` が導入され、reinitialize / retry / settings-result bridge が 1 塊として `content.js` から外出し済みである
 - playback controls layout は `playback-controls-layout.js` を正本とする構成へ整理済みである
 - `content.js` 側に secondary recovery 判定結果と sync 実行結果を観測するログが入っている
 
@@ -118,7 +119,8 @@ Issue #32 の流れの中で、すでに次の到達点がある。
 - rebind 試行そのものが走っているかどうかをログで切り分けられる
 - `playbackContext.js` により、playback page context / content key / history context は分離済みである
 - playback controls layout も module 側を正本とする接続へ整理済みである
-- 一方で、reinitialize / retry / result bridge、secondary subtitle DOM、sync interval orchestration などは、まだ `content.js` 側にまとまりとして残っている
+- `reinitialize-coordinator.js` により、reinitialize / retry / settings-result bridge は 1 塊として `content.js` から外出し済みである
+- 一方で、secondary subtitle DOM と sync interval orchestration は、まだ `content.js` 側にまとまりとして残っている
 
 ---
 
