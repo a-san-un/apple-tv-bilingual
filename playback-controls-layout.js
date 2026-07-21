@@ -1,12 +1,59 @@
 (function () {
   "use strict";
 
+  const PLAYBACK_CONTROLS_LAYOUT = {
+    headerSelector: ".video-player__header",
+    controlsSelector: ".video-player__controls",
+    progressSelector: ".video-player__progress",
+    metadataSelector: ".video-player__metadata",
+    tabsSelector: ".video-player__tabs",
+    autoSubsNoteSelector: ".video-player__auto-subs-note",
+    skipOverlaySelector:
+      ".skip-overlay__button-container, .skip-overlay__controls-container",
+    footerSelector: ".video-player__footer.scrubbing-enabled",
+    footerFallbackSelector: ".video-player__footer",
+    unifiedSelector: ".unified-controls",
+    volumeSelector: "amp-volume-control-unified",
+    volumeFallbackSelector: ".volume-unified",
+    panelSelector: "#atv-panel-host",
+    videoSelector: ".video-player__video-container",
+    footerGapPx: 8,
+    footerSafeGutterPx: 16,
+  };
+
+  const PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR = "data-atvb-base-transform";
+  const PLAYBACK_CONTROLS_MANAGED_ATTR = "data-atvb-layout-managed";
+  const PLAYBACK_CONTROLS_SHIFT_X_ATTR = "data-atvb-shift-x";
+
+  function getPlaybackControlsLayoutTargets() {
+    return {
+      panel:
+        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.panelSelector) ||
+        document.querySelector(".dual-subtitles-secondary") ||
+        document.querySelector("[data-secondary-subtitle]"),
+      header: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.headerSelector),
+      controls: document.querySelector(
+        PLAYBACK_CONTROLS_LAYOUT.controlsSelector,
+      ),
+      progress: document.querySelector(
+        PLAYBACK_CONTROLS_LAYOUT.progressSelector,
+      ),
+      skipOverlay: document.querySelector(
+        PLAYBACK_CONTROLS_LAYOUT.skipOverlaySelector,
+      ),
+      footer:
+        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerSelector) ||
+        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerFallbackSelector),
+      unified: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.unifiedSelector),
+      volume:
+        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.volumeSelector) ||
+        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.volumeFallbackSelector),
+      video: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.videoSelector),
+    };
+  }
+
   function createPlaybackControlsLayout(deps) {
     const {
-      PLAYBACK_CONTROLS_LAYOUT,
-      PLAYBACK_CONTROLS_MANAGED_ATTR,
-      PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR,
-      PLAYBACK_CONTROLS_SHIFT_X_ATTR,
       PLAYBACK_HEADER_BASE_WIDTH_ATTR,
       PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR,
       PLAYBACK_FOOTER_BASE_WIDTH_ATTR,
@@ -19,7 +66,6 @@
       PLAYBACK_SKIP_BASE_TRANSFORM_ATTR,
       DEBUG_SECONDARY_SUBS,
       logContent,
-      getPlaybackControlsLayoutTargets,
     } = deps;
 
     // この関数群は、content.js から少しずつ移設する。

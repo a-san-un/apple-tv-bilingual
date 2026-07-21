@@ -40,29 +40,7 @@
   const SECONDARY_SUBTITLE_IDLE_CLEAR_MS = 3200;
   const PANEL_PRIMARY_GRACE_MS = 600;
   const SUBTITLE_HISTORY_MAX_PER_CONTENT = 500;
-  const PLAYBACK_CONTROLS_LAYOUT = {
-    headerSelector: ".video-player__header",
-    controlsSelector: ".video-player__controls",
-    progressSelector: ".video-player__progress",
-    metadataSelector: ".video-player__metadata",
-    tabsSelector: ".video-player__tabs",
-    autoSubsNoteSelector: ".video-player__auto-subs-note",
-    skipOverlaySelector:
-      ".skip-overlay__button-container, .skip-overlay__controls-container",
-    footerSelector: ".video-player__footer.scrubbing-enabled",
-    footerFallbackSelector: ".video-player__footer",
-    unifiedSelector: ".unified-controls",
-    volumeSelector: "amp-volume-control-unified",
-    volumeFallbackSelector: ".volume-unified",
-    panelSelector: "#atv-panel-host",
-    videoSelector: ".video-player__video-container",
-    footerGapPx: 8,
-    footerSafeGutterPx: 16,
-  };
   const PANEL_SLOT_LAYER_STYLE_ID = "atv-panel-slot-layer-style";
-  const PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR = "data-atvb-base-transform";
-  const PLAYBACK_CONTROLS_MANAGED_ATTR = "data-atvb-layout-managed";
-  const PLAYBACK_CONTROLS_SHIFT_X_ATTR = "data-atvb-shift-x";
   const PLAYBACK_HEADER_BASE_WIDTH_ATTR = "data-atvb-header-base-width";
   const PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR = "data-atvb-header-base-max-width";
   const PLAYBACK_FOOTER_BASE_WIDTH_ATTR = "data-atvb-footer-base-width";
@@ -1731,26 +1709,7 @@
     return getComputedStyle(el).display !== "none";
   }
 
-  function composeManagedTransform(baseTransform, shiftX) {
-    const normalizedBase = String(baseTransform || "").trim();
-    const normalizedShift =
-      Math.abs(shiftX) < 0.5 ? 0 : Number(shiftX.toFixed(2));
 
-    if (!normalizedShift) return normalizedBase;
-
-    const shiftTransform = `translateX(${normalizedShift}px)`;
-    return normalizedBase
-      ? `${normalizedBase} ${shiftTransform}`
-      : shiftTransform;
-  }
-
-  function setTransformIfChanged(el, value) {
-    if (!el) return;
-    const normalizedNext = String(value || "").trim();
-    const normalizedCurrent = String(el.style.transform || "").trim();
-    if (normalizedCurrent === normalizedNext) return;
-    el.style.transform = normalizedNext;
-  }
 
   function setStyleIfChanged(el, propertyName, value) {
     if (!el) return;
@@ -1759,42 +1718,8 @@
     el.style[propertyName] = next;
   }
 
-  function applyManagedTranslateX(el, shiftX) {
-    if (!el) return;
 
-    const managed = el.getAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR) === "1";
-    const baseTransform = managed
-      ? el.getAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR) || ""
-      : String(el.style.transform || "").trim();
 
-    if (!managed) {
-      el.setAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR, baseTransform);
-    }
-
-    const composed = composeManagedTransform(baseTransform, shiftX);
-    setTransformIfChanged(el, composed);
-    el.setAttribute(PLAYBACK_CONTROLS_SHIFT_X_ATTR, String(shiftX || 0));
-    el.setAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR, "1");
-  }
-
-  function getManagedShiftX(el) {
-    if (!el) return 0;
-    const raw = el.getAttribute(PLAYBACK_CONTROLS_SHIFT_X_ATTR);
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-
-  function clearManagedTranslateX(el) {
-    if (!el) return;
-    if (el.getAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR) !== "1") return;
-
-    const baseTransform =
-      el.getAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR) || "";
-    setTransformIfChanged(el, baseTransform);
-    el.removeAttribute(PLAYBACK_CONTROLS_SHIFT_X_ATTR);
-    el.removeAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR);
-    el.removeAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR);
-  }
 
   function applyManagedFooterSizing(footer, widthPx, leftPx = 0) {
     if (!footer) return;
@@ -2113,32 +2038,6 @@
     });
   }
 
-  function getPlaybackControlsLayoutTargets() {
-    return {
-      panel:
-        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.panelSelector) ||
-        document.querySelector(".dual-subtitles-secondary") ||
-        document.querySelector("[data-secondary-subtitle]"),
-      header: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.headerSelector),
-      controls: document.querySelector(
-        PLAYBACK_CONTROLS_LAYOUT.controlsSelector,
-      ),
-      progress: document.querySelector(
-        PLAYBACK_CONTROLS_LAYOUT.progressSelector,
-      ),
-      skipOverlay: document.querySelector(
-        PLAYBACK_CONTROLS_LAYOUT.skipOverlaySelector,
-      ),
-      footer:
-        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerSelector) ||
-        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerFallbackSelector),
-      unified: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.unifiedSelector),
-      volume:
-        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.volumeSelector) ||
-        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.volumeFallbackSelector),
-      video: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.videoSelector),
-    };
-  }
 
   function clearPlaybackControlsTransforms() {
     return clearPlaybackControlsTransformsFromModule();
@@ -3111,17 +3010,11 @@
     },
     getTarget,
     showPopup,
-    getPlaybackControlsLayoutTargets,
-    PLAYBACK_CONTROLS_LAYOUT,
     setStyleIfChanged,
   });
 
   const { createPlaybackControlsLayout } = root.playbackControlsLayout;
   const playbackControlsLayout = createPlaybackControlsLayout({
-    PLAYBACK_CONTROLS_LAYOUT,
-    PLAYBACK_CONTROLS_MANAGED_ATTR,
-    PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR,
-    PLAYBACK_CONTROLS_SHIFT_X_ATTR,
     PLAYBACK_HEADER_BASE_WIDTH_ATTR,
     PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR,
     PLAYBACK_FOOTER_BASE_WIDTH_ATTR,
@@ -3134,7 +3027,6 @@
     PLAYBACK_SKIP_BASE_TRANSFORM_ATTR,
     DEBUG_SECONDARY_SUBS,
     logContent,
-    getPlaybackControlsLayoutTargets,
   });
 
   const {
@@ -3201,7 +3093,6 @@
     state,
     logContent,
     getPlaybackContext,
-    getPlaybackControlsLayoutTargets,
     scheduleAdjustPlaybackControls,
     scheduleControlSettlingBurst,
   });
