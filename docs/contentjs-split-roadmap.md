@@ -39,7 +39,7 @@
 - 将来的に必要な単位だけ安全に実ファイルへ切り出せる状態を作る
 - subtitle sync / recovery の改善も、`content.js` への追記で吸収せず、controller / resolver / helper 側へ責務移送して進められる構造にする
 - `content.js` を「状態と判定の本体」ではなく、「薄い wiring / lifecycle 入口」に近づける
-- 今後の NLM 併用前提の作業でも、「NLM に small diff を書かせやすい責務境界」を docs とコードの両方で明確にしておく
+- NLM 併用前提の作業でも、責務境界と相談範囲を docs とコードの両方で明確にしておく
 
 ---
 
@@ -47,21 +47,21 @@
 
 - `content.js` は一括分割せず、Phase 単位で段階的に整理する
 - 最優先は **既存挙動を変えないこと**
-- 構造整理と仕様変更を同じバッチで混ぜない
+- 構造整理と仕様変更を同じラウンドで混ぜない
 - 先に純関数・独立責務を切り出し、DOM 依存・observer 依存・Apple TV+ 固有 UI 依存の強い責務は後ろへ回す
 - content script は manifest の `content_scripts` 順で読み込まれる前提で、`window.ATVB` 名前空間を使って段階的に分離する
 - 新旧経路の切り替えは、**controller 優先 + local fallback** のような段階接続を基本とし、全面置換は安定確認後に行う
 - 旧ロジックを残したまま新ロジックを継ぎ足す形は避け、薄いラッパーか差分ゼロ移設を基本とする
 - 同じ責務の処理を別経路に複製しない
 - 既存 helper / 既存 state / 既存フローに寄せられるものは寄せる
-- 削除は「確実に不要」と判断できるものだけに限定し、迷うものは次バッチへ送る
+- 削除は「確実に不要」と判断できるものだけに限定し、迷うものは次ラウンドへ送る
 - phase 外の全面リファクタリングは行わない
 - comments / section boundary を使って、まずは `content.js` 内で責務境界を見える化する
 - UI 見た目調整の issue は、分割ロードマップの主線とは分けて扱い、必要な補足だけを残す
 - subtitle sync / recovery の改善も、`content.js` に状態や分岐を足し続けるのではなく、`cue-controller.js` / resolver / health helper 側へ責務移送する
 - `content.js` に何かを足す前に、「本当に wiring か」「controller / resolver に置けないか」を先に確認する
 - `content.js` は最終的に、薄い wiring / bootstrap / lifecycle 入口として残すことを目標にする
-- NLM を使う場合も、まず「どの責務をどこへ寄せるか」を人間側で固定し、その範囲の small diff だけを相談対象にする
+- NLM を使う場合も、まず「どの責務をどこへ寄せるか」を人間側で固定し、その範囲のレビューと整理に使う
 
 ---
 
@@ -125,8 +125,8 @@ secondary subtitle の DOM 管理は、UI shell / render 側の中でも独立�
 
 - `ensureSecondarySubtitleElement()` を中核にして、探索・正規化・host 確保・描画を 1 セクションとして保つ
 - subtitle text の truth 決定や recovery 判定は持たせず、受け取った入力を描画する責務に留める
-- 将来 `secondaryDom.js` 相当に切り出す場合も、このグループを最小単位にする
-- 今回の Phase では、まず section boundary と観測性を整え、次の分割候補として扱う
+- 将来 `secondaryDom.js` 相当に切り出す場合も、このグループを分割単位として扱う
+- 現段階では section boundary と観測性を整え、次の実分割候補として扱う
 
 ---
 
@@ -237,7 +237,7 @@ sync interval 系は、Issue #32 の runtime recovery をつなぐ orchestrator 
 - 更新により、
   - `secondary recovery action evaluated`
   - `secondary sync result: ...`
-    を出す観測点が入り、次の分割では「実行 orchestration」と「判定本体」をより切り分けやすくなっている
+    を出す観測点が入り、「実行 orchestration」と「判定本体」を切り分けやすくなっている
 
 ---
 
@@ -328,31 +328,31 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
   - `clearPlaybackControlsLayoutState`
   - `clearPlaybackControlsTransforms`
   - `adjustPlaybackControlsForPanel`
-    の本体が存在する。
+    の本体が存在する
 - `createPlaybackControlsLayout({...})` の return には
   - `PLAYBACK_CONTROLS_LAYOUT`
   - `getPlaybackControlsLayoutTargets`
   - `clearPlaybackControlsTransforms`
   - `adjustPlaybackControlsForPanel`
-    が含まれる。
+    が含まれる
 - `content.js` 側では
   - `createPlaybackControlsLayout({...})` の初期化
   - layout controller instance からの API / 定数 / target resolver の受け取り
   - `overlay-controller.js`
   - `runtime-observers.js`
     への bridge
-    を持つ。
-- `content.js` 側の `clearPlaybackControlsLayoutState` 重複実装は first cut で削除済み。
+    を持つ
+- `content.js` 側の `clearPlaybackControlsLayoutState` 重複実装は first cut で削除済み
 - 続くラウンドで
   - `PLAYBACK_CONTROLS_LAYOUT`
   - `getPlaybackControlsLayoutTargets`
   - `applyManaged*` / `clearManaged*`
-    系の ownership を `playback-controls-layout.js` 側へ集約済み。
+    系の ownership を `playback-controls-layout.js` 側へ集約済み
 - 実機確認では、
   - panel 開閉時の controls / footer / progress / volume の再配置
   - overlay の位置維持
   - controls 再描画後の再開閉で二重適用が出ないこと
-    を確認済み。
+    を確認済み
 
 ---
 
@@ -394,8 +394,8 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
 完全移送がまだ難しい期間は、`content.js` に薄い bridge を残してよい。
 
 - ただし bridge は「呼び出すだけ」「時刻や event を渡すだけ」に留める
-- state を増やす場合は、controller 側へ移るまでの一時的な最小差分に限る
-- 一時 state を入れたら、次バッチで消す出口を必ず意識する
+- state を増やす場合は、controller 側へ移るまでの一時的な最小範囲に限る
+- 一時 state を入れたら、次ラウンドで消す出口を必ず意識する
 - local fallback を残す場合も、恒久化せず、撤去条件を docs か進捗メモで明示する
 - NLM から提案された差分も、bridge を太らせる形なら採らず、controller 側へ寄せられないかを先に見直す
 
@@ -419,7 +419,7 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
 - observer / bootstrap の調整で recovery 問題を無理に吸収しない
 - `content.js` に暫定フラグや一時 state を足す前に、「controller 側へ移せないか」を先に確認する
 - 現在の進捗では、5 と 6 の中間段階として `secondary subtitle DOM` / `sync interval` / `playbackContext` の境界整理と一部実分割まで進んでいる
-- 次の一手は、「観測を入れたまま content.js を太らせない」ことを守りながら、reinitialize / layout / initial recovery のいずれかを小さく切ることにある
+- 次の一手は、「観測を入れたまま content.js を太らせない」ことを守りながら、reinitialize / layout / initial recovery のいずれかを次の主題として選ぶことにある
 
 ### 5.2 Issue #32 の位置づけ
 
@@ -428,7 +428,7 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
 - そのため、large seek / nearby rebuild / secondary recovery の修正も、`content.js` への追記ではなく controller / resolver への責務移送を優先する
 - `content.js` に残すのは、large seek 検知や sync interval 呼び出しのような配線部分だけとする
 - `playbackContext.js` の追加は、この方針に沿った最初の実ファイル分割例である
-- 現在の Runtime First 化では、waiting window 超過後に runtime missing 継続を優先する first cut が導入済みである。
+- 現在の Runtime First 化では、waiting window 超過後に runtime missing 継続を優先する first cut が導入済みである
 
 ### 5.3 現在の主線（2026-07-21 時点）
 
@@ -448,17 +448,17 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
 
 ### 5.4 直近反映メモ（playback controls layout ラウンド）
 
-- playback controls layout ラウンドでは、次を行った。
+- playback controls layout ラウンドでは、次を行った
   - `playback-controls-layout.js` を playback controls layout 実装の正本として扱う方針を維持した
   - `content.js` 側の `clearPlaybackControlsLayoutState` 重複実装を削除し、layout 1責務の first cut を完了した
   - 続くラウンドで `PLAYBACK_CONTROLS_LAYOUT`、`getPlaybackControlsLayoutTargets`、`applyManaged*` / `clearManaged*` 系の ownership を `playback-controls-layout.js` 側へ集約した
   - `createPlaybackControlsLayout(...)` の return を拡張し、layout controller instance から定数・target resolver・runtime API を一括で受ける形に揃えた
   - `content.js` 側は layout controller instance を生成し、`overlay-controller.js` / `runtime-observers.js` へ必要な bridge を配る thin coordinator として整理した
-- テスト結果:
+- テスト結果
   - panel 開閉時の controls / footer / progress / volume の再配置は維持された
   - overlay の位置は維持された
   - controls 再描画後の再開閉でも二重 translate / 解除漏れは確認されなかった
-- 今後の layout 方針:
+- 今後の layout 方針
   - layout 計算式は変えず、仕様変更なしの物理移送を優先する
   - `content.js` に layout 判定本体や managed style 実装を戻さない
   - 次に layout を触る場合も、bridge を太らせず、controller instance を正本とした接続を保つ
@@ -467,27 +467,28 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
 
 ## 6. 進め方のルール
 
-### 6.1 小さいステップ
+### 6.1 ラウンド単位の進め方
 
-- 1 回の変更は、できるだけ 1 責務に絞る
-- 「構造整理」と「仕様変更」が両方入るなら、可能なら分ける
-- 大きい貼り替えより、差分の意味が追える単位を優先する
+- 1 つの実装ラウンドでは、主題となる責務塊を 1 つに固定する
+- 「構造整理」と「仕様変更」が両方必要な場合は、可能な限りラウンドを分ける
+- 差分の大きさではなく、責務のまとまりと説明可能性を優先する
 - 実ファイル分割に進む場合も、まずは `content.js` 内で section boundary を整えてから移す
+- 次のラウンドへ移る前に、「今回の主題でどこまで終えたか」を docs / 実装スレで説明できる状態にする
 
 ### 6.2 確認順
 
 - まず既存コードの責務位置を確認する
 - 次に「この責務をどこへ移すか」を決める
-- その後に最小差分で差し替える
+- その後に対象ラウンドの範囲で差し替える
 - 最後にテスト（実機確認・ログ観測・差分確認・構文確認）で戻り道を残す
 - 実ファイル分割時は、構文確認 → manifest 読み込み順確認 → controller 接続確認 → 実ブラウザ観測の順で見る
-- NLM を使うときも、この順番は崩さない。先にコードを確認し、相談対象の責務を固定してから small diff を依頼する
+- NLM を使うときも、この順番は崩さない。先にコードを確認し、相談対象の責務を固定してからレビューに使う
 
 ### 6.3 削除のルール
 
 - 新経路が安定するまで、旧経路の即時全面削除はしない
 - ただし旧経路と新経路が二重で走る状態は長く残さない
-- 「もう読まれていない state / helper / fallback」は、確認できしだい次バッチで消す
+- 「もう読まれていない state / helper / fallback」は、確認できしだい次ラウンドで消す
 - local fallback を残す期間は「次に消す前提の暫定」として扱う
 
 ### 6.4 docs 同期
@@ -496,7 +497,7 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
 - 分割原則の正本はこの `docs/contentjs-split-roadmap.md`
 - 進捗と優先順位は `docs/dev-roadmap.md`
 - 実装スレ / セッションメモは正本ではなく、作業ログとして扱う
-- `playbackContext` や playback controls layout のような実分割が入った場合は、この文書へ「分割単位・接続方式・fallback 方針・first cut の範囲」を反映する
+- `playbackContext` や playback controls layout のような実分割が入った場合は、この文書へ「分割単位・接続方式・fallback 方針・導入範囲」を反映する
 - Runtime First 化や観測ログ追加のように、「まだ content.js に残しているが将来外へ出したい責務」も、この文書で境界を明示しておく
 
 ---
@@ -512,7 +513,7 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
 - Runtime First 化の一部
   - `cue-controller.js` 側で runtime missing 継続を優先する first cut が導入済み
 
-### 7.2 進行中（playback controls layout：first cut + ownership 集約完了）
+### 7.2 進行中（playback controls layout：導入と ownership 集約完了）
 
 - playback controls layout
   - 正本: `playback-controls-layout.js`
@@ -520,7 +521,7 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
   - `PLAYBACK_CONTROLS_LAYOUT`、`getPlaybackControlsLayoutTargets`、`applyManaged*` / `clearManaged*` 系の ownership を module 側へ集約済み
   - `createPlaybackControlsLayout(...)` 経由で controller instance から API / 定数 / target resolver を受ける形へ整理済み
   - `overlay-controller.js` / `runtime-observers.js` への bridge まで接続済み
-  - 次の first cut は別責務（reinitialize / secondary DOM / sync interval など）から選ぶ
+  - 次のラウンドは別責務（reinitialize / secondary DOM / sync interval など）から選ぶ
 
 ### 7.3 次候補
 
@@ -544,5 +545,5 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
 - この文書では、個々の issue の完了判定ではなく、「`content.js` をどう安全に薄くしていくか」の観点に限定して扱う
 - `content.js` の行数を減らすこと自体は重要だが、より重要なのは **責務が正しい場所へ移っていること** である
 - 逆に、行数が少し減っても controller / resolver 側の境界が曖昧なら、この文書の目的には達していない
-- `playbackContext.js` 導入や playback controls layout ラウンドは、今後の分割でも「小さな責務単位を選び、comments 整理 → 実分割 → 段階接続 → fallback 撤去」の順で進めるべきことを示す先例として扱う
+- `playbackContext.js` 導入や playback controls layout ラウンドは、今後の分割でも「責務境界の可視化 → 実分割 → 段階接続 → fallback 撤去」の順で進める先例として扱う
 - recovery ロジックや観測設計について NLM を使う場合も、この文書で定義した責務境界を優先し、`content.js` に安易に state や分岐を足さないことを前提とする

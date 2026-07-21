@@ -39,12 +39,12 @@
 - Issue #32（subtitle sync / recovery）は、Phase E 後半〜Phase J にまたがる設計・実装タスクとして進行中
 - Issue #32 の中には、
   - subtitle sync / recovery 設計正本（truth / health / recovery 境界）
-  - `content.js` 行数削減ラウンド（playback controls layout 集約など）
+  - `content.js` を thin coordinator へ近づけるための責務移送ラウンド
     の 2 レイヤーがある
 - 現在の主線は **#24 / Issue #32** として、
   - `attachTracks` / observer / bootstrap の安定化
   - subtitle sync の truth / health / recovery 境界整理
-  - `content.js` から subtitle sync / playback controls layout の責務を段階的に外へ出し、thin coordinator へ近づけること
+  - `content.js` から subtitle sync / playback controls layout / playback context などの責務を段階的に外へ出し、thin coordinator へ近づけること
     を進めること
 - 特に、secondary recovery の判定責務を `content.js` から `cue-controller.js` 側へ寄せ、large seek 後の復帰挙動を runtime 主体で安定化することが中心課題である
 - 現時点では「secondary が戻らない」状態の切り分けから一歩進み、
@@ -53,11 +53,11 @@
   - 「それでも Apple TV+ 側が JA track を復帰させない区間があるのか」
     をログで切り分けできる段階まで到達している
 - popup / dictionary / AI タブ拡張 (#10) は、構造整理と subtitle sync 改善の後段として扱う
-- `content.js` の責務整理は、巨大ファイルを一気に割るのではなく **coordinator を残しつつ周辺責務を段階的に外へ出す** 方針で進行中
+- `content.js` の責務整理は、巨大ファイルを一気に割るのではなく **coordinator を残しつつ周辺責務をラウンド単位で外へ出す** 方針で進行中
 - 最初の実ファイル分割単位として `playbackContext.js` が追加され、`content.js` から controller 優先 + local fallback で接続されている
 - large seek 後の secondary recovery については、waiting window / missCount / force-rebind / terminated のフローを整理し、Runtime First（実測優先）方針の first cut まで入っている
-- playback controls layout については、既存の `playback-controls-layout.js` へ責務を寄せる first cut と ownership 集約ラウンドが完了し、`content.js` 側は layout controller instance を起点に overlay / runtime-observers へ bridge を配る thin coordinator に寄っている
-- 今後は playback controls layout を継続主線として引っ張るのではなく、次の first cut 候補を別責務から選ぶ段階に入っている
+- playback controls layout については、既存の `playback-controls-layout.js` へ責務を寄せるラウンドが完了し、`content.js` 側は layout controller instance を起点に overlay / runtime-observers へ bridge を配る thin coordinator に寄っている
+- 今後は playback controls layout を継続主線として引っ張るのではなく、次の主題を別責務から選ぶ段階に入っている
 
 ### 現在の優先順
 
@@ -83,7 +83,8 @@
 
 ### 2.2 Issue #32
 
-Issue #32 は、subtitle sync / recovery を `content.js` 追記ではなく controller / resolver 側へ寄せながら改善する主線である。
+Issue #32 は、subtitle sync / recovery を `content.js` 追記ではなく controller / resolver 側へ寄せながら改善する主線である。  
+同時に、`content.js` を薄い coordinator に近づけるため、関連責務をラウンド単位で外へ移す役割も持つ。
 
 #### 2.2.1 subtitle sync 設計正本側
 
@@ -102,26 +103,33 @@ Issue #32 は、subtitle sync / recovery を `content.js` 追記ではなく con
     を first cut として採用した
 - recovery 判定の数値構造（window 1秒 / force-rebind 開始タイミング / miss limit 8回）は現行を維持しつつ、gating と観測を強化する方針とした
 
-#### 2.2.2 content.js 行数削減ラウンド側（playback controls layout）
+#### 2.2.2 `content.js` 責務移送側
 
-Issue #32 の流れの中で、`content.js` を thin coordinator に近づけるための行数削減ラウンドとして、playback controls layout の責務集約を進めた。
+Issue #32 の流れの中で、`content.js` を thin coordinator に近づけるための責務移送ラウンドを進めている。
 
-- playback controls layout 実装の正本は、既存の `playback-controls-layout.js` に寄せる
-- `applyManaged*` / `clearManaged*` / `adjustPlaybackControlsForPanel` / `clearPlaybackControlsTransforms` など、layout 本体は module 側に集約する
-- `PLAYBACK_CONTROLS_LAYOUT` と `getPlaybackControlsLayoutTargets` も `playback-controls-layout.js` 側へ ownership を寄せる
-- module との接続は `window.ATVB.playbackControlsLayout.createPlaybackControlsLayout(deps)` による layout controller instance 方式を採用する
-- `content.js` 側は、
-  - scheduling / observer 起動側
-  - `state.playbackControlsApplying` による applying guard
-  - layout controller instance の生成
-  - `overlay-controller.js` / `runtime-observers.js` への bridge
-    だけを残す方針とする
-- layout 計算式や UI の見た目は変えず、**責務の物理的な移送だけ** をこのラウンドのゴールとした
-- この単位については、first cut と ownership 集約、および実機テストまで完了している
+すでに到達したこと:
+
+- secondary subtitle DOM 管理系を 1 グループとして整理した
+- sync interval 系 6 関数を 1 グループとして整理した
+- `content.js` 後半に coordinator / playbackContext / reinitialize / retry / result bridge の見出しを追加した
+- `playbackContext.js` を新規追加し、playback page context / content key / subtitle history context を controller として分離した
+- `manifest.json` に `playbackContext.js` が追加され、`content.js` から `window.ATVB.createPlaybackContextController` 経由で参照する構成にした
+- playbackContext 対象 14 関数を controller 優先 + local fallback で段階接続し、既存挙動を壊さずに分割を導入した
+- `content.js` 側で secondary recovery 判定結果と sync 実行結果を観測するログを追加し、「判定」「trigger」「再バインドの有無」を切り分けられるようにした
+- playback controls layout 関連では、
+  - `PLAYBACK_CONTROLS_LAYOUT`
+  - `getPlaybackControlsLayoutTargets`
+  - `applyManaged*` / `clearManaged*`
+    の ownership を `playback-controls-layout.js` 側へ集約した
+- `createPlaybackControlsLayout(...)` の return に layout 定数 / target resolver / runtime API を含め、layout controller instance を正本とする接続へ整理した
+- `overlay-controller.js` / `runtime-observers.js` に対して、layout controller instance 由来の bridge を接続した
+- playback controls layout ラウンドについて、panel 開閉 / overlay 位置維持 / controls 再描画後の再開閉を含む実機確認が完了した
+
+ここまでにより、`content.js` は「責務本体を持つ場所」から、「接続・起動・観測の入口」へ寄せるラインが明確になっている。
 
 ### 2.3 現時点の到達点
 
-2026-07-21 時点で、Issue #32 / Phase J は次の first cut まで到達している。
+2026-07-21 時点で、Issue #32 / Phase J は次の到達点にある。
 
 - large seek 後の近傍 truth rebuild を追加
 - nearby rebuild の latest-only hold を導入
@@ -131,36 +139,16 @@ Issue #32 の流れの中で、`content.js` を thin coordinator に近づける
   - waiting window 前は `derived.shouldRecoverSecondary` を尊重し idle を維持
   - waiting window 超過後は runtime missing 継続（`secondaryLane.isMissing`）を優先して recovery を進める
     変更を導入した
-- secondary subtitle DOM 管理系を 1 グループとして整理し、探索・正規化・panel host 確保・描画を見出しベースで再構成した
-- sync interval 系 6 関数を 1 グループとして整理し、runtime snapshot / playback context / seek 判定 / secondary recovery / primary recovery を段階構成で扱えるようにした
-- `content.js` 後半に coordinator / playbackContext / reinitialize / retry / result bridge の見出しを追加し、責務の入口を可視化した
-- `playbackContext.js` を新規追加し、playback page context / content key / subtitle history context を controller として分離した
-- `manifest.json` に `playbackContext.js` が追加され、`content.js` から `window.ATVB.createPlaybackContextController` 経由で参照する構成にした
-- playbackContext 対象 14 関数を controller 優先 + local fallback で段階接続し、既存挙動を壊さずに分割を導入した
-- `content.js` 側で secondary recovery 判定結果と sync 実行結果を観測するログを追加し、
-  - `secondary recovery action evaluated { action, reason, missCount }`
-  - `secondary sync result: no track resolved (clearing)`
-  - `secondary sync result: track re-bound { forceRebind, trackLang }`
-  - `secondary sync result: same track (no re-bind needed)`
-    により、「判定」「trigger」「再バインドの有無」を切り分けられるようにした
 - large seek 後の実ログから、
   - recovery / force-rebind 判定は想定どおり進んでいる
   - `syncSecondarySubtitleTrack()` による re-bind 試行も行われている
   - それでも一部タイトル / 区間で Apple TV+ 側 JA track が active cues を復帰させないケースがある
     ことを確認し、拡張側ロジックと基盤側挙動の境界を明文化した
-- `content.js` から `clearPlaybackControlsLayoutState` 定義を削除し、playback controls layout の実装重複を減らす first cut を入れた
-- playback controls layout 関連で、
-  - `PLAYBACK_CONTROLS_LAYOUT`
-  - `getPlaybackControlsLayoutTargets`
-  - `applyManaged*` / `clearManaged*`
-    の ownership を `playback-controls-layout.js` 側へ集約した
-- `createPlaybackControlsLayout(...)` の return に layout 定数 / target resolver / runtime API を含め、layout controller instance を正本とする接続へ整理した
-- `overlay-controller.js` / `runtime-observers.js` に対して、layout controller instance 由来の bridge を接続した
-- playback controls layout ラウンドについて、panel 開閉 / overlay 位置維持 / controls 再描画後の再開閉を含む実機確認が完了した
+- `playbackContext.js` 導入後も、`contentKey` と history context の大枠は安定している
+- playback controls layout ラウンドについては、今回の単位として完了している
 - コミット / プッシュまで完了している
 
-この段階では「secondary が戻らないケースを壊さず扱える」基盤は入っているが、miss limit 値や primary-only fallback 条件の微調整、大シーク後の secondary 欠落・通常再生中のちらつき・パネルスクロール競合については後続の調整対象とする。  
-一方、playback controls layout の first cut + ownership 集約ラウンドについては、今回の単位としては完了している。
+この段階では「secondary が戻らないケースを壊さず扱える」基盤は入っているが、miss limit 値や primary-only fallback 条件の微調整、大シーク後の secondary 欠落・通常再生中のちらつき・パネルスクロール競合については後続の調整対象とする。
 
 ---
 
@@ -237,7 +225,7 @@ observer / layout / bootstrap の起動・再初期化・再接続を薄い配�
 - playbackContext 対象 14 関数が controller 優先 + local fallback で接続されている
 - secondary recovery の Runtime First 方針と miss limit / primary-only fallback の挙動が、Issue #32 / Phase J の first cut として実装されている
 - large seek 後の recovery 判定と sync 実行結果を観測できるログが追加されており、拡張側と Apple TV+ 側挙動の境界を説明しやすくなっている
-- playback controls layout の first cut と ownership 集約ラウンドが完了し、`playback-controls-layout.js` を正本、`content.js` を layout controller instance 起点の thin coordinator とする接続へ整理された
+- playback controls layout の責務移送ラウンドが完了し、`playback-controls-layout.js` を正本、`content.js` を layout controller instance 起点の thin coordinator とする接続へ整理された
 
 ### 並行 UI 調整タスク
 
@@ -260,7 +248,7 @@ Phase E と Issue #32 の主線が一段落した後で、popup / dictionary / A
 - `attachTracks` の再実行経路を整理する
 - observer の再接続条件を明示する
 - bootstrap / cleanup の順序と責務をさらに薄くする
-- 再初期化入口（`reinitializeSubtitlePipeline`）を entry / retry / result bridge に分けて `contentjs-split-roadmap.md` と同期する
+- 再初期化入口（`reinitializeSubtitlePipeline`）を entry / retry / result bridge に分けて `docs/contentjs-split-roadmap.md` と同期する
 
 ### 5.2 #32 側
 
@@ -274,25 +262,35 @@ Phase E と Issue #32 の主線が一段落した後で、popup / dictionary / A
   - `syncSecondarySubtitleTrackBinding`（sync 実行）
     周辺で観測し、Apple TV+ 側挙動と拡張側ロジックの境界を docs に落とす
 - panel 自動追従とユーザスクロール競合の緩和方針を決める
-- playback controls layout は今回の単位で first cut + ownership 集約まで完了したため、次は別責務（reinitialize / retry / result bridge、secondary subtitle DOM、sync interval orchestration、initial cue recovery など）から次の行数削減ラウンド候補を選ぶ
-- 次ラウンドからは、着手前後で `wc -l content.js` を取り、行数削減が実際に進んでいるかを確認する
 
-### 5.3 content.js / playbackContext 側
+### 5.3 次ラウンド候補
+
+次の `content.js` 責務移送ラウンドは、**1 回のスレッドで主題を 1 個に絞って選ぶ**。  
+候補は次のとおり。
+
+- reinitialize / retry / result bridge
+- secondary subtitle DOM 管理
+- sync interval orchestration
+- initial cue recovery
+
+playback controls layout は今回の単位で完了しているため、次は別責務へ移る。  
+また、次ラウンドからは着手前後で `wc -l content.js` を取り、行数削減が実際に進んでいるかを確認する。
+
+### 5.4 `playbackContext` 側
 
 - `playbackContext` の local fallback をいつ外すか基準を決める
-- 安定確認後に `content.js` 側の重複実装を削る段取りを設計する（行数削減ラウンドを別途立てる）
-- `reinitialize` / `initial cue recovery` / retry / result bridge を次の分割候補として、見出しレベルのグルーピングと実移送の順を決める
-- 今後のラウンドでは、開始前後の `content.js` 行数を記録し、削減量を roadmap / 実装メモに残す
+- 安定確認後に `content.js` 側の重複実装を削る段取りを設計する
+- fallback 撤去の完了条件を docs / Issue コメントのどこに残すか決める
 
-### 5.4 docs / Issue 側
+### 5.5 docs / Issue 側
 
 - 設計の正本は `docs/issue-32-subtitle-sync-design.md`
 - 分割原則の正本は `docs/contentjs-split-roadmap.md`
 - この `docs/dev-roadmap.md` は進捗・現在位置・優先順だけに集中させる
 - `playbackContext` 分割導入と current Phase J の Runtime First / 観測強化の状況を、Issue #32 コメントにも短く反映する
-- playback controls layout ラウンドについては、「first cut + ownership 集約完了、実機確認済み」であることを設計 docs / roadmap / Issue コメントの間で矛盾なく揃える
-- recovery 系の追加調査や設計変更を行う際の「NLM への相談テンプレ」（今回のゴール / 触る層 / 変更しない範囲 / 欲しい答え）を `docs/ai-session-templates.md` からリンクする
-- Issue #32 内の「content.js 行数削減ラウンド」のスコープ（今回触る層 / 触らない層 / 完了条件）を、設計スレ → 実装スレの 2 段構成で NLM に渡す方針を明文化する
+- playback controls layout ラウンドについては、「責務移送完了・実機確認済み」であることを設計 docs / roadmap / Issue コメントの間で矛盾なく揃える
+- recovery 系の追加調査や設計変更を行う際の「NLM への相談テンプレ」（今回のゴール / 触る層 / 変更しない範囲 / 欲しい答え）を `docs/ai-session-templates.md` から参照する
+- Issue #32 内の `content.js` 責務移送ラウンドのスコープ（今回触る層 / 触らない層 / 完了条件）を、設計スレ → 実装スレの 2 段構成で NLM に渡す方針を明文化する
 
 ---
 
@@ -303,6 +301,6 @@ Phase E と Issue #32 の主線が一段落した後で、popup / dictionary / A
 - `content.js` の責務境界や分割原則は `docs/contentjs-split-roadmap.md` に寄せる
 - AI セッション運用のテンプレは `docs/ai-session-templates.md` に寄せる
 - 現在の主線は #24 / #32 であり、後続 UI タスクはこの主線を崩さない範囲で扱う
-- `playbackContext.js` は phase-3 分割方針に沿った最初の実ファイル分割単位であり、今後の分割も同様に「小さな責務単位」を基本とする
-- playback controls layout の責務集約ラウンドは、layout 計算式や UI 挙動を変えずに `playback-controls-layout.js` へ移送し、`content.js` 側を thin coordinator に近づける行数削減ラウンドの先例として扱う
+- `playbackContext.js` は phase-3 分割方針に沿った最初の実ファイル分割単位であり、今後の分割も同様に「主題を 1 個に絞ったラウンド」で進める
+- playback controls layout の責務移送ラウンドは、layout 計算式や UI 挙動を変えずに `playback-controls-layout.js` へ移送し、`content.js` 側を thin coordinator に近づける先例として扱う
 - recovery ロジックや観測設計の見直しは、今後も NLM を前提に相談しつつ、提案 diff は必ずローカルでの確認フェーズ（grep / sed / 実ログテスト）を経て採用可否を判断する
