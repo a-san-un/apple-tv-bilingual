@@ -520,7 +520,17 @@ UI 層は truth を直接持たず、view を描画する。
 - UI 層は recovery 判定や current truth の書き換えを行わない
 - panel のスクロール制御は UI 層で扱うが、truth current の判定は持たない
 
-### 6.5 接続原則
+### 6.5 observer / layout 周辺の境界
+
+observer / layout は subtitle sync / recovery の本体ではなく、再評価トリガと位置調整の層として扱う。
+
+- `runtime-observers.js` は再接続・再評価・再配置の trigger を持つ
+- playback controls layout は `playback-controls-layout.js` を正本とし、controls の位置・幅・translate 管理に責務を限定する
+- playback controls layout は overlay / panel の見た目責務や subtitle truth を持たない
+- `content.js` は layout controller instance を組み立て、observer / overlay 側へ bridge するだけに留める
+- subtitle sync の不具合を observer 条件追加だけで吸収しない
+
+### 6.6 接続原則
 
 各層の接続原則は次のとおりとする。
 
@@ -528,6 +538,7 @@ UI 層は truth を直接持たず、view を描画する。
 - controller: 判定と state machine を持つ
 - resolver / helper: truth から view / panel / health を作る
 - UI: view を描画する
+- observer / layout: trigger と配置だけを扱う
 
 ---
 
@@ -542,6 +553,7 @@ UI 層は truth を直接持たず、view を描画する。
 - grep / filter 文字列のような一時的な debug 手順
 - `content.js` 分割順そのもののロードマップ詳細
 - aggressive workaround の個別実装案（別 Issue / feature flag 検討事項）
+- playback controls layout の詳細な移送手順や行数削減ラウンドの進捗管理
 
 進捗・優先順位は `docs/dev-roadmap.md` を参照する。  
 `content.js` 分割の原則は `docs/contentjs-split-roadmap.md` を参照する。
@@ -561,5 +573,7 @@ UI 層は truth を直接持たず、view を描画する。
 - `panel-renderer.js`
 - `panel-ui.js`
 - `subtitle-track-resolver.js`
+- `playback-controls-layout.js`
+- `runtime-observers.js`
 - `debug-logger.js`
 - `debug-panel.js`

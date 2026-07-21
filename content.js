@@ -3002,17 +3002,6 @@
     DEBUG_PANEL_PROBE,
   });
 
-  const { createOverlayController } = root.overlayController;
-  const overlayController = createOverlayController({
-    getOverlayRoot: () => state.overlayRoot,
-    setOverlayRoot: (rootNode) => {
-      state.overlayRoot = rootNode;
-    },
-    getTarget,
-    showPopup,
-    setStyleIfChanged,
-  });
-
   const { createPlaybackControlsLayout } = root.playbackControlsLayout;
   const playbackControlsLayout = createPlaybackControlsLayout({
     PLAYBACK_HEADER_BASE_WIDTH_ATTR,
@@ -3030,9 +3019,25 @@
   });
 
   const {
+    PLAYBACK_CONTROLS_LAYOUT,
+    getPlaybackControlsLayoutTargets: getPlaybackControlsLayoutTargetsFromModule,
     clearPlaybackControlsTransforms: clearPlaybackControlsTransformsFromModule,
     adjustPlaybackControlsForPanel: adjustPlaybackControlsForPanelFromModule,
   } = playbackControlsLayout;
+
+
+  const { createOverlayController } = root.overlayController;
+  const overlayController = createOverlayController({
+    getOverlayRoot: () => state.overlayRoot,
+    setOverlayRoot: (rootNode) => {
+      state.overlayRoot = rootNode;
+    },
+    getTarget,
+    showPopup,
+    getPlaybackControlsLayoutTargets: getPlaybackControlsLayoutTargetsFromModule,
+    PLAYBACK_CONTROLS_LAYOUT,
+    setStyleIfChanged,
+  });
 
   const cueController = createCueController({
     state,
@@ -3093,6 +3098,7 @@
     state,
     logContent,
     getPlaybackContext,
+    getPlaybackControlsLayoutTargets: getPlaybackControlsLayoutTargetsFromModule,
     scheduleAdjustPlaybackControls,
     scheduleControlSettlingBurst,
   });

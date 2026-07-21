@@ -315,26 +315,44 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
 
 - layout 計算式は変えず、仕様変更なしで物理移送する
 - `playback-controls-layout.js` を playback controls layout 実装の正本として扱う
-- `content.js` には薄い bridge（controller 優先 + local fallback）のみを残し、新しい判定や state を足さない
+- `content.js` には薄い bridge のみを残し、新しい判定や state を足さない
 - bridge が太らないようにし、layout 判定本体や managed style 実装は `playback-controls-layout.js` 側へ寄せる
-- `window.ATVB.playbackControlsLayout.createPlaybackControlsLayout(deps)` を入口とし、`adjustPlaybackControlsForPanel` / `clearPlaybackControlsTransforms` を controller から受ける
+- `window.ATVB.playbackControlsLayout.createPlaybackControlsLayout(deps)` を入口とし、layout controller instance から必要な API / 定数 / target resolver を受ける
 
 現況（2026-07-21 時点）:
 
 - `playback-controls-layout.js` 側には
+  - `PLAYBACK_CONTROLS_LAYOUT` 定数群
+  - `getPlaybackControlsLayoutTargets`
   - managed inline style / translate helper 群
   - `clearPlaybackControlsLayoutState`
   - `clearPlaybackControlsTransforms`
   - `adjustPlaybackControlsForPanel`
     の本体が存在する。
+- `createPlaybackControlsLayout({...})` の return には
+  - `PLAYBACK_CONTROLS_LAYOUT`
+  - `getPlaybackControlsLayoutTargets`
+  - `clearPlaybackControlsTransforms`
+  - `adjustPlaybackControlsForPanel`
+    が含まれる。
 - `content.js` 側では
   - `createPlaybackControlsLayout({...})` の初期化
-  - module からの `clearPlaybackControlsTransformsFromModule`
-  - module からの `adjustPlaybackControlsForPanelFromModule`
-    を受けている。
-- `clearPlaybackControlsLayoutState` は `content.js` と `playback-controls-layout.js` の両方に重複していたが、今回の first cut で **`content.js` 側から削除済み**。
-- layout 計算式・判定本体は `playback-controls-layout.js` 側に残し、`content.js` は applying guard 付き wrapper と bridge に絞る方針が採られている。
-- `getPlaybackControlsLayoutTargets` と `PLAYBACK_CONTROLS_LAYOUT` 定数群はまだ `content.js` 側に残っており、次バッチの移送候補として扱う。
+  - layout controller instance からの API / 定数 / target resolver の受け取り
+  - `overlay-controller.js`
+  - `runtime-observers.js`
+    への bridge
+    を持つ。
+- `content.js` 側の `clearPlaybackControlsLayoutState` 重複実装は first cut で削除済み。
+- 続くラウンドで
+  - `PLAYBACK_CONTROLS_LAYOUT`
+  - `getPlaybackControlsLayoutTargets`
+  - `applyManaged*` / `clearManaged*`
+    系の ownership を `playback-controls-layout.js` 側へ集約済み。
+- 実機確認では、
+  - panel 開閉時の controls / footer / progress / volume の再配置
+  - overlay の位置維持
+  - controls 再描画後の再開閉で二重適用が出ないこと
+    を確認済み。
 
 ---
 
@@ -421,25 +439,29 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
 - large seek 時の secondary recovery は、runtime 主体の missing / reset / miss limit 付き retry として controller 側で扱う
 - large seek 直後の UI 安定化は、nearby rebuild と short-lived hold を controller 側で扱う
 - `content.js` の後半では、まず comments / section boundary による責務可視化を先行し、その後に実ファイル分割へ進む
-- 現時点で `playbackContext.js` は追加済みで、対象 14 関数が controller 優先 + local fallback で接続されている。
-- `cue-controller.js` 側では Runtime First の first cut が導入済みである。
+- 現時点で `playbackContext.js` は追加済みで、対象 14 関数が controller 優先 + local fallback で接続されている
+- `cue-controller.js` 側では Runtime First の first cut が導入済みである
 - `content.js` 側には
   - `secondary recovery action evaluated`
   - `secondary sync result: ...`
-    の観測が追加され、判定本体と実行結果の切り分けがしやすくなっている。
+    の観測が追加され、判定本体と実行結果の切り分けがしやすくなっている
 
 ### 5.4 直近反映メモ（playback controls layout ラウンド）
 
 - playback controls layout ラウンドでは、次を行った。
-  - `playback-controls-layout.js` を playback controls layout 実装の正本として扱う方針を維持した。
-  - `content.js` 側の `clearPlaybackControlsLayoutState` 重複実装を削除し、layout 1責務の first cut を完了した。
-  - `content.js` 側には applying guard 付き wrapper と module からの bridge を残し、coordinator としての責務を維持した。
-- 残課題:
-  - `getPlaybackControlsLayoutTargets` はまだ `content.js` にあり、`playback-controls-layout.js` の `deps` として渡すか、ファイル内定数として移すかの判断が次バッチで必要。
-  - `PLAYBACK_CONTROLS_LAYOUT` と関連 attribute 定数群も `content.js` に残っており、次バッチの移送候補である。
+  - `playback-controls-layout.js` を playback controls layout 実装の正本として扱う方針を維持した
+  - `content.js` 側の `clearPlaybackControlsLayoutState` 重複実装を削除し、layout 1責務の first cut を完了した
+  - 続くラウンドで `PLAYBACK_CONTROLS_LAYOUT`、`getPlaybackControlsLayoutTargets`、`applyManaged*` / `clearManaged*` 系の ownership を `playback-controls-layout.js` 側へ集約した
+  - `createPlaybackControlsLayout(...)` の return を拡張し、layout controller instance から定数・target resolver・runtime API を一括で受ける形に揃えた
+  - `content.js` 側は layout controller instance を生成し、`overlay-controller.js` / `runtime-observers.js` へ必要な bridge を配る thin coordinator として整理した
+- テスト結果:
+  - panel 開閉時の controls / footer / progress / volume の再配置は維持された
+  - overlay の位置は維持された
+  - controls 再描画後の再開閉でも二重 translate / 解除漏れは確認されなかった
 - 今後の layout 方針:
-  - layout 計算式は変えず、thin bridge を保ったまま、target 解決と layout 定数群を `playback-controls-layout.js` 側へ順に寄せる。
-  - bridge が太りすぎないように、判定本体や managed style 実装は正本側へ寄せる。
+  - layout 計算式は変えず、仕様変更なしの物理移送を優先する
+  - `content.js` に layout 判定本体や managed style 実装を戻さない
+  - 次に layout を触る場合も、bridge を太らせず、controller instance を正本とした接続を保つ
 
 ---
 
@@ -490,13 +512,15 @@ playback controls layout は observer / layout / bootstrap の中でも独立し
 - Runtime First 化の一部
   - `cue-controller.js` 側で runtime missing 継続を優先する first cut が導入済み
 
-### 7.2 進行中（first cut 済み）
+### 7.2 進行中（playback controls layout：first cut + ownership 集約完了）
 
 - playback controls layout
   - 正本: `playback-controls-layout.js`
   - `content.js` 側の `clearPlaybackControlsLayoutState` 重複実装を削除済み
-  - `createPlaybackControlsLayout` 経由で controller 優先 + local fallback の bridge を持つ
-  - 残タスク: layout target 解決 (`getPlaybackControlsLayoutTargets`) と layout 定数群 (`PLAYBACK_CONTROLS_LAYOUT` 等) の移送判断
+  - `PLAYBACK_CONTROLS_LAYOUT`、`getPlaybackControlsLayoutTargets`、`applyManaged*` / `clearManaged*` 系の ownership を module 側へ集約済み
+  - `createPlaybackControlsLayout(...)` 経由で controller instance から API / 定数 / target resolver を受ける形へ整理済み
+  - `overlay-controller.js` / `runtime-observers.js` への bridge まで接続済み
+  - 次の first cut は別責務（reinitialize / secondary DOM / sync interval など）から選ぶ
 
 ### 7.3 次候補
 

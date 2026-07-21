@@ -798,11 +798,17 @@
     }
 
     return {
+      PLAYBACK_CONTROLS_LAYOUT,
+      getPlaybackControlsLayoutTargets,
       clearPlaybackControlsTransforms,
       adjustPlaybackControlsForPanel,
     };
   }
 
   const root = (window.ATVB = window.ATVB || {});
-  root.playbackControlsLayout = { createPlaybackControlsLayout };
+  root.playbackControlsLayout = {
+    PLAYBACK_CONTROLS_LAYOUT,
+    getPlaybackControlsLayoutTargets,
+    createPlaybackControlsLayout,
+  };
 })();
