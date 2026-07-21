@@ -1,3 +1,12 @@
+> [!NOTE]
+> この文書は旧 Apple TV+ UI 設計メモです。
+>
+> 2026-07 の docs 再編以降、panel / overlay / popup の UI 方針と
+> content 層全体の設計正本は `docs/content-architecture.md` に統合しました。
+>
+> このファイルは移行前の UI 設計経緯を残すための参照用です。
+> 原則として、今後の更新先にはしません。
+
 # Apple TV+ Bilingual Subtitles 設計まとめ
 
 この文書は、Apple TV+ Bilingual Subtitles の **現行仕様・責務境界・UI 方針** を整理した設計書である。

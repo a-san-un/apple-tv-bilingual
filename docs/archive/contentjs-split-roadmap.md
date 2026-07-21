@@ -1,3 +1,19 @@
+> [!NOTE]
+> この文書は旧 `content.js` 分割ロードマップです。
+>
+> 2026-07 の docs 再編以降、内容は次の文書へ移管しています。
+>
+> - `docs/content-architecture.md`
+>   - content 層全体の設計正本
+>   - `content.js` の責務境界
+>   - controller / resolver / observer / layout / bootstrap の分担
+> - `docs/issue-32-content-core-split.md`
+>   - Issue #32 における `content.js` コア分割の実装運用
+>   - 現在位置、次ラウンド、完了条件
+>
+> このファイルは移行前の経緯参照用として残しています。
+> 原則として、今後の更新先にはしません。
+
 # content.js 分割ロードマップ
 
 この文書は、`content.js` の責務整理と段階分割の方針をまとめたロードマップである。  

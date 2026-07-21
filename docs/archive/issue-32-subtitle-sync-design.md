@@ -1,3 +1,15 @@
+> [!NOTE]
+> この文書は旧 Issue #32 subtitle sync 設計文書です。
+>
+> 2026-07 の docs 再編以降、subtitle sync / recovery の設計正本は
+> `docs/content-architecture.md` へ統合しました。
+>
+> また、Issue #32 の進捗・実装ラウンド・次アクションは
+> `docs/issue-32-content-core-split.md` を参照してください。
+>
+> このファイルは移行前の設計経緯を残すための参照用です。
+> 原則として、今後の更新先にはしません。
+
 # Issue #32 Subtitle Sync Design
 
 ## 1. 目的

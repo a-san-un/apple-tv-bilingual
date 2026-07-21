@@ -1,3 +1,13 @@
+> [!NOTE]
+> この文書は旧 phase-3 実装ロードマップです。
+>
+> 2026-07 の docs 再編以降、docs の入口は `docs/README.md`、
+> Issue #32 の実装運用は `docs/issue-32-content-core-split.md`、
+> content 層の設計正本は `docs/content-architecture.md` を参照してください。
+>
+> このファイルは移行前の進捗記録として残しています。
+> 原則として、今後の更新先にはしません。
+
 # phase-3 実装ロードマップ
 
 > **対象ブランチ**: `issue-32-content-core-split`  
