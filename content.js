@@ -2286,29 +2286,6 @@
     return clearPlaybackControlsTransformsFromModule();
   }
 
-  function clearPlaybackControlsLayoutState({
-    header,
-    controls,
-    progress,
-    skipOverlay,
-    footer,
-    unified,
-    volume,
-    shadowProgressBar,
-    shadowRemainingTime,
-  }) {
-    clearManagedHeaderSizing(header);
-    clearManagedTranslateX(controls);
-    clearManagedProgressInset(progress);
-    clearManagedTranslateX(shadowProgressBar);
-    clearManagedTranslateX(shadowRemainingTime);
-    clearManagedSkipPosition(skipOverlay);
-    clearManagedTranslateX(skipOverlay);
-    clearManagedFooterSizing(footer);
-    clearManagedFooterChildSizing(footer);
-    clearManagedTranslateX(unified);
-    clearManagedTranslateX(volume);
-  }
 
   function adjustPlaybackControlsForPanel(reason = "unknown") {
     if (state.playbackControlsApplying) return;
