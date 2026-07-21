@@ -9,7 +9,7 @@
 // secondary cue の短いギャップ時のみ panel primary を一時補完する。
 //
 (function () {
-  "use strict";
+  ("use strict");
   const DEFAULT_SETTINGS = {
     primaryLang: "en",
     secondaryLang: "",
@@ -729,7 +729,9 @@
   // content key ごとの履歴バケット切替と保存先選択だけを担当する。
   function getHistoryBucketForContentKey(contentKey) {
     if (playbackContextController?.getHistoryBucketForContentKey) {
-      return playbackContextController.getHistoryBucketForContentKey(contentKey);
+      return playbackContextController.getHistoryBucketForContentKey(
+        contentKey,
+      );
     }
 
     if (!contentKey) return null;
@@ -1310,7 +1312,7 @@
       state.dialogEl = found.dialog;
       state.lastVideoSrcKey = nextVideoSrcKey;
       state.lastObservedVideoTime = null;
-      reloadSettingsAndReinitialize("video_changed");
+      reinitializeCoordinator?.reloadSettingsAndReinitialize("video_changed");
       return;
     }
 
@@ -1442,11 +1444,10 @@
         state.video,
         effectiveSecondaryLanguage,
       );
-    const resolvedSecondaryTrack =
-      resolverDeps.resolveSecondarySubtitleTrack(
-        state.video,
-        effectiveSecondaryLanguage,
-      );
+    const resolvedSecondaryTrack = resolverDeps.resolveSecondarySubtitleTrack(
+      state.video,
+      effectiveSecondaryLanguage,
+    );
 
     logContent("secondary resolver probe", {
       reason: "sync_interval",
@@ -1685,9 +1686,12 @@
       }
 
       state.lastPrimaryRecoveryAttemptAt = now;
-      const recoveryResult = reinitializeSubtitlePipeline(
-        "sync_interval_primary_recovery",
-      );
+      // sync interval 側の primary recovery は settings 再読込を介さず、
+      // 現在の state / track 前提で coordinator 本体を直呼びする。
+      const recoveryResult =
+        reinitializeCoordinator?.reinitializeSubtitlePipeline(
+          "sync_interval_primary_recovery",
+        );
       logContent("sync interval primary recovery", {
         trackCount,
         primaryTrackFound: recoveryResult.primaryTrackFound,
@@ -1709,17 +1713,12 @@
     return getComputedStyle(el).display !== "none";
   }
 
-
-
   function setStyleIfChanged(el, propertyName, value) {
     if (!el) return;
     const next = String(value || "");
     if (el.style[propertyName] === next) return;
     el.style[propertyName] = next;
   }
-
-
-
 
   function applyManagedFooterSizing(footer, widthPx, leftPx = 0) {
     if (!footer) return;
@@ -1962,11 +1961,6 @@
     }
   }
 
-
-
-
-
-
   function getShadowProgressTargets() {
     const host = document.querySelector("amp-playback-controls-progress");
     const root = host?.shadowRoot;
@@ -2038,11 +2032,9 @@
     });
   }
 
-
   function clearPlaybackControlsTransforms() {
     return clearPlaybackControlsTransformsFromModule();
   }
-
 
   function adjustPlaybackControlsForPanel(reason = "unknown") {
     if (state.playbackControlsApplying) return;
@@ -3020,11 +3012,11 @@
 
   const {
     PLAYBACK_CONTROLS_LAYOUT,
-    getPlaybackControlsLayoutTargets: getPlaybackControlsLayoutTargetsFromModule,
+    getPlaybackControlsLayoutTargets:
+      getPlaybackControlsLayoutTargetsFromModule,
     clearPlaybackControlsTransforms: clearPlaybackControlsTransformsFromModule,
     adjustPlaybackControlsForPanel: adjustPlaybackControlsForPanelFromModule,
   } = playbackControlsLayout;
-
 
   const { createOverlayController } = root.overlayController;
   const overlayController = createOverlayController({
@@ -3034,7 +3026,8 @@
     },
     getTarget,
     showPopup,
-    getPlaybackControlsLayoutTargets: getPlaybackControlsLayoutTargetsFromModule,
+    getPlaybackControlsLayoutTargets:
+      getPlaybackControlsLayoutTargetsFromModule,
     PLAYBACK_CONTROLS_LAYOUT,
     setStyleIfChanged,
   });
@@ -3091,14 +3084,13 @@
     renderPanel,
   });
 
-  // panel UI は別モジュールで組み立て、content 側では呼び出しと連携だけを持つ。
-
   const { createRuntimeObservers } = root.runtimeObservers;
   const runtimeObservers = createRuntimeObservers({
     state,
     logContent,
     getPlaybackContext,
-    getPlaybackControlsLayoutTargets: getPlaybackControlsLayoutTargetsFromModule,
+    getPlaybackControlsLayoutTargets:
+      getPlaybackControlsLayoutTargetsFromModule,
     scheduleAdjustPlaybackControls,
     scheduleControlSettlingBurst,
   });
@@ -3129,6 +3121,25 @@
     restartBilingual,
     ensureMessageListener,
   } = settingsRuntime;
+
+  const createReinitializeCoordinator =
+    root.createReinitializeCoordinator || null;
+  const reinitializeCoordinator = createReinitializeCoordinator
+    ? createReinitializeCoordinator({
+        state,
+        panelUi,
+        loadSettingsSnapshot,
+        getVideoAndDialog,
+        getCurrentVideoSrcKey,
+        syncHistoryContextWithPlayback,
+        clearInternalSubtitleState,
+        selectPrimaryAndSecondaryTracks,
+        TRACK_RESOLVE_RETRY_DELAYS_MS,
+        logContent,
+        logContentSubtitle,
+        logContentError,
+      })
+    : null;
 
   const { setOverlayVisible, destroyOverlay, createOverlay } =
     overlayController;
@@ -3215,11 +3226,6 @@
 
   // [binder/cue: attach] primary / secondary track の選択・bind・unbind を扱うセクション。
   // attach 軸では track selection と listener binding の境界をコメントで追える状態に保つ。
-  function clearTrackResolveRetryTimers() {
-    if (!state.trackResolveRetryTimers.length) return;
-    state.trackResolveRetryTimers.forEach((timerId) => clearTimeout(timerId));
-    state.trackResolveRetryTimers = [];
-  }
 
   // [binder/cue: attach] track selection
   // [binder/cue: attach] primary / secondary track を選択し、listener bind の入口をまとめる。
@@ -3350,191 +3356,16 @@
   }
 
   // -----------------------------------------------------------------------------
-  // reinitialize / restart coordinator helpers
-  // subtitle pipeline の再解決・再接続を起動する上位入口。
-  // 個別の track resolver / binder / render 詳細は下位 helper に委譲する。
+  // Subtitle Pipeline: Flow Coordinator
+  // 再初期化フロー本体。状態クリアから track 再解決、listener 再接続、
+  // panel 反映までの手順を束ねるが、判定本体や retry policy 自体は持たない。
+  // 個別の resolver / binder / render 詳細は下位 helper へ委譲する。
   // -----------------------------------------------------------------------------
 
   // [binder/cue: recovery] attach / recovery の再初期化入口。
   // track 再選択・listener 再接続・panel 反映を最小差分でまとめて行う。
-  // 個別の resolver / binder 実装詳細はここに溜め込まない。
-  function reinitializeSubtitlePipeline(reason = "unknown") {
-    const switched = syncHistoryContextWithPlayback(reason);
-    clearInternalSubtitleState(reason);
-
-    const effectiveSecondaryLanguage =
-      state.requestedSecondaryLang || state.contentSettings.secondaryLang;
-    const trackSelection = selectPrimaryAndSecondaryTracks(
-      state.video,
-      state.contentSettings.primaryLang,
-      effectiveSecondaryLanguage,
-      reason,
-    );
-    const primaryTrackFound = trackSelection.primaryTrackFound;
-    const secondaryTrackFound = trackSelection.secondaryTrackFound;
-    const primaryListenerBound = trackSelection.primaryListenerBound;
-    const secondaryListenerBound = trackSelection.secondaryListenerBound;
-
-    logContentSubtitle("tracks resolved", {
-      reason,
-      switchedHistoryContext: switched,
-      primaryTrackFound,
-      secondaryTrackFound,
-      trackCount: trackSelection.trackCount,
-      primaryTrack: trackSelection.primaryTrack,
-      secondaryTrack: trackSelection.secondaryTrack,
-    });
-
-    logContentSubtitle("cuechange listeners rebound", {
-      reason,
-      primaryListenerBound,
-      secondaryTrackBound: secondaryListenerBound,
-    });
-
-    panelUi.applyPanelState(reason);
-    logContent("panel state reapplied", {
-      reason,
-      contentKey: state.currentContentKey,
-      panelVisible: state.panelVisible,
-    });
-
-    return {
-      reason,
-      primaryTrackFound,
-      secondaryTrackFound,
-      primaryListenerBound,
-      secondaryListenerBound,
-      ready:
-        primaryTrackFound &&
-        secondaryTrackFound &&
-        primaryListenerBound &&
-        secondaryListenerBound,
-    };
-  }
-
-  // reinitialize entry helpers
-  // 現在の playback context を取り直し、再初期化入口へ渡すための補助関数群。
-  function refreshPlaybackContextForReinitialize() {
-    const found = getVideoAndDialog();
-    if (found) {
-      state.video = found.video;
-      state.dialogEl = found.dialog;
-    }
-
-    if (!state.video) return false;
-
-    state.lastVideoSrcKey = getCurrentVideoSrcKey(state.video);
-    return true;
-  }
-
-  function runReinitializeFromCurrentPlayback(reason = "unknown") {
-    if (!refreshPlaybackContextForReinitialize()) return null;
-    return reinitializeSubtitlePipeline(reason);
-  }
-
-  // track resolve retry helpers
-  // video_changed 後に track 解決が遅れるケースだけを対象に retry を管理する。
-  // [binder/cue: recovery] track resolve retry タイマーを管理する。
-  function scheduleTrackResolveRetry(reason = "video_changed") {
-    clearTrackResolveRetryTimers();
-
-    logContentSubtitle("track resolve retry scheduled", {
-      reason,
-      retryDelaysMs: TRACK_RESOLVE_RETRY_DELAYS_MS,
-    });
-
-    TRACK_RESOLVE_RETRY_DELAYS_MS.forEach((delayMs, retryIndex) => {
-      const timerId = window.setTimeout(() => {
-        if (state.restarting || !state.video) return;
-
-        const attempt = retryIndex + 1;
-        logContentSubtitle("track resolve retry attempt", {
-          reason,
-          attempt,
-          delayMs,
-        });
-
-        const retryResult = runReinitializeFromCurrentPlayback(
-          `${reason}:retry_${attempt}`,
-        );
-        if (!retryResult) return;
-
-        if (retryResult.ready) {
-          logContentSubtitle("track resolve retry success", {
-            reason,
-            attempt,
-          });
-          clearTrackResolveRetryTimers();
-          return;
-        }
-
-        if (attempt === TRACK_RESOLVE_RETRY_DELAYS_MS.length) {
-          logContentError("track resolve retry exhausted", {
-            reason,
-            attempts: TRACK_RESOLVE_RETRY_DELAYS_MS.length,
-            primaryTrackFound: retryResult.primaryTrackFound,
-            secondaryTrackFound: retryResult.secondaryTrackFound,
-            primaryListenerBound: retryResult.primaryListenerBound,
-            secondaryListenerBound: retryResult.secondaryListenerBound,
-          });
-          clearTrackResolveRetryTimers();
-        }
-      }, delayMs);
-
-      state.trackResolveRetryTimers.push(timerId);
-    });
-  }
-
-  // [settings reinit path: partial]
-  // 設定を再読込し、現在の video / track に対して subtitle pipeline を再解決する。
-  // UI 全体の teardown / rebuild までは行わない軽量な再初期化入口。
-
-  // reinitialize result / settings bridge helpers
-  // 再初期化結果の後処理と settings snapshot の state 反映を橋渡しする。
-  function applyVideoChangedReinitializeResult(result) {
-    if (!result) return;
-
-    if (result.ready) {
-      clearTrackResolveRetryTimers();
-    } else {
-      scheduleTrackResolveRetry("video_changed");
-    }
-  }
-
-  function applyReinitializeResult(result, reason = "unknown") {
-    if (reason === "video_changed") {
-      applyVideoChangedReinitializeResult(result);
-    }
-  }
-
-  function applySettingsSnapshotToState(snapshot) {
-    state.requestedContentSettings = {
-      ...(snapshot.storedSettings || {}),
-    };
-    state.requestedSecondaryLang = snapshot.requestedSecondaryLang || "";
-    state.contentSettings = { ...snapshot.effectiveSettings };
-  }
-
-  // settings 再読込と subtitle pipeline 再初期化をつなぐ上位入口。
-  // 設定ロード後の個別処理は既存 helper に委譲する。
-  function reloadSettingsAndReinitialize(reason = "unknown") {
-    if (state.restarting) return;
-
-    loadSettingsSnapshot(reason)
-      .then((snapshot) => {
-        applySettingsSnapshotToState(snapshot);
-
-        const result = runReinitializeFromCurrentPlayback(reason);
-        applyReinitializeResult(result, reason);
-      })
-      .catch((error) => {
-        logContentError("settings load failed", {
-          reason,
-          error: String(error),
-        });
-      });
-  }
-
+  // clearInternalSubtitleState / selectPrimaryAndSecondaryTracks は
+  // coordinator 自身の責務ではなく、将来分離可能な implementation detail として扱う。
   function runInitialCueRecoveryRender(reason = "unknown") {
     if (!hasRecoverableInitialCue()) return false;
 
@@ -3631,7 +3462,9 @@
   function refreshSettingsOnPanelOpen() {
     if (!state.panelVisible) return;
 
-    reloadSettingsAndReinitialize("panel_open_settings_reloaded");
+    reinitializeCoordinator?.reloadSettingsAndReinitialize(
+      "panel_open_settings_reloaded",
+    );
 
     logContent("panel open settings reloaded", {
       primaryLang: state.contentSettings.primaryLang,
@@ -3657,7 +3490,7 @@
 
   function clearTrackBindings() {
     // [attach: detach timers] track resolve retry timer を解除する。
-    clearTrackResolveRetryTimers();
+    reinitializeCoordinator?.clearTrackResolveRetryTimers();
     clearSecondaryTrackState();
 
     // [attach: detach primary listener] primary cuechange listener を解除する。

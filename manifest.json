@@ -3,12 +3,7 @@
   "name": "Apple TV+ Bilingual Subtitles",
   "version": "2.6.3",
   "description": "Displays bilingual subtitles with right panel and dictionary popup on Apple TV+",
-  "permissions": [
-    "storage",
-    "tabs",
-    "scripting",
-    "downloads"
-  ],
+  "permissions": ["storage", "tabs", "scripting", "downloads"],
   "host_permissions": [
     "https://tv.apple.com/*",
     "https://jisho.org/*",
@@ -21,9 +16,7 @@
   },
   "content_scripts": [
     {
-      "matches": [
-        "https://tv.apple.com/*"
-      ],
+      "matches": ["https://tv.apple.com/*"],
       "js": [
         "vtt-normalizer.js",
         "debug-logger.js",
@@ -42,23 +35,17 @@
         "playback-controls-layout.js",
         "settings-runtime.js",
         "playbackContext.js",
+        "reinitialize-coordinator.js",
         "content.js"
       ],
-      "css": [
-        "overlay.css"
-      ],
+      "css": ["overlay.css"],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": [
-        "dict/ejdict.json",
-        "panel.css"
-      ],
-      "matches": [
-        "https://tv.apple.com/*"
-      ]
+      "resources": ["dict/ejdict.json", "panel.css"],
+      "matches": ["https://tv.apple.com/*"]
     }
   ],
   "action": {
