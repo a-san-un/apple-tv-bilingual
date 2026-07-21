@@ -2037,155 +2037,10 @@
     }
   }
 
-  function applyManagedFooterChildSizing(footer, safeAreaWidth) {
-    if (!footer) return;
 
-    const metadata = footer.querySelector(
-      PLAYBACK_CONTROLS_LAYOUT.metadataSelector,
-    );
-    const progress = footer.querySelector(
-      PLAYBACK_CONTROLS_LAYOUT.progressSelector,
-    );
-    const tabs = footer.querySelector(PLAYBACK_CONTROLS_LAYOUT.tabsSelector);
-    const autoSubsNote = footer.querySelector(
-      PLAYBACK_CONTROLS_LAYOUT.autoSubsNoteSelector,
-    );
 
-    [metadata, progress, tabs].forEach((el, index) => {
-      const scope = ["metadata", "progress", "tabs"][index];
-      if (!el) return;
-      applyManagedInlineStyle(el, scope, "minWidth", "0");
-      applyManagedInlineStyle(el, scope, "maxWidth", "100%");
-      applyManagedInlineStyle(el, scope, "overflow", "hidden");
-      applyManagedInlineStyle(el, scope, "flexShrink", "1");
-    });
 
-    if (progress) {
-      applyManagedInlineStyle(progress, "progress", "width", "100%");
-    }
 
-    if (autoSubsNote) {
-      applyManagedInlineStyle(
-        autoSubsNote,
-        "auto-subs-note",
-        "maxWidth",
-        "100%",
-      );
-      applyManagedInlineStyle(
-        autoSubsNote,
-        "auto-subs-note",
-        "overflow",
-        "hidden",
-      );
-      applyManagedInlineStyle(
-        autoSubsNote,
-        "auto-subs-note",
-        "flexShrink",
-        "1",
-      );
-      if (safeAreaWidth < 1200) {
-        applyManagedInlineStyle(
-          autoSubsNote,
-          "auto-subs-note",
-          "display",
-          "none",
-        );
-      } else {
-        clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "display");
-      }
-    }
-  }
-
-  function clearManagedFooterChildSizing(footer) {
-    if (!footer) return;
-
-    const metadata = footer.querySelector(
-      PLAYBACK_CONTROLS_LAYOUT.metadataSelector,
-    );
-    const progress = footer.querySelector(
-      PLAYBACK_CONTROLS_LAYOUT.progressSelector,
-    );
-    const tabs = footer.querySelector(PLAYBACK_CONTROLS_LAYOUT.tabsSelector);
-    const autoSubsNote = footer.querySelector(
-      PLAYBACK_CONTROLS_LAYOUT.autoSubsNoteSelector,
-    );
-
-    [
-      [metadata, "metadata"],
-      [progress, "progress"],
-      [tabs, "tabs"],
-    ].forEach(([el, scope]) => {
-      clearManagedInlineStyle(el, scope, "minWidth");
-      clearManagedInlineStyle(el, scope, "maxWidth");
-      clearManagedInlineStyle(el, scope, "overflow");
-      clearManagedInlineStyle(el, scope, "flexShrink");
-    });
-
-    clearManagedInlineStyle(progress, "progress", "width");
-
-    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "maxWidth");
-    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "overflow");
-    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "flexShrink");
-    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "display");
-  }
-
-  function getPlaybackPanelLayoutAnchor() {
-    return (
-      document.querySelector(PLAYBACK_CONTROLS_LAYOUT.panelSelector) ||
-      document.querySelector(".dual-subtitles-secondary") ||
-      document.querySelector("[data-secondary-subtitle]")
-    );
-  }
-
-  function computePlaybackVisibleArea(panelAnchor, video) {
-    if (!isVisibleElement(panelAnchor) || !isVisibleElement(video)) return null;
-
-    const videoRect = video.getBoundingClientRect();
-    const panelRect = panelAnchor.getBoundingClientRect();
-    const safeGutter = PLAYBACK_CONTROLS_LAYOUT.footerSafeGutterPx;
-    const safeAreaLeft = videoRect.left + safeGutter;
-    const safeAreaRight =
-      Math.min(videoRect.right, panelRect.left) - safeGutter;
-    const safeAreaWidth = Math.max(0, safeAreaRight - safeAreaLeft);
-
-    return {
-      panelRect,
-      videoRect,
-      safeAreaLeft,
-      safeAreaRight,
-      safeAreaWidth,
-    };
-  }
-
-  function clampManagedShiftX(
-    rect,
-    existingShiftX,
-    nextShiftX,
-    minLeft,
-    maxRight,
-  ) {
-    if (!rect) return 0;
-
-    let shiftX = nextShiftX;
-    const projectLeft = (candidateShiftX) =>
-      rect.left + (candidateShiftX - existingShiftX);
-    const projectRight = (candidateShiftX) =>
-      rect.right + (candidateShiftX - existingShiftX);
-
-    if (projectRight(shiftX) > maxRight) {
-      shiftX -= projectRight(shiftX) - maxRight;
-    }
-
-    if (projectLeft(shiftX) < minLeft) {
-      shiftX += minLeft - projectLeft(shiftX);
-    }
-
-    if (shiftX > 0) {
-      shiftX = 0;
-    }
-
-    return shiftX;
-  }
 
   function getShadowProgressTargets() {
     const host = document.querySelector("amp-playback-controls-progress");
@@ -2260,7 +2115,10 @@
 
   function getPlaybackControlsLayoutTargets() {
     return {
-      panel: getPlaybackPanelLayoutAnchor(),
+      panel:
+        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.panelSelector) ||
+        document.querySelector(".dual-subtitles-secondary") ||
+        document.querySelector("[data-secondary-subtitle]"),
       header: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.headerSelector),
       controls: document.querySelector(
         PLAYBACK_CONTROLS_LAYOUT.controlsSelector,
