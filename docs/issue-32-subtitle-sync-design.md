@@ -12,7 +12,7 @@ Issue #32 では、Apple TV+ 再生画面における subtitle sync / recovery �
 - large seek 後の secondary missing / recovery を、truth / runtime / health / resolver / UI の各層で追えるようにする
 - `content.js` を subtitle sync / recovery の本体から外し、controller / resolver 側へ責務移送しやすい設計にする
 
-この文書は subtitle sync / recovery の **設計正本** であり、実装差分・進捗管理・調査ログの置き場ではない。
+この文書は subtitle sync / recovery の**設計正本**であり、実装差分・進捗管理・調査ログの置き場ではない。
 
 ---
 
@@ -163,7 +163,7 @@ subtitle sync 設計の周辺文脈として、playback page context / content k
 - content key 解決
 - contentKey ごとの history bucket 切替
 
-これらは subtitle sync の truth source ではなく、**再生対象の切替文脈** として扱う。  
+これらは subtitle sync の truth source ではなく、**再生対象の切替文脈**として扱う。  
 そのため、`playbackContext.js` の責務は `SubtitleBlockSequence` や recovery 判定と混ぜず、history 文脈切替の補助に留める。
 
 ---
@@ -181,7 +181,6 @@ secondary recovery の truth は **runtime first / merged assists** とする。
 - recovery 本線は **sync interval → controller 判定 → truth rebuild → UI redraw** の順で進める
 - controller では、runtime missing の入口判定と lane state の継続時間管理を主担当とし、merged assists は recovery 実行可否の補助判定として重ねる
 - `content.js` は recovery 本体を持たず、large seek 時刻や sync interval 起動などの薄い wiring に留める
-- 現行 Phase J では、**waiting window までは merged assists を尊重し、window 超過後は runtime missing 継続を優先する Runtime First の first cut** を採用する
 
 ### 4.2 runtime ハード条件
 
@@ -205,14 +204,8 @@ secondary recovery 候補は、**runtime missing を lane state へ入れる条�
 
 ここでのポイントは、secondary missing を **runtime 上「primary は進んでいるのに secondary だけ空である」状態**として定義し、history や UI 表示状態には依存させないことである。
 
-継続秒数 N の計測責務は **lane state / controller 側** に置く。  
+継続秒数 N の計測責務は **lane state / controller 側**に置く。  
 sync interval は controller 判定を定期的に駆動するが、missing の開始時刻・継続時間・missCount の管理は controller 内で行う。
-
-Phase J の現行採用値では、継続秒数 N は次とする。
-
-- `recovery window: 1000ms`
-
-この値は docs 上の確定値とし、large seek 後の secondary missing を過剰に即時 rebind せず、短い正常揺れを吸収するための待機時間とする。
 
 ### 4.3 merged assists
 
@@ -263,7 +256,7 @@ Phase J の現行採用値では、継続秒数 N は次とする。
 
 `derived.*` は runtime ハード条件の代替ではなく、**runtime missing が成立した後に、その missing が recovery 対象として妥当かを補助的に絞り込む層**とする。
 
-Phase J の現行実装では、概ね次の考え方で組み立てる。
+現行 Phase J の first cut では、概ね次の考え方で組み立てる。
 
 - `primaryHealthy`: primary track / primary cues / primary text / current primary block のいずれかで primary 側の生存を確認する
 - `secondaryHealthy`: secondary track / secondary cues / secondary text / current secondary block のいずれかで secondary 側の生存を確認する
@@ -271,8 +264,6 @@ Phase J の現行実装では、概ね次の考え方で組み立てる。
 - `shouldForceSecondaryRebind`: `shouldRecoverSecondary && sequence.consecutiveCurrentMissingSecondary`
 
 つまり、runtime が missing を示し、sequence health も current pair 上の欠落を示しているときに、merged assists は「この gap は secondary recovery 対象である」と後押しする。
-
-ただし current first cut では、**waiting window 超過後の recovery 開始条件を `derived.shouldRecoverSecondary === true` のみに固定せず、runtime missing 継続でも進める** ことで、large seek 直後の derived 揺れに引きずられすぎないようにしている。
 
 ### 4.4 lane state
 
@@ -312,16 +303,7 @@ secondary lane の評価は、概ね次の順で進める。
 
 この順序により、runtime first / merged assists の責務分担を、controller 内の state machine として追えるようにする。
 
-現行の first cut では、step 5 を次のように運用する。
-
-- window 到達前は `idle`
-- window 到達後は、`derived.shouldRecoverSecondary === true` **または** runtime missing 継続が確認できるなら recovery 候補へ進む
-- `derived.shouldForceSecondaryRebind === true` **または** `missCount` が force-rebind 閾値以上なら `force-rebind`
-- それ以外は `recover`
-
-この設計により、secondary missing の入口は runtime で固定しつつ、recovery の強さだけを derived と missCount で段階化する。
-
-### 4.5 large seek 時の扱い
+### 4.5 large seek 方針
 
 large seek 時は、secondary recovery を miss limit 付きの runtime retry として扱う。
 
@@ -332,41 +314,50 @@ large seek 時は、secondary recovery を miss limit 付きの runtime retry �
 - 打ち切り後は `terminated` として primary-only 表示へ切り替える
 - `terminated` は次 block または新しい seek で reset されうる
 
+terminated に入った seek window では、以後その window 内の secondary missing を「recover 不能」とみなし、UI は primary-only 区間として静かに処理する。
+
+### 4.6 現行採用パラメータ
+
 Phase J の現行採用値では、次を運用値とする。
 
-- recovery window: 1 秒
+- recovery window: 1000ms
 - force-rebind 開始: 2 回目
 - miss limit: 8 回
 
 これらの値の意図は次のとおり。
 
-- **recovery window 1 秒**: primary 復帰直後の短い揺れを即時 miss として叩かず、secondary cue の自然な遅れを待つ
+- **recovery window 1000ms**: primary 復帰直後の短い揺れを即時 miss として叩かず、secondary cue の自然な遅れを待つ
 - **force-rebind 開始 2 回目**: 1 回目は軽量 recovery に留め、連続 miss に入ったときだけ強い再接続へ進む
 - **miss limit 8 回**: 無限 retry を避けつつ、戻るケースには複数回の再挑戦を許す
 
-terminated に入った seek window では、以後その window 内の secondary missing を「recover 不能」とみなし、UI は primary-only 区間として静かに処理する。
-
-### 4.6 Runtime First first cut の明文化
+### 4.7 Runtime First first cut
 
 Phase J の現行方針として、secondary recovery の first cut は **Runtime First** を採用する。
 
 これは次を意味する。
 
 - missing の入口判定は runtime 事実で決める
-- recovery window 到達前は merged assists による軽い待機を許す
-- recovery window 超過後は、derived の一時的な揺れで `idle` に戻しすぎず、runtime missing が続いているなら recovery を進める
-- その後の recover / force-rebind / terminated は lane state と missCount に従って進める
+- waiting window までは merged assists を尊重し、軽い待機を許す
+- waiting window 超過後は、`derived.shouldRecoverSecondary === true` のみに固定せず、runtime missing が続いているなら recovery を進める
+- その後の `recover` / `force-rebind` / `terminated` は lane state と missCount に従って進める
+
+現行の first cut では、lane state step 5 を次のように運用する。
+
+- window 到達前は `idle`
+- window 到達後は、`derived.shouldRecoverSecondary === true` **または** runtime missing 継続が確認できるなら recovery 候補へ進む
+- `derived.shouldForceSecondaryRebind === true` **または** `missCount` が force-rebind 閾値以上なら `force-rebind`
+- それ以外は `recover`
 
 この方針の目的は、large seek 後に
 
 - primary は既に healthy
 - secondary track も見つかっている
-- secondaryActiveCues は 0
+- `secondaryActiveCues === 0`
 - current secondary text も空
 
 という runtime missing が継続しているのに、`derived.shouldRecoverSecondary` の揺れだけで recovery が遅延・停止することを避ける点にある。
 
-### 4.7 large seek 直後の truth 保護
+### 4.8 large seek 直後の truth 保護
 
 large seek 直後は、secondary sync 後に **近傍 truth rebuild** と **short-lived hold** を許す。
 
@@ -378,7 +369,7 @@ large seek 直後は、secondary sync 後に **近傍 truth rebuild** と **shor
 
 現在の first cut では、large seek 後の短時間だけ `nearbyRebuildHold` を current 表示に使い、truth 本体の書き換えは行わない。
 
-### 4.8 通常再生時の hold 制御
+### 4.9 通常再生時の hold 制御
 
 hold / rebuild 系の保護は large seek 向けの補助手段であり、通常再生時の常用ロジックにはしない。
 
@@ -388,17 +379,17 @@ hold / rebuild 系の保護は large seek 向けの補助手段であり、通�
 
 この境界により、「large seek 後の空白を防ぐための保護」が通常時の UX を悪化させないようにする。
 
-### 4.9 Known Issue 境界
+### 4.10 Known Issue 境界
 
-現時点の設計では、次を **拡張側で担保する範囲** とする。
+現時点の設計では、次を **拡張側で担保する範囲**とする。
 
 - runtime missing の検知
 - lane state による waiting window / missCount / terminated 管理
-- recover / force-rebind の決定
+- `recover` / `force-rebind` の決定
 - secondary track の再同期・再バインド試行
 - terminated 後の primary-only 静的処理
 
-一方、次は **現時点では Apple TV+ 側挙動に依存する Known Issue** として扱う。
+一方、次は **現時点では Apple TV+ 側挙動に依存する Known Issue**として扱う。
 
 - `force-rebind` による再同期が実行され、track re-bound も確認できるのに、JA track の active cues が復帰しないケース
 - 作品 / 区間依存で secondary が最後まで `secondaryActiveCues: 0` のままになるケース
@@ -434,7 +425,7 @@ overlay は current block 1 件だけに固定せず、必要に応じて same-w
  */
 ```
 
-### 5.2 panel
+### 5.2 panel / history
 
 panel は `PanelBlock[]` を描画入力とする。
 
@@ -443,15 +434,13 @@ panel は `PanelBlock[]` を描画入力とする。
 - panel current と truth current は分離して扱う
 - large seek 直後の hold は panel list の truth を書き換えず、current 表示の短期補助としてのみ使う
 
-### 5.3 history
-
 history は最終的に `blocks.past` 由来へ縮退させる。
 
 - `subtitleHistory` は移行期間の補助構造とする
 - history の追加契機は「block key が変わったとき」の 1 回だけとする
 - same-window 再評価や secondary 後追いでは追加しない
 
-### 5.4 primary-only 区間
+### 5.3 primary-only / keep-visible / clear ルール
 
 secondary recovery が terminated に入った seek window では、UI は primary-only 区間として扱う。
 
@@ -459,7 +448,7 @@ secondary recovery が terminated に入った seek window では、UI は prima
 - secondary missing を理由に current 全体を空へ落とさない
 - secondary 復帰後は通常の current block / view 解決へ戻す
 
-### 5.5 panel スクロール方針
+### 5.4 panel スクロール方針
 
 panel スクロールは、truth current への自動追従とユーザ手動操作を分離して扱う。
 
@@ -497,7 +486,7 @@ panel スクロールは、truth current への自動追従とユーザ手動操
 - primary / secondary cuechange 本流
 - sequence 再構築
 - merged health 集約
-- lane state / evaluateSecondaryRecovery
+- lane state / `evaluateSecondaryRecovery`
 - secondary recovery 判定
 - missCount / terminated 管理
 - nearby rebuild / hold guard / seek window 判定
@@ -530,6 +519,15 @@ UI 層は truth を直接持たず、view を描画する。
 - panel は `PanelBlock[]` を描画する
 - UI 層は recovery 判定や current truth の書き換えを行わない
 - panel のスクロール制御は UI 層で扱うが、truth current の判定は持たない
+
+### 6.5 接続原則
+
+各層の接続原則は次のとおりとする。
+
+- `content.js`: runtime fact / trigger を controller へ渡す
+- controller: 判定と state machine を持つ
+- resolver / helper: truth から view / panel / health を作る
+- UI: view を描画する
 
 ---
 
