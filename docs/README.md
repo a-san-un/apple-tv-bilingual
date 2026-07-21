@@ -49,22 +49,42 @@
 
 作業タイプごとの入口は次のとおり。
 
-- content 層の責務境界や設計を確認したい
-  - `docs/content-architecture.md`
-- Issue #32 の現在位置、次ラウンド、完了条件を確認したい
-  - `docs/issue-32-content-core-split.md`
-- AI セッションの始め方、進捗メモ、確認コマンド運用を確認したい
-  - `docs/ai-session-templates.md`
-- 過去の検討経緯や完了済みログを見たい
-  - `docs/archive/`
+- content 層の責務境界や設計を確認したい  
+  → `docs/content-architecture.md`
+- Issue #32 の現在位置、次ラウンド、完了条件を確認したい  
+  → `docs/issue-32-content-core-split.md`
+- AI セッションの始め方、進捗メモ、確認コマンド運用を確認したい  
+  → `docs/ai-session-templates.md`
+- 過去の検討経緯や完了済みログを見たい  
+  → `docs/archive/`
 
 Apple TV+ 上の UI / 表示方針も、現在は `docs/content-architecture.md` を参照する。
 
 ---
 
-## 3. ドキュメント一覧
+## 3. 現在のツリー構造と役割
 
-### 3.1 `README.md`
+現時点の `docs/` 以下の構造と各ファイルの役割は次の通り。
+
+```text
+docs/
+├── README.md                            # docs 全体の入口
+├── ai-session-templates.md              # AI セッション運用の正本
+├── content-architecture.md              # content 層の設計正本
+├── issue-32-content-core-split.md       # Issue #32 の実装運用正本
+└── archive/                             # 過去ログ・参照用文書
+    ├── atv-design.md                    # 旧 Apple TV+ UI 補助設計メモ
+    ├── contentjs-split-roadmap.md       # 旧 content.js 分割ロードマップ
+    ├── dev-roadmap.md                   # 過去の開発ロードマップ
+    ├── issue-32-subtitle-sync-archive-2026-07-19.md  # subtitle sync 検討ログ
+    └── issue-32-subtitle-sync-design.md # 旧 subtitle sync 設計文書
+```
+
+---
+
+## 4. ドキュメント一覧
+
+### 4.1 `README.md`
 
 このファイルは docs 全体の入口である。
 
@@ -76,7 +96,7 @@ Apple TV+ 上の UI / 表示方針も、現在は `docs/content-architecture.md`
 
 ここに詳細設計や進捗ログを増やしすぎない。
 
-### 3.2 `content-architecture.md`
+### 4.2 `content-architecture.md`
 
 この文書は、content 層の **設計正本** である。
 
@@ -91,7 +111,7 @@ Apple TV+ 上の UI / 表示方針も、現在は `docs/content-architecture.md`
 
 Issue 単位の進捗やラウンドの現在位置は、ここでは主役にしない。
 
-### 3.3 `issue-32-content-core-split.md`
+### 4.3 `issue-32-content-core-split.md`
 
 この文書は、Issue #32 の **実装運用正本** である。
 
@@ -106,7 +126,7 @@ Issue 単位の進捗やラウンドの現在位置は、ここでは主役に�
 
 subtitle sync / recovery の設計詳細そのものは `content-architecture.md` を参照する。
 
-### 3.4 `ai-session-templates.md`
+### 4.4 `ai-session-templates.md`
 
 この文書は、AI セッション運用の正本である。
 
@@ -121,7 +141,7 @@ subtitle sync / recovery の設計詳細そのものは `content-architecture.md
 
 実装内容そのものではなく、**実装の進め方** を揃えるために使う。
 
-### 3.5 `archive/`
+### 4.5 `archive/`
 
 `archive/` は、完了済みの検討メモや一時的な移行ログの保管先である。
 
@@ -136,7 +156,7 @@ archive 配下の文書は、基本的に **参照用** であり、現行正本
 
 ---
 
-## 4. 正本の分担
+## 5. 正本の分担
 
 現在の docs 正本分担は次のとおり。
 
@@ -159,9 +179,9 @@ archive 配下の文書は、基本的に **参照用** であり、現行正本
 
 ---
 
-## 5. 更新ルール
+## 6. 更新ルール
 
-### 5.1 追加より統合を優先する
+### 6.1 追加より統合を優先する
 
 新しい文書を増やす前に、既存のどこへ統合すべきかを確認する。
 
@@ -175,7 +195,7 @@ archive 配下の文書は、基本的に **参照用** であり、現行正本
 
 まずは既存の正本へ追記できるかを確認する。
 
-### 5.2 進捗と設計を混ぜない
+### 6.2 進捗と設計を混ぜない
 
 docs の保守で最も避けたいのは、設計正本に一時的な進捗ログが混ざることである。
 
@@ -187,7 +207,7 @@ docs の保守で最も避けたいのは、設計正本に一時的な進捗ロ
 
 設計の正本に「今回やったこと」を大量に書き足さない。
 
-### 5.3 archive へ移す基準
+### 6.3 archive へ移す基準
 
 次の条件を満たした文書は `archive/` へ移してよい。
 
@@ -200,7 +220,7 @@ archive 移行時は、必要なら旧文書の先頭に移行先を書き残す
 
 ---
 
-## 6. 現在の主線
+## 7. 現在の主線
 
 現在の主線は、`issue-32-content-core-split` ブランチ上で進めている `content.js` コア分割と subtitle sync / recovery 整理である。
 
