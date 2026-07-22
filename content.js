@@ -8,6 +8,7 @@
 // Phase D/#19: current 行の primary 非対称を最小差分で補正する。
 // secondary cue の短いギャップ時のみ panel primary を一時補完する。
 //
+
 (function () {
   ("use strict");
   const DEFAULT_SETTINGS = {
@@ -109,6 +110,83 @@
     initialCueRecoveryTimers: [],
     initialCueRecoveryCleanup: [],
   };
+
+// =====================================================================
+// Section 1: Logger & Debug Bridge
+// Role:
+// - logger / debug panel への橋渡し
+// - contentKey 付き payload への正規化
+// Keep in content.js:
+// - log entrypoint / debug update callback / scoped payload bridge
+// Move to modules:
+// - log storage / filtering / panel rendering details
+// =====================================================================
+
+// =====================================================================
+// Section 2: Playback Context Bridge
+// Role:
+// - playback DOM / textTrack 状態から context を検出
+// - contentKey / history context の切替
+// Keep in content.js:
+// - playback context の入口 / content 切替 trigger
+// Move to modules:
+// - context build / content key normalize / history bucket management
+// =====================================================================
+
+// =====================================================================
+// Section 3: UI - Secondary Subtitle DOM
+// Role:
+// - secondary subtitle element / panel host の確保
+// - secondary subtitle の描画入口
+// Keep in content.js:
+// - host ensure / render 呼び出し順 / minimal DOM bridge
+// Move to modules:
+// - panel shell / subtitle block / overlay render details
+// =====================================================================
+
+// =====================================================================
+// Section 4: Sync Interval - Periodic Orchestration
+// Role:
+// - sync interval ごとの playback context refresh
+// - large seek detection / secondary recovery pass 起動
+// Keep in content.js:
+// - scheduling / runtime snapshot entry / orchestration order
+// Move to modules:
+// - recovery decision / lane state / track resolve details
+// =====================================================================
+
+// =====================================================================
+// Section 5: Layout - Playback Controls Adjustment
+// Role:
+// - playback controls の位置・幅・translate 調整
+// - layout retry / settling の配線
+// Keep in content.js:
+// - layout apply trigger / retry timing orchestration
+// Move to modules:
+// - layout calculation / managed style apply-clear details
+// =====================================================================
+
+// =====================================================================
+// Section 6: Observer - Runtime Monitoring
+// Role:
+// - mutation / resize / raf observers の登録・解除
+// - runtime 変化に応じた trigger 配線
+// Keep in content.js:
+// - observer attach-detach / reinitialize-layout-render entrypoints
+// Move to modules:
+// - re-evaluation / reconnect / reposition implementation details
+// =====================================================================
+
+// =====================================================================
+// Section 7: Lifecycle - Boot & Teardown
+// Role:
+// - boot / restart / teardown
+// - message listener / roots / timer cleanup
+// Keep in content.js:
+// - extension lifecycle entrypoints / top-level wiring
+// Move to modules:
+// - per-module internal init / dispose details
+// =====================================================================
 
   let secondaryTrackCleanup = null;
   let secondaryTrackBound = null;
