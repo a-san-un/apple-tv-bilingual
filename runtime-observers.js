@@ -11,6 +11,11 @@
     scheduleAdjustPlaybackControls,
     scheduleControlSettlingBurst,
   }) {
+    let playbackControlsMutationObserver = null;
+    let playbackControlsResizeObserver = null;
+    const playbackControlsResizeTargets = new Set();
+    let playbackControlsResizeHandler = null;
+    let playbackControlsOrientationHandler = null;
     function getVideoAndDialog() {
       const ctx = getPlaybackContext();
       if (!ctx.isPlaybackReady) return null;
@@ -25,7 +30,7 @@
     }
 
     function refreshPlaybackControlResizeObserverTargets() {
-      const ro = state.playbackControlsResizeObserver;
+      const ro = playbackControlsResizeObserver;
       if (!ro) return;
 
       const { panel, footer, unified, volume, video } =
@@ -33,15 +38,15 @@
       const targets = [panel, footer, unified, volume, video].filter(Boolean);
 
       for (const target of targets) {
-        if (state.playbackControlsResizeTargets.has(target)) continue;
+        if (playbackControlsResizeTargets.has(target)) continue;
         ro.observe(target);
-        state.playbackControlsResizeTargets.add(target);
+        playbackControlsResizeTargets.add(target);
       }
 
-      for (const prev of [...state.playbackControlsResizeTargets]) {
+      for (const prev of [...playbackControlsResizeTargets]) {
         if (targets.includes(prev) && prev.isConnected) continue;
         ro.unobserve(prev);
-        state.playbackControlsResizeTargets.delete(prev);
+        playbackControlsResizeTargets.delete(prev);
       }
     }
     function waitForVideo(cb) {
@@ -70,29 +75,29 @@
 
 
     function stopPlaybackControlLayoutObservers() {
-      if (state.playbackControlsMutationObserver) {
-        state.playbackControlsMutationObserver.disconnect();
-        state.playbackControlsMutationObserver = null;
+      if (playbackControlsMutationObserver) {
+        playbackControlsMutationObserver.disconnect();
+        playbackControlsMutationObserver = null;
       }
 
-      if (state.playbackControlsResizeObserver) {
-        state.playbackControlsResizeObserver.disconnect();
-        state.playbackControlsResizeObserver = null;
+      if (playbackControlsResizeObserver) {
+        playbackControlsResizeObserver.disconnect();
+        playbackControlsResizeObserver = null;
       }
 
-      state.playbackControlsResizeTargets.clear();
+      playbackControlsResizeTargets.clear();
 
-      if (state.playbackControlsResizeHandler) {
-        window.removeEventListener("resize", state.playbackControlsResizeHandler);
-        state.playbackControlsResizeHandler = null;
+      if (playbackControlsResizeHandler) {
+        window.removeEventListener("resize", playbackControlsResizeHandler);
+        playbackControlsResizeHandler = null;
       }
 
-      if (state.playbackControlsOrientationHandler) {
+      if (playbackControlsOrientationHandler) {
         window.removeEventListener(
           "orientationchange",
-          state.playbackControlsOrientationHandler,
+          playbackControlsOrientationHandler,
         );
-        state.playbackControlsOrientationHandler = null;
+        playbackControlsOrientationHandler = null;
       }
     }
 
@@ -120,20 +125,20 @@
         }
       };
 
-      if (!state.playbackControlsResizeHandler) {
-        state.playbackControlsResizeHandler = () => {
+      if (!playbackControlsResizeHandler) {
+        playbackControlsResizeHandler = () => {
           schedulePlaybackLayoutRefresh("window_resize", {
             retryDelays: [120, 320, 700],
             settleDelays: [180, 520, 1100, 1800],
           });
         };
-        window.addEventListener("resize", state.playbackControlsResizeHandler, {
+        window.addEventListener("resize", playbackControlsResizeHandler, {
           passive: true,
         });
       }
 
-      if (!state.playbackControlsOrientationHandler) {
-        state.playbackControlsOrientationHandler = () => {
+      if (!playbackControlsOrientationHandler) {
+        playbackControlsOrientationHandler = () => {
           schedulePlaybackLayoutRefresh("orientation_change", {
             retryDelays: [120, 320, 700],
             settleDelays: [180, 520, 1100, 1800],
@@ -141,15 +146,15 @@
         };
         window.addEventListener(
           "orientationchange",
-          state.playbackControlsOrientationHandler,
+          playbackControlsOrientationHandler,
         );
       }
 
       if (
         typeof ResizeObserver !== "undefined" &&
-        !state.playbackControlsResizeObserver
+        !playbackControlsResizeObserver
       ) {
-        state.playbackControlsResizeObserver = new ResizeObserver(() => {
+        playbackControlsResizeObserver = new ResizeObserver(() => {
           schedulePlaybackLayoutRefresh("playback_resize_observer", {
             retryDelays: [120, 320],
             settle: false,
@@ -157,10 +162,10 @@
         });
       }
 
-      if (!state.playbackControlsMutationObserver) {
+      if (!playbackControlsMutationObserver) {
         const mutationRoot = state.dialogEl || document.body;
         if (mutationRoot) {
-          state.playbackControlsMutationObserver = new MutationObserver(
+          playbackControlsMutationObserver = new MutationObserver(
             (mutations) => {
               if (!state.panelVisible) return;
 
@@ -184,7 +189,7 @@
             },
           );
 
-          state.playbackControlsMutationObserver.observe(mutationRoot, {
+          playbackControlsMutationObserver.observe(mutationRoot, {
             subtree: true,
             childList: true,
             attributes: true,
