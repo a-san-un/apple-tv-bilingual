@@ -10,8 +10,8 @@
 
 - subtitle sync / recovery 改善を、`content.js` への追記ではなく controller / resolver 側への責務移送として進める
 - `content.js` を thin coordinator に近づけるため、分割対象とラウンド順を明確にする
-- 各ラウンドで「今回どこを触るか」「どこは触らないか」「何をもって完了とするか」を固定する
-- NLM 併用時にも、相談対象の責務境界と差分範囲をぶらさずに進められるようにする
+- 各ラウンドで何を触るかを固定し、構造整理・物理移送・private 化を混ぜないようにする
+- Round 1 の section regroup を基準面として確定し、Round 2 以降の physical split を安全に進められるようにする
 
 ### 1.2 扱うもの
 
@@ -19,9 +19,9 @@
 
 - Issue #32 における `content.js` コア分割の目的
 - 現在位置と進行中の主線
+- `content.js` の 7 セクション設計
 - 分割対象の優先順位
 - ラウンド単位の作業スコープ
-- 完了条件と確認観点
 - 実装時に見るべきログと切り分け観点
 
 ### 1.3 扱わないもの
@@ -33,6 +33,7 @@
 - phase 全体の進捗一覧や他 issue を含めた親ロードマップ
 - AI セッションテンプレ全文
 - セッションごとの実況メモや一時ログ
+- セッション運用の一般ルール（詳細は `docs/ai-session-templates.md` を参照）
 
 ### 1.4 他ドキュメントとの分担
 
@@ -77,14 +78,6 @@ Issue #32 は、subtitle sync / recovery の改善そのものに加えて、`co
 今回の狙いは、巨大ファイルを一気に割ることではない。  
 あくまで **責務のまとまりごとに、小さなラウンドで安全に外へ出す** ことである。
 
-その際の基本姿勢は次のとおりとする。
-
-- 1 ラウンド 1 主題
-- 既存挙動を壊さない
-- controller 優先 + local fallback を基本にする
-- `content.js` に新しい判定本体を増やさない
-- docs 上でも「何をどこへ寄せるか」を明示したうえで着手する
-
 ---
 
 ## 3. 現在位置
@@ -102,31 +95,106 @@ Issue #32 の流れの中で、すでに次の到達点がある。
 - playback controls layout は `playback-controls-layout.js` を正本とする構成へ整理済みである
 - `content.js` 側に secondary recovery 判定結果と sync 実行結果を観測するログが入っている
 
-### 3.2 進行中の主線
+### 3.2 Round 1 後の現在地
 
-現在の主線は次の 2 本である。
+Round 1 では、`content.js` に対して **ordering-only の section regroup** を行った。  
+これはロジック変更ではなく、7 セクションコメントの挿入と関数ブロックの物理並べ替えに限定した整理である。
 
-- secondary recovery の Runtime First 方針を実機ログで安定化すること
-- `content.js` 後半の coordinator / reinitialize / retry / result bridge / sync interval 周辺を、次の実分割候補として整理すること
+Round 1 完了時点の前提は次のとおり。
 
-特に、`content.js` 側に recovery 条件や missCount 管理を増やすのではなく、controller 側で判定し、`content.js` は trigger / logging / bridge に留める方針を守ることが重要である。
+- `content.js` を 7 セクションで読む構成を採用済み
+- Section 1〜7 のコメントを `state` 定義後に挿入済み
+- 関数ブロックは、正本 A の対応表に沿ってセクション単位に寄せ済み
+- Section 7: Lifecycle 関数群（boot / restart / teardown / bind / initial snapshot）はコメント直下へ集約済み
+- `createRuntimeObservers(...)` / `createSettingsRuntime(...)` / `createReinitializeCoordinator(...)` などの top-level wiring は、依存順優先で後段に残置済み
+- Section 6: Observer は、Round 1 では **空セクションのまま許容**と判断済み
 
-### 3.3 現時点の到達点
+### 3.3 Round 1 で得た運用補足
 
-現時点では次の状態まで来ている。
+Round 1 実装中、`boot();` を Section 7 直下へ移してしまったことで、`ensureMessageListener` の初期化前参照による `ReferenceError` が発生した。  
+この修正により、Round 1 の section regroup では次の補足を採用する。
 
-- large seek 後の secondary recovery / force-rebind 判定は controller 側で進められている
-- rebind 試行そのものが走っているかどうかをログで切り分けられる
-- `playbackContext.js` により、playback page context / content key / history context は分離済みである
-- playback controls layout も module 側を正本とする接続へ整理済みである
-- `reinitialize-coordinator.js` により、reinitialize / retry / settings-result bridge は 1 塊として `content.js` から外出し済みである
-- 一方で、secondary subtitle DOM と sync interval orchestration は、まだ `content.js` 側にまとまりとして残っている
+- **関数定義はセクション所属を優先して前方へ寄せてよい**
+- ただし、**top-level wiring と即時実行 (`boot();` など) は依存順優先で後段に残す**
 
 ---
 
-## 4. 分割対象
+## 4. content.js セクション設計
 
-### 4.1 content.js に残すもの
+### 4.1 セクション一覧
+
+Round 1 の正本では、`content.js` を次の 7 セクションで読む。
+
+1. Logger & Debug Bridge
+2. Playback Context Bridge
+3. UI: Secondary Subtitle DOM
+4. Sync Interval: Periodic Orchestration
+5. Layout: Playback Controls Adjustment
+6. Observer: Runtime Monitoring
+7. Lifecycle: Boot & Teardown
+
+### 4.2 各セクションの役割
+
+#### Section 1: Logger & Debug Bridge
+
+- logger / debug panel への橋渡し
+- contentKey 付き payload への正規化
+- live debug panel 更新通知の入口
+
+#### Section 2: Playback Context Bridge
+
+- playback DOM / textTrack 状態から context を検出
+- contentKey / history context の切替
+- playback context の入口と content 切替 trigger
+
+#### Section 3: UI - Secondary Subtitle DOM
+
+- secondary subtitle element / panel host の確保
+- secondary subtitle の描画入口
+- UI shell / panel host / hidden layer の橋渡し
+
+#### Section 4: Sync Interval - Periodic Orchestration
+
+- sync interval ごとの playback context refresh
+- large seek detection
+- secondary recovery pass 起動
+- runtime snapshot 採取と orchestration 順制御
+
+#### Section 5: Layout - Playback Controls Adjustment
+
+- playback controls の位置・幅・translate 調整
+- layout retry / settling の配線
+- layout apply / retry タイミングの coordinator
+
+#### Section 6: Observer - Runtime Monitoring
+
+- mutation / resize / raf observers の登録・解除
+- runtime 変化に応じた trigger 配線
+- video change / content key change の監視入口
+
+#### Section 7: Lifecycle - Boot & Teardown
+
+- boot / restart / teardown
+- message listener / roots / timer cleanup
+- bindTracks / buildUi / initial snapshot / boot sequence の入口
+
+### 4.3 Round 1 の読み方
+
+Round 1 では、**セクションコメントは責務ラベル**として扱う。  
+そのため、各セクションに必ず top-level wiring や即時実行が物理近接している必要はない。
+
+特に Section 6 / Section 7 では次を守る。
+
+- 関数宣言はセクションへ寄せる
+- `const ... = createX(...)` のような wiring は依存順優先
+- `boot();` のような即時実行は wiring 後に置く
+- Section 6 は Round 1 では空に近い状態でも許容する
+
+---
+
+## 5. 分割対象
+
+### 5.1 content.js に残すもの
 
 最終的に `content.js` に残すものは次の責務である。
 
@@ -139,7 +207,7 @@ Issue #32 の流れの中で、すでに次の到達点がある。
 - large seek 検知のような薄い runtime fact の記録
 - 観測ログの入口
 
-### 4.2 content.js から外へ出すもの
+### 5.2 content.js から外へ出すもの
 
 段階的に外へ出す対象は次のとおり。
 
@@ -148,12 +216,13 @@ Issue #32 の流れの中で、すでに次の到達点がある。
 - current / history / panel / overlay の truth 解決本体
 - playback context / content key / history context の詳細実装
 - reinitialize / retry / result bridge の内部処理
-- secondary subtitle DOM の探索 / host 確保 /描画導線
+- secondary subtitle DOM の探索 / host 確保 / 描画導線
 - sync interval の詳細 orchestration
 - layout 計算や managed style の本体
 - runtime missing / missCount / force-rebind / terminated の条件本体
+- observer callback / resize handler / orientation handler の実装詳細
 
-### 4.3 現在の主要分割単位
+### 5.3 現在の主要分割単位
 
 現在、Issue #32 で明示的に扱う分割単位は次のとおり。
 
@@ -162,148 +231,63 @@ Issue #32 の流れの中で、すでに次の到達点がある。
 - reinitialize / retry / result bridge
 - secondary subtitle DOM 管理
 - sync interval orchestration
+- runtime observers
 - initial cue recovery
 
-このうち、前二者は導入済みまたは完了済みの先行例として扱い、残りを次ラウンド候補とする。
+このうち、前二者と reinitialize coordinator は導入済みまたは先行整理済みの例として扱い、残りを次ラウンド候補とする。
 
 ---
 
-## 5. 実装ラウンド
+## 6. 実装ラウンド
 
-### 5.1 Round A: playbackContext
+### 6.1 Round 1: section regroup（完了）
 
-目的は、playback page context / content key / history context を `content.js` 本体から分離することだった。
+Round 1 の目的は、`content.js` を 7 セクションで読める物理配置へ揃えることだった。  
+このラウンドでは **ordering-only** を徹底し、ロジック変更は行わない。
 
-対象は次のような関数群である。
+Round 1 で行ったことは次のとおり。
 
-- `getPlaybackContext`
-- `getVideoAndDialog`
-- `isPlaybackPageReady`
-- `getPlaybackContextLogPayload`
-- `normalizeContentKeyPart`
-- `normalizeMediaSourceKey`
-- `getPlaybackTitleKey`
-- `resolvePlaybackContentKey`
-- `getCurrentVideoSrcKey`
-- `getHistoryBucketForContentKey`
-- `loadHistoryForContentKey`
-- `saveHistoryForContentKey`
-- `switchHistoryContext`
-- `syncHistoryContextWithPlayback`
+- 7 セクションコメントの挿入
+- 関数ブロックのセクション単位並べ替え
+- Section 4 / 5 / 7 の関数群集約
+- Section 6 は空許容とする設計判断の明文化
+- `boot();` は wiring 後へ残す運用ルールの確定
 
-現状では `playbackContext.js` が追加済みで、`window.ATVB.createPlaybackContextController` を介した controller 優先 + local fallback の接続になっている。
+### 6.2 Round 2: runtime observers 物理移送
 
-### 5.2 Round B: playback controls layout
+次の主線は、Section 6 相当の observer 実装詳細を `runtime-observers.js` に寄せるラウンドである。  
+この段階では、state 完全 private 化までは行わず、**物理移送だけ**に集中する。
 
-目的は、playback controls の位置・幅・translate 管理を `content.js` から module 側へ寄せることだった。
+Round 2 で扱う対象は次のとおり。
 
-このラウンドで扱った主な対象は次のとおり。
+- MutationObserver callback 本体
+- playbackControlsResizeHandler
+- playbackControlsOrientationHandler
+- `start...Observers` / `stop...Observers` の public API 整理
+- `waitForVideo` を含む observer / runtime monitor 実装詳細
+- `content.js` 側の observer strategic routing の残置位置整理
 
-- `PLAYBACK_CONTROLS_LAYOUT`
-- `getPlaybackControlsLayoutTargets`
-- `applyManaged*` / `clearManaged*`
-- `clearPlaybackControlsTransforms`
-- `adjustPlaybackControlsForPanel`
+Round 2 で `content.js` に残すものは次のとおり。
 
-現状では `playback-controls-layout.js` を正本とし、`content.js` は layout controller instance を生成して bridge を配る薄い coordinator になっている。
+- `handleVideoChanged`
+- `handleContentKeyChanged`
+- `scheduleAdjustPlaybackControls`
+- observer attach / detach の入口
+- module 呼び出し配線
+- 監視結果を見てどの coordinator を呼ぶかの判断入口
 
-### 5.3 Round C: reinitialize / retry / result bridge
+### 6.3 Round 3: state カプセル化
 
-次の有力候補は、再初期化まわりを 1 主題として扱うラウンドである。
+Round 3 の目的は、observer 関連 state を module private に寄せて `content.js` の state を痩せさせることである。
 
-対象候補は次のとおり。
+Round 3 で扱う対象は次のとおり。
 
-- reinitialize entry helper
-- track resolve retry helper
-- settings reload 後の反映 helper
-- result bridge helper
-- `reinitializeSubtitlePipeline` 周辺の入口整理
-
-このラウンドでは、再初期化の判定本体を増やすのではなく、entry / retry / result bridge の境界を可視化し、必要なら controller 化の足場を作る。
-
-### 5.4 Round D: secondary subtitle DOM
-
-secondary subtitle DOM 管理も、独立した 1 グループとして分けやすい。
-
-対象候補は次のとおり。
-
-- `getSecondarySubtitleElements`
-- `getSecondaryRenderLogPayload`
-- `ensureSecondarySubtitleElement`
-- `renderSecondarySubtitle`
-
-このラウンドでは truth 判定や recovery 判定を持ち込まず、DOM 探索・正規化・host 確保・表示反映だけに責務を限定する。
-
-### 5.5 Round E: sync interval orchestration
-
-sync interval 系は runtime recovery を駆動する orchestration 層としてまとまりがある。
-
-対象候補は次のとおり。
-
-- `buildSecondarySyncLogPayload`
-- `buildSyncIntervalSubtitleSnapshot`
-- `syncIntervalRefreshPlaybackContext`
-- `syncIntervalDetectLargeSeek`
-- `syncIntervalRunSecondaryRecoveryPass`
-- `ensureSecondaryTrackSyncInterval`
-
-このラウンドでは、判定本体を controller 側へ置いたまま、`content.js` 側の orchestration を薄くすることを狙う。
-
-### 5.6 Round F: initial cue recovery
-
-initial cue recovery は、large seek 後の recovery 本線とは別に、初期表示や attach 後の立ち上がり安定化として整理する候補である。
-
-ただし、これは reinitialize / sync interval / controller 境界と干渉しやすいため、単独主題として扱う。  
-他ラウンドと同時着手は避ける。
-
----
-
-## 6. ラウンドごとの進め方
-
-### 6.1 1 ラウンド 1 主題
-
-各ラウンドでは、主題となる責務塊を 1 つだけ選ぶ。
-
-例:
-
-- 今回は reinitialize / retry / result bridge だけ
-- 今回は secondary subtitle DOM だけ
-- 今回は sync interval orchestration だけ
-
-複数主題を同時に触ると、構造整理と仕様変更が混ざりやすくなるため避ける。
-
-### 6.2 変更してよい範囲
-
-各ラウンドで変更してよいのは、原則として次の範囲に限る。
-
-- 対象責務の section boundary 整理
-- module / controller 側への物理移送
-- 呼び出し配線の差し替え
-- local fallback の暫定追加
-- 既存ログの移設または最小限の観測点追加
-- 構文確認と manifest 読み込み順の整合に必要な変更
-
-### 6.3 変更しない範囲
-
-原則として、同じラウンドで次は変更しない。
-
-- UI 見た目の調整
-- truth / recovery パラメータの再設計
-- unrelated な observer 条件追加
-- 他責務のついで修正
-- 新しい feature の混入
-- `content.js` への新しい本体判定の追加
-
-### 6.4 完了条件
-
-1 ラウンドの完了条件は次のようにそろえる。
-
-- 対象責務の境界が docs とコードで説明できる
-- `content.js` 側が thin bridge / coordinator に寄っている
-- 既存挙動を壊していない
-- 最低限の構文確認が通る
-- 実機で主経路が確認できる
-- local fallback を残すなら、その撤去条件が明示されている
+- `state.playbackControlsMutationObserver`
+- `state.playbackControlsResizeObserver`
+- `state.playbackControlsResizeTargets`
+- `state.playbackControlsRafId`
+- `deps.state.xxx` 依存の段階削減
+- create / start / stop API の整理
 
 ---
 
@@ -313,34 +297,32 @@ initial cue recovery は、large seek 後の recovery 本線とは別に、初�
 
 次の着手候補としては、次の順を推奨する。
 
-1. reinitialize / retry / result bridge
+1. runtime observers
 2. sync interval orchestration
 3. secondary subtitle DOM
 4. initial cue recovery
 
-### 7.2 着手順
+### 7.2 Round 2 の着手順
 
-特に次ラウンドでは、次の順で入るのが安全である。
+次ラウンドでは、次の順で入るのが安全である。
 
-1. `content.js` 内で対象セクションの begin/end を明示する
-2. 関連 helper のまとまりを確定する
-3. 依存先を洗い出す
-4. module 化または controller 化の入口を用意する
-5. `content.js` 側を controller 優先 + local fallback 接続に寄せる
-6. 実機で主経路を確認する
+1. `content.js` 内で Section 6 相当の実体位置を再確認する
+2. observer 関連 helper / callback / start-stop API を洗い出す
+3. `runtime-observers.js` に寄せる実装本体を cut & paste 単位で確定する
+4. `createRuntimeObservers(...)` の deps / bridge 形状を固定する
+5. `content.js` 側には strategic routing と wiring だけを残す
+6. 構文確認と実機初期化を確認する
 7. docs に導入範囲と残課題を反映する
 
-### 7.3 確認項目
+### 7.3 Round 1 完了ライン
 
-各ラウンドで最低限見る項目は次のとおり。
+Round 1 完了時点で、次を「終わった」とみなす。
 
-- `node --check` 相当の構文確認
-- `manifest.json` の読み込み順
-- `window.ATVB` への公開名
-- `content.js` 側の参照名
-- 実際に fallback / controller のどちらが走っているか
-- Apple TV+ 再生画面で初期化エラーがないか
-- panel / overlay / subtitle sync の主経路が壊れていないか
+- Section 1〜7 コメントの挿入
+- Section 4 / 5 / 7 の関数群再配置
+- Section 6 空許容の設計確認
+- `boot();` の後段残置による TDZ 修正
+- `content.js` を Round 2 の physical split を読める形へ整列
 
 ---
 
@@ -377,8 +359,7 @@ Issue #32 の分割では、ログは次の切り分けに使う。
 - track の再バインドも行われている
 - それでも JA track の active cues が復帰しない
 
-このケースは Apple TV+ 側挙動に依存する Known Issue として切り分ける。  
-そのため、Issue #32 の分割では「どこまで拡張側で制御できるか」を docs 上でも明確に残す。
+このケースは Apple TV+ 側挙動に依存する Known Issue として切り分ける。
 
 ---
 
@@ -386,8 +367,7 @@ Issue #32 の分割では、ログは次の切り分けに使う。
 
 - この文書は Issue #32 の **実装運用正本** であり、subtitle sync 設計そのものの正本ではない
 - truth / health / recovery / UI 境界の設計は `docs/content-architecture.md` を参照する
-- 1 回のスレッドで複数主題を同時に進めない
-- `content.js` に一時 state や分岐を足す場合も、次に消す出口を前提にする
-- local fallback は恒久化しない
-- docs の更新は、実装後ではなく着手前にスコープを固定できる粒度で行う
+- セッション運用の一般ルールは `docs/ai-session-templates.md` を参照する
+- Round 1 / Round 2 / Round 3 を混ぜない
+- **区画整理 / 物理移送 / private 化** を常に別論点として扱う
 - 行数削減は重要だが、より重要なのは責務が正しい場所へ移っていることである
