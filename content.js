@@ -1655,7 +1655,6 @@
     waitForVideo(attachTracks);
   }
 
-  boot();
 
   let secondaryTrackCleanup = null;
   let secondaryTrackBound = null;
@@ -3896,5 +3895,5 @@
     loadSettingsFromSync();
   }
 
-
+  boot();
 })();
