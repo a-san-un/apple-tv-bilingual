@@ -94,6 +94,9 @@ Issue #32 の流れの中で、すでに次の到達点がある。
 - `reinitialize-coordinator.js` が導入され、reinitialize / retry / settings-result bridge が 1 塊として `content.js` から外出し済みである
 - playback controls layout は `playback-controls-layout.js` を正本とする構成へ整理済みである
 - `content.js` 側に secondary recovery 判定結果と sync 実行結果を観測するログが入っている
+- Round 1 の section regroup が完了している
+- Round 2 の runtime observers 実装本体の物理移送が完了している
+- Round 3 の observer state カプセル化が完了している [page:1][page:2]
 
 ### 3.2 Round 1 後の現在地
 
@@ -109,13 +112,24 @@ Round 1 完了時点の前提は次のとおり。
 - `createRuntimeObservers(...)` / `createSettingsRuntime(...)` / `createReinitializeCoordinator(...)` などの top-level wiring は、依存順優先で後段に残置済み
 - Section 6: Observer は、Round 1 では **空セクションのまま許容**と判断済み
 
-### 3.3 Round 1 で得た運用補足
+### 3.3 Round 2 / 3 後の現在地
+
+Round 2 では、Section 6: Observer - Runtime Monitoring の実装詳細を `runtime-observers.js` に物理移送した。[page:1]  
+これにより、observer callback / resize handler / orientation handler / waitForVideo / layout observer attach-detach の実装本体は `runtime-observers.js` 側を正本として読む構成になった。[page:1]
+
+Round 3 では、Round 2 で module 側へ寄せた runtime observers 実装について、observer 内部だけで使う state を `content.js` から隠す cleanup を行った。[page:2]  
+具体的には、`playbackControlsMutationObserver`、`playbackControlsResizeObserver`、`playbackControlsResizeTargets`、`playbackControlsResizeHandler`、`playbackControlsOrientationHandler`、`waitTimer` を `runtime-observers.js` 内の private state に寄せ、`content.js` 側 state から削除した。[page:1][page:2]
+
+### 3.4 運用補足
 
 Round 1 実装中、`boot();` を Section 7 直下へ移してしまったことで、`ensureMessageListener` の初期化前参照による `ReferenceError` が発生した。  
 この修正により、Round 1 の section regroup では次の補足を採用する。
 
 - **関数定義はセクション所属を優先して前方へ寄せてよい**
 - ただし、**top-level wiring と即時実行 (`boot();` など) は依存順優先で後段に残す**
+
+Round 2 / 3 でもこの補足は維持する。  
+とくに `createRuntimeObservers(...)` や `boot();` のような wiring / 即時実行は、セクション所属より依存順を優先して配置する。[page:3]
 
 ---
 
@@ -171,6 +185,8 @@ Round 1 の正本では、`content.js` を次の 7 セクションで読む。
 - mutation / resize / raf observers の登録・解除
 - runtime 変化に応じた trigger 配線
 - video change / content key change の監視入口
+- `content.js` 側では observer attach / detach / routing / wiring を読む
+- `runtime-observers.js` 側では observer 実装詳細の正本を読む [page:1][page:2]
 
 #### Section 7: Lifecycle - Boot & Teardown
 
@@ -178,17 +194,23 @@ Round 1 の正本では、`content.js` を次の 7 セクションで読む。
 - message listener / roots / timer cleanup
 - bindTracks / buildUi / initial snapshot / boot sequence の入口
 
-### 4.3 Round 1 の読み方
+### 4.3 Round 1 / 2 / 3 の読み方
 
 Round 1 では、**セクションコメントは責務ラベル**として扱う。  
 そのため、各セクションに必ず top-level wiring や即時実行が物理近接している必要はない。
+
+Round 2 では、Section 6 の「実装本体を読む場所」が `content.js` から `runtime-observers.js` に移ったと読む。  
+`content.js` 側の Section 6 は薄い入口として読み、observer callback / handler / helper の実装本体は module 側を正本とする。[page:1]
+
+Round 3 では、Section 6 に関連する internal state のうち observer module の運転都合だけで存在するものを `runtime-observers.js` 内の private state へ寄せたと読む。  
+その結果、`content.js` に残るのは共有意味を持つ state と top-level wiring であり、thin coordinator 化を一段進めた状態として読む。[page:2]
 
 特に Section 6 / Section 7 では次を守る。
 
 - 関数宣言はセクションへ寄せる
 - `const ... = createX(...)` のような wiring は依存順優先
 - `boot();` のような即時実行は wiring 後に置く
-- Section 6 は Round 1 では空に近い状態でも許容する
+- Section 6 の実装詳細は Round 2 以降 `runtime-observers.js` を正本として読む
 
 ---
 
@@ -206,6 +228,7 @@ Round 1 では、**セクションコメントは責務ラベル**として扱�
 - controller / resolver / renderer の呼び出し配線
 - large seek 検知のような薄い runtime fact の記録
 - 観測ログの入口
+- module public API を top-level で束ねる wiring [page:3]
 
 ### 5.2 content.js から外へ出すもの
 
@@ -221,6 +244,7 @@ Round 1 では、**セクションコメントは責務ラベル**として扱�
 - layout 計算や managed style の本体
 - runtime missing / missCount / force-rebind / terminated の条件本体
 - observer callback / resize handler / orientation handler の実装詳細
+- observer module の内部 state [page:1][page:2]
 
 ### 5.3 現在の主要分割単位
 
@@ -234,7 +258,8 @@ Round 1 では、**セクションコメントは責務ラベル**として扱�
 - runtime observers
 - initial cue recovery
 
-このうち、前二者と reinitialize coordinator は導入済みまたは先行整理済みの例として扱い、残りを次ラウンド候補とする。
+このうち、`playbackContext` / playback controls layout / reinitialize coordinator / runtime observers は導入済みまたは分割実施済みの例として扱う。[page:1][page:2]  
+残る主候補は、secondary subtitle DOM 管理、sync interval orchestration、initial cue recovery である。[page:3]
 
 ---
 
@@ -253,41 +278,52 @@ Round 1 で行ったことは次のとおり。
 - Section 6 は空許容とする設計判断の明文化
 - `boot();` は wiring 後へ残す運用ルールの確定
 
-### 6.2 Round 2: runtime observers 物理移送
+### 6.2 Round 2: runtime observers 物理移送（完了）
 
-次の主線は、Section 6 相当の observer 実装詳細を `runtime-observers.js` に寄せるラウンドである。  
-この段階では、state 完全 private 化までは行わず、**物理移送だけ**に集中する。
+Round 2 では、Section 6 相当の observer 実装詳細を `runtime-observers.js` に寄せた。[page:1]  
+このラウンドは **physical move-only** を原則とし、observer の意味・条件・挙動は変更しないまま、実装本体の置き場所だけを移した。[page:1]
 
-Round 2 で扱う対象は次のとおり。
+Round 2 で扱った対象は次のとおり。
 
 - MutationObserver callback 本体
-- playbackControlsResizeHandler
-- playbackControlsOrientationHandler
-- `start...Observers` / `stop...Observers` の public API 整理
+- playback controls resize / orientation handler
+- resize observer target refresh helper
 - `waitForVideo` を含む observer / runtime monitor 実装詳細
-- `content.js` 側の observer strategic routing の残置位置整理
+- `startPlaybackControlLayoutObservers()` / `stopPlaybackControlLayoutObservers()` / `refreshPlaybackControlResizeObserverTargets()` の public API 成立
+- `content.js` 側の observer attach / detach / routing / wiring の残置位置整理 [page:1]
 
-Round 2 で `content.js` に残すものは次のとおり。
+Round 2 完了後の読み方は次のとおり。
 
-- `handleVideoChanged`
-- `handleContentKeyChanged`
-- `scheduleAdjustPlaybackControls`
-- observer attach / detach の入口
-- module 呼び出し配線
-- 監視結果を見てどの coordinator を呼ぶかの判断入口
+- `runtime-observers.js` が observer 実装本体の正本である
+- `content.js` 側は observer attach / detach / routing / top-level wiring の入口を持つ
+- state private 化・rename・再設計は Round 3 へ送る [page:1]
 
-### 6.3 Round 3: state カプセル化
+### 6.3 Round 3: state カプセル化（完了）
 
-Round 3 の目的は、observer 関連 state を module private に寄せて `content.js` の state を痩せさせることである。
+Round 3 の目的は、observer 関連 state を module private に寄せて `content.js` の state を痩せさせることだった。[page:2]  
+このラウンドでも observer の意味・条件・挙動は変えず、**state カプセル化だけ** に集中した。[page:2]
 
-Round 3 で扱う対象は次のとおり。
+Round 3 で private 化した対象は次のとおり。
 
-- `state.playbackControlsMutationObserver`
-- `state.playbackControlsResizeObserver`
-- `state.playbackControlsResizeTargets`
-- `state.playbackControlsRafId`
-- `deps.state.xxx` 依存の段階削減
-- create / start / stop API の整理
+- `playbackControlsMutationObserver`
+- `playbackControlsResizeObserver`
+- `playbackControlsResizeTargets`
+- `playbackControlsResizeHandler`
+- `playbackControlsOrientationHandler`
+- `waitTimer` [page:1][page:2]
+
+Round 3 で据え置いた共有 state は次のとおり。
+
+- `dialogEl`
+- `panelVisible`
+- `playbackControlsRafId` [page:2]
+
+Round 3 の結果は次のとおり。
+
+- `runtime-observers.js` に残る `state` 依存は `dialogEl` と `panelVisible` のみになった
+- `content.js` から observer module の内部運転都合だけで存在する state がさらに減った
+- `content.js` の行数は 3899 → 3894 → 3893 と減少した
+- first cleanup はコミット `0db6472`、`waitTimer` private 化を含む完了差分はコミット `51046ce` で反映された [page:1][page:2]
 
 ---
 
@@ -295,34 +331,34 @@ Round 3 で扱う対象は次のとおり。
 
 ### 7.1 最優先候補
 
-次の着手候補としては、次の順を推奨する。
+Round 2 / 3 が完了したため、次の着手候補としては次の順を推奨する。
 
-1. runtime observers
-2. sync interval orchestration
-3. secondary subtitle DOM
-4. initial cue recovery
+1. sync interval orchestration
+2. secondary subtitle DOM
+3. initial cue recovery
+4. observer deps 整理の継続 [page:3]
 
-### 7.2 Round 2 の着手順
+### 7.2 次ラウンドの着手順
 
 次ラウンドでは、次の順で入るのが安全である。
 
-1. `content.js` 内で Section 6 相当の実体位置を再確認する
-2. observer 関連 helper / callback / start-stop API を洗い出す
-3. `runtime-observers.js` に寄せる実装本体を cut & paste 単位で確定する
-4. `createRuntimeObservers(...)` の deps / bridge 形状を固定する
-5. `content.js` 側には strategic routing と wiring だけを残す
-6. 構文確認と実機初期化を確認する
-7. docs に導入範囲と残課題を反映する
+1. 次に `content.js` から大きく減らせる責務塊を 1 つ決める
+2. 対象セクションの helper / callback / orchestrator 本体を棚卸しする
+3. `content.js` に残す入口と module 側へ移す実装本体を切り分ける
+4. physical move-only で cut & paste する
+5. import / export / wiring を最小限で成立させる
+6. 構文確認と簡易実機確認を行う
+7. docs に導入範囲と残課題を反映する [page:3]
 
-### 7.3 Round 1 完了ライン
+### 7.3 Round 2 / 3 完了ライン
 
-Round 1 完了時点で、次を「終わった」とみなす。
+Round 2 / 3 完了時点で、次を「終わった」とみなす。
 
-- Section 1〜7 コメントの挿入
-- Section 4 / 5 / 7 の関数群再配置
-- Section 6 空許容の設計確認
-- `boot();` の後段残置による TDZ 修正
-- `content.js` を Round 2 の physical split を読める形へ整列
+- `runtime-observers.js` が Section 6 実装詳細の正本として成立している
+- `content.js` の Section 6 が observer attach / detach / routing / wiring の薄い入口として読める
+- observer 内部専用 state が `runtime-observers.js` にカプセル化されている
+- observer の意味・条件・挙動は Round 2 / 3 を通して変更していない
+- `node --check` と軽い拡張更新確認でエラーが出ていない [page:1][page:2]
 
 ---
 
@@ -340,6 +376,9 @@ Issue #32 の分割では、ログは次の切り分けに使う。
 
 この考え方は、recovery ロジック本体と Apple TV+ 側挙動を混同しないために重要である。
 
+Round 2 / 3 の observer 分割でも、ログの見方自体は変えない。  
+分割後も「どの trigger が起きたか」「どこで layout / reinitialize が呼ばれたか」を切り分けられる状態を保つ。[page:3]
+
 ### 8.2 実機確認観点
 
 実機では、少なくとも次を確認する。
@@ -351,6 +390,12 @@ Issue #32 の分割では、ログは次の切り分けに使う。
 - 再初期化後に二重 attach や二重 render が出ない
 - user scroll と auto-follow が不自然に競合しない
 
+Round 2 / 3 の確認では、加えて次を軽く見る。
+
+- observer start / stop 後にエラーが出ない
+- layout observer の attach / detach が二重化していない
+- `waitForVideo` 経由の初期化待ちで例外が出ない [page:1][page:2]
+
 ### 8.3 Known Issue の切り分け
 
 現時点では、次を拡張側ロジックの問題と即断しない。
@@ -360,6 +405,9 @@ Issue #32 の分割では、ログは次の切り分けに使う。
 - それでも JA track の active cues が復帰しない
 
 このケースは Apple TV+ 側挙動に依存する Known Issue として切り分ける。
+
+observer 分割後も、この Known Issue の切り分け方は変わらない。  
+Round 2 / 3 は observer の配置と state 保持場所を変えたラウンドであり、subtitle recovery 仕様そのものは変更していない。[page:1][page:2]
 
 ---
 
@@ -371,3 +419,4 @@ Issue #32 の分割では、ログは次の切り分けに使う。
 - Round 1 / Round 2 / Round 3 を混ぜない
 - **区画整理 / 物理移送 / private 化** を常に別論点として扱う
 - 行数削減は重要だが、より重要なのは責務が正しい場所へ移っていることである
+- Round 2 は physical move-only、Round 3 は state カプセル化 only として扱い、挙動変更を混ぜない [page:1][page:2]
