@@ -817,485 +817,6 @@
 // - recovery decision / lane state / track resolve details
 // =====================================================================
 
-// =====================================================================
-// Section 5: Layout - Playback Controls Adjustment
-// Role:
-// - playback controls の位置・幅・translate 調整
-// - layout retry / settling の配線
-// Keep in content.js:
-// - layout apply trigger / retry timing orchestration
-// Move to modules:
-// - layout calculation / managed style apply-clear details
-// =====================================================================
-
-// =====================================================================
-// Section 6: Observer - Runtime Monitoring
-// Role:
-// - mutation / resize / raf observers の登録・解除
-// - runtime 変化に応じた trigger 配線
-// Keep in content.js:
-// - observer attach-detach / reinitialize-layout-render entrypoints
-// Move to modules:
-// - re-evaluation / reconnect / reposition implementation details
-// =====================================================================
-
-// =====================================================================
-// Section 7: Lifecycle - Boot & Teardown
-// Role:
-// - boot / restart / teardown
-// - message listener / roots / timer cleanup
-// Keep in content.js:
-// - extension lifecycle entrypoints / top-level wiring
-// Move to modules:
-// - per-module internal init / dispose details
-// =====================================================================
-
-  let secondaryTrackCleanup = null;
-  let secondaryTrackBound = null;
-  let secondaryTrackSyncInterval = null;
-  let layoutRetryTimers = [];
-  let startupCompletedLogged = false;
-  let lastSecondaryText = "";
-  let lastSecondaryTextAt = 0;
-  let lastSecondarySignalAt = 0;
-
-
-
-  function getMergedSubtitleHealthSnapshot() {
-    try {
-      return cueController?.getMergedSubtitleHealth?.() || null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function computeCurrentSubtitleBlock(reason = "unknown") {
-    const currentBlock = state.currentSubtitleBlock || null;
-    const primaryText = normalizeSubtitleText(
-      currentBlock?.primaryText || state.lastPrimaryText || "",
-    );
-    const secondaryText = normalizeSubtitleText(
-      currentBlock?.secondaryText || "",
-    );
-
-    return {
-      startTime: currentBlock?.startTime ?? null,
-      endTime: currentBlock?.endTime ?? null,
-      primaryText,
-      secondaryText,
-      hasPrimarySignal: Boolean(primaryText),
-      hasSecondarySignal: Boolean(secondaryText),
-      sourceReason: reason,
-      updatedAt: Date.now(),
-    };
-  }
-
-  function setSubtitleBlocks(result, reason = "unknown") {
-    const nextBlocks = Array.isArray(result?.blocks) ? result.blocks : [];
-    const nextCurrentIndex =
-      typeof result?.currentIndex === "number" ? result.currentIndex : -1;
-    const nextPanelPastBlocks = nextBlocks.filter(
-      (block) => block?.state === "past",
-    );
-
-    state.subtitleBlocks = nextBlocks;
-    state.subtitleCurrentIndex = nextCurrentIndex;
-    state.subtitleBlockMeta = result?.meta || null;
-    state.panelPastBlocks = nextPanelPastBlocks;
-
-    logContent("subtitle blocks updated", {
-      reason,
-      blockCount: nextBlocks.length,
-      currentIndex: nextCurrentIndex,
-      panelPastCount: nextPanelPastBlocks.length,
-    });
-  }
-
-  /* subtitle block sequence の truth snapshot を返す。 */
-  function getSubtitleBlockSequence() {
-    return {
-      blocks: state.subtitleBlocks,
-      currentIndex: state.subtitleCurrentIndex,
-      meta: state.subtitleBlockMeta,
-    };
-  }
-
-  /* subtitle block sequence から current block を取り出す。 */
-  function getCurrentSubtitleBlockFromSequence(sequenceResult = null) {
-    const blocks = Array.isArray(sequenceResult?.blocks)
-      ? sequenceResult.blocks
-      : state.subtitleBlocks;
-    const currentIndex =
-      typeof sequenceResult?.currentIndex === "number"
-        ? sequenceResult.currentIndex
-        : state.subtitleCurrentIndex;
-
-    if (
-      !Array.isArray(blocks) ||
-      currentIndex < 0 ||
-      currentIndex >= blocks.length
-    ) {
-      return null;
-    }
-
-    const block = blocks[currentIndex];
-    if (!block) return null;
-
-    return {
-      startTime: block.startTime ?? null,
-      endTime: block.endTime ?? null,
-      primaryText: block.primaryText || block.primary || "",
-      secondaryText: block.secondaryText || block.secondary || "",
-      hasPrimarySignal: Boolean(block.primaryText || block.primary),
-      hasSecondarySignal: Boolean(block.secondaryText || block.secondary),
-      sourceReason: "subtitleBlockSequence",
-      updatedAt: Date.now(),
-      key: block.key || null,
-      stable: block.stable ?? false,
-    };
-  }
-
-  // 現在字幕の更新と一時的なテキスト巻き戻りの抑止
-  function setCurrentSubtitleBlock(block, reason = "unknown") {
-    const previousBlock = state.currentSubtitleBlock || null;
-
-    const isSameTimeWindow =
-      previousBlock &&
-      block &&
-      previousBlock.startTime === block.startTime &&
-      previousBlock.endTime === block.endTime;
-
-    const shouldKeepPreviousTexts =
-      isSameTimeWindow &&
-      previousBlock.hasPrimarySignal &&
-      previousBlock.primaryText &&
-      block?.hasPrimarySignal &&
-      block.primaryText &&
-      previousBlock.primaryText !== block.primaryText &&
-      state.lastPrimaryText === previousBlock.primaryText;
-
-    const nextBlock = shouldKeepPreviousTexts
-      ? {
-          ...block,
-          primaryText: previousBlock.primaryText,
-          secondaryText:
-            previousBlock.secondaryText || block.secondaryText || "",
-          hasPrimarySignal: previousBlock.hasPrimarySignal,
-          hasSecondarySignal:
-            previousBlock.hasSecondarySignal || block.hasSecondarySignal,
-        }
-      : block;
-
-    state.currentSubtitleBlock = nextBlock;
-    state.lastCurrentSubtitleBlockAt = Date.now();
-
-    if (
-      nextBlock?.hasPrimarySignal &&
-      nextBlock.primaryText &&
-      nextBlock.primaryText !== state.lastPrimaryText
-    ) {
-      state.lastPrimaryText = nextBlock.primaryText;
-
-      appendSubtitleHistory({
-        startTime: nextBlock.startTime ?? null,
-        endTime: nextBlock.endTime ?? null,
-        primary: nextBlock.primaryText,
-        secondary: nextBlock.secondaryText || "",
-      });
-    }
-
-    logContent("current subtitle block updated", {
-      reason,
-      hasBlock: Boolean(nextBlock),
-      primaryTextLength: nextBlock?.primaryText?.length || 0,
-      secondaryTextLength: nextBlock?.secondaryText?.length || 0,
-      hasPrimarySignal: Boolean(nextBlock?.hasPrimarySignal),
-      hasSecondarySignal: Boolean(nextBlock?.hasSecondarySignal),
-      blockStartTime: nextBlock?.startTime ?? null,
-      blockEndTime: nextBlock?.endTime ?? null,
-    });
-  }
-
-
-
-  const vttApi = window.ATVB?.vtt || {};
-  const resolverApi = window.ATVB?.resolver || {};
-  const subtitleBlocksApi = window.ATVB?.subtitleBlocks || {};
-  const subtitleBlockResolverApi = window.ATVB?.subtitleBlockResolver || {};
-
-  const vttDeps = {
-    normalizeSubtitleText: (...args) =>
-      vttApi.normalizeSubtitleText?.(...args) ?? "",
-    cleanCueText: (...args) => vttApi.cleanCueText?.(...args) ?? "",
-    formatTime: (...args) => vttApi.formatTime?.(...args) ?? "",
-  };
-
-  const resolverDeps = {
-    getUniqueTracks: (...args) => resolverApi.getUniqueTracks?.(...args) ?? [],
-    getTrackCuesLength: (...args) =>
-      resolverApi.getTrackCuesLength?.(...args) ?? 0,
-    getTrackActiveCuesLength: (...args) =>
-      resolverApi.getTrackActiveCuesLength?.(...args) ?? 0,
-    pickBestSubtitleTrack: (...args) =>
-      resolverApi.pickBestSubtitleTrack?.(...args) ?? null,
-    getSecondarySubtitleTrackCandidates: (...args) =>
-      resolverApi.getSecondarySubtitleTrackCandidates?.(...args) ?? [],
-    resolveSecondarySubtitleTrack: (...args) =>
-      resolverApi.resolveSecondarySubtitleTrack?.(...args) ?? null,
-  };
-
-  const { normalizeSubtitleText, cleanCueText } = vttDeps;
-
-  const {
-    buildSubtitleBlockSequence = () => ({
-      blocks: [],
-      currentIndex: -1,
-      meta: null,
-    }),
-  } = subtitleBlocksApi;
-
-  const { getTrackActiveCuesLength } = resolverDeps;
-
-  (async function loadEJDict() {
-    try {
-      const url = chrome.runtime.getURL("dict/ejdict.json");
-      const res = await fetch(url);
-      state.ejdictMap = await res.json();
-      logContentApi("EJDict loaded", {
-        entries: Object.keys(state.ejdictMap).length,
-      });
-    } catch (e) {
-      logContentError("EJDict load failed", { error: e.message });
-      console.warn("[ATV-Bilingual] EJDict load failed:", e.message);
-    }
-  })();
-
-  function ejdictLookup(word) {
-    if (!state.ejdictMap) return null;
-    return state.ejdictMap[word] || state.ejdictMap[word.toLowerCase()] || null;
-  }
-
-  function findCueAt(track, time) {
-    if (!track) return null;
-
-    let activeCues = null;
-    try {
-      activeCues = track.activeCues;
-    } catch (_) {
-      activeCues = null;
-    }
-
-    if (activeCues && activeCues.length > 0) {
-      let bestActiveCue = null;
-      let bestActiveScore = Infinity;
-
-      for (let i = 0; i < activeCues.length; i++) {
-        const cue = activeCues[i];
-        if (!cue) continue;
-
-        const center = (cue.startTime + cue.endTime) / 2;
-        const score = Math.abs(center - time);
-
-        if (score < bestActiveScore) {
-          bestActiveScore = score;
-          bestActiveCue = cue;
-        }
-      }
-
-      if (bestActiveCue) return bestActiveCue;
-    }
-
-    let cues = null;
-    try {
-      cues = track.cues;
-    } catch (_) {
-      cues = null;
-    }
-    if (!cues) return null;
-
-    let bestCue = null;
-    let bestScore = Infinity;
-
-    for (let i = 0; i < cues.length; i++) {
-      const cue = cues[i];
-      if (!cue) continue;
-
-      const overlapsLoosely =
-        cue.startTime <= time + 0.35 && time <= cue.endTime + 0.35;
-
-      if (!overlapsLoosely) continue;
-
-      const center = (cue.startTime + cue.endTime) / 2;
-      const score = Math.abs(center - time);
-
-      if (score < bestScore) {
-        bestScore = score;
-        bestCue = cue;
-      }
-    }
-
-    return bestCue;
-  }
-
-  function sendToBackground(msg, callback) {
-    logContentApi("sendToBackground start", { type: msg?.type ?? null });
-
-    chrome.runtime.sendMessage(msg, (res) => {
-      if (chrome.runtime.lastError) {
-        logContentError("sendToBackground first attempt failed", {
-          type: msg?.type ?? null,
-          error: chrome.runtime.lastError.message,
-        });
-
-        setTimeout(() => {
-          chrome.runtime.sendMessage(msg, (res2) => {
-            if (chrome.runtime.lastError) {
-              logContentError("sendToBackground retry failed", {
-                type: msg?.type ?? null,
-                error: chrome.runtime.lastError.message,
-              });
-              callback({ ok: false, error: chrome.runtime.lastError.message });
-            } else {
-              logContentApi("sendToBackground retry success", {
-                type: msg?.type ?? null,
-                ok: res2?.ok ?? null,
-              });
-              callback(res2);
-            }
-          });
-        }, 300);
-      } else {
-        logContentApi("sendToBackground success", {
-          type: msg?.type ?? null,
-          ok: res?.ok ?? null,
-        });
-        callback(res);
-      }
-    });
-  }
-
-  function getTarget() {
-    return state.dialogEl || document.body;
-  }
-
-  // -----------------------------------------------------------------------------
-  // playback / content context coordinator helpers
-  // content.js に残す上位入口として、再生対象の把握と content context の切替だけを扱う。
-  // subtitle sync / recovery / DOM 描画の詳細は下位 helper 側へ寄せる。
-  //
-  // 将来の playbackContext module 候補:
-  // - getPlaybackContext
-  // - getVideoAndDialog
-  // - isPlaybackPageReady
-  // - getPlaybackContextLogPayload
-  // - resolvePlaybackContentKey
-  // - getCurrentVideoSrcKey
-  // - syncHistoryContextWithPlayback
-  //
-  // まずは context 解決と history context 切替だけを外出し候補にし、
-  // appendSubtitleHistory や panel / render 側責務はここへ混ぜない。
-  // -----------------------------------------------------------------------------
-
-
-  function getSecondaryTrackDebugPayload(effectiveSecondaryLanguage, track) {
-    return {
-      effectiveSecondaryLanguage: effectiveSecondaryLanguage || "",
-      selectedTrackLanguage: track?.language || "",
-      cuesLength: resolverDeps.getTrackCuesLength(track),
-      activeCuesLength: getTrackActiveCuesLength(track),
-    };
-  }
-
-  function canReadCueFromTrack(track) {
-    if (!track) return false;
-    return track.mode === "hidden" || track.mode === "showing";
-  }
-
-  function getCurrentCue(track, time = state.video?.currentTime ?? 0) {
-    if (!track) return null;
-
-    try {
-      const activeCue = track.activeCues?.[0] ?? null;
-      if (activeCue) return activeCue;
-    } catch (_) {}
-
-    return findCueAt(track, time);
-  }
-
-  function getCurrentCueText(track, time = state.video?.currentTime ?? 0) {
-    return cleanCueText(getCurrentCue(track, time));
-  }
-
-  // cueController の secondary track 同期を content.js から呼ぶための低レベル helper。
-  // 通常同期では、video / language / render 関数を明示して bind 状態をそろえる。
-  function syncSecondarySubtitleTrackBinding(
-    video,
-    requestedLang,
-    renderFn,
-    options = {},
-  ) {
-    cueController.syncSecondarySubtitleTrack(
-      video,
-      requestedLang,
-      renderFn,
-      options,
-    );
-  }
-
-  // secondary missing 復旧のための再同期要求を処理する。
-  // ここでは現在の state から video / language を解決し、
-  // 必要なら forceRebind を付けて cueController 側へ再同期を委譲する。
-  function syncSecondarySubtitleTrack({
-    reason = "unknown",
-    forceRebind = false,
-  } = {}) {
-    const video = state.video;
-    const requestedLang =
-      state.requestedSecondaryLang || state.contentSettings.secondaryLang;
-
-    if (!video || !requestedLang) return;
-
-    const previousTrack = state.secondaryTrack;
-
-    logContent("secondary track resync requested", {
-      reason,
-      forceRebind,
-      requestedLang,
-    });
-
-    syncSecondarySubtitleTrackBinding(
-      video,
-      requestedLang,
-      renderSecondarySubtitle,
-      {
-        forceRebind,
-        suppressRender: true,
-      },
-    );
-
-    state.secondaryTrack = cueController.getBoundSecondaryTrack();
-    const currentTrack = state.secondaryTrack;
-
-    if (!currentTrack) {
-      logContent("secondary sync result: no track resolved (clearing)", {
-        reason,
-        forceRebind,
-      });
-    } else if (previousTrack !== currentTrack || forceRebind) {
-      logContent("secondary sync result: track re-bound", {
-        reason,
-        forceRebind,
-        trackLang: currentTrack.language || "",
-      });
-    } else {
-      logContent("secondary sync result: same track (no re-bind needed)", {
-        reason,
-        forceRebind,
-        trackLang: currentTrack.language || "",
-      });
-    }
-  }
-
   function buildSecondarySyncLogPayload({
     effectiveSecondaryLanguage,
     secondaryActiveCues,
@@ -1789,6 +1310,489 @@
       }
     }, 2000);
   }
+
+// =====================================================================
+// Section 5: Layout - Playback Controls Adjustment
+// Role:
+// - playback controls の位置・幅・translate 調整
+// - layout retry / settling の配線
+// Keep in content.js:
+// - layout apply trigger / retry timing orchestration
+// Move to modules:
+// - layout calculation / managed style apply-clear details
+// =====================================================================
+
+// =====================================================================
+// Section 6: Observer - Runtime Monitoring
+// Role:
+// - mutation / resize / raf observers の登録・解除
+// - runtime 変化に応じた trigger 配線
+// Keep in content.js:
+// - observer attach-detach / reinitialize-layout-render entrypoints
+// Move to modules:
+// - re-evaluation / reconnect / reposition implementation details
+// =====================================================================
+
+
+
+
+// =====================================================================
+// Section 7: Lifecycle - Boot & Teardown
+// Role:
+// - boot / restart / teardown
+// - message listener / roots / timer cleanup
+// Keep in content.js:
+// - extension lifecycle entrypoints / top-level wiring
+// Move to modules:
+// - per-module internal init / dispose details
+// =====================================================================
+
+  let secondaryTrackCleanup = null;
+  let secondaryTrackBound = null;
+  let secondaryTrackSyncInterval = null;
+  let layoutRetryTimers = [];
+  let startupCompletedLogged = false;
+  let lastSecondaryText = "";
+  let lastSecondaryTextAt = 0;
+  let lastSecondarySignalAt = 0;
+
+
+
+  function getMergedSubtitleHealthSnapshot() {
+    try {
+      return cueController?.getMergedSubtitleHealth?.() || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function computeCurrentSubtitleBlock(reason = "unknown") {
+    const currentBlock = state.currentSubtitleBlock || null;
+    const primaryText = normalizeSubtitleText(
+      currentBlock?.primaryText || state.lastPrimaryText || "",
+    );
+    const secondaryText = normalizeSubtitleText(
+      currentBlock?.secondaryText || "",
+    );
+
+    return {
+      startTime: currentBlock?.startTime ?? null,
+      endTime: currentBlock?.endTime ?? null,
+      primaryText,
+      secondaryText,
+      hasPrimarySignal: Boolean(primaryText),
+      hasSecondarySignal: Boolean(secondaryText),
+      sourceReason: reason,
+      updatedAt: Date.now(),
+    };
+  }
+
+  function setSubtitleBlocks(result, reason = "unknown") {
+    const nextBlocks = Array.isArray(result?.blocks) ? result.blocks : [];
+    const nextCurrentIndex =
+      typeof result?.currentIndex === "number" ? result.currentIndex : -1;
+    const nextPanelPastBlocks = nextBlocks.filter(
+      (block) => block?.state === "past",
+    );
+
+    state.subtitleBlocks = nextBlocks;
+    state.subtitleCurrentIndex = nextCurrentIndex;
+    state.subtitleBlockMeta = result?.meta || null;
+    state.panelPastBlocks = nextPanelPastBlocks;
+
+    logContent("subtitle blocks updated", {
+      reason,
+      blockCount: nextBlocks.length,
+      currentIndex: nextCurrentIndex,
+      panelPastCount: nextPanelPastBlocks.length,
+    });
+  }
+
+  /* subtitle block sequence の truth snapshot を返す。 */
+  function getSubtitleBlockSequence() {
+    return {
+      blocks: state.subtitleBlocks,
+      currentIndex: state.subtitleCurrentIndex,
+      meta: state.subtitleBlockMeta,
+    };
+  }
+
+  /* subtitle block sequence から current block を取り出す。 */
+  function getCurrentSubtitleBlockFromSequence(sequenceResult = null) {
+    const blocks = Array.isArray(sequenceResult?.blocks)
+      ? sequenceResult.blocks
+      : state.subtitleBlocks;
+    const currentIndex =
+      typeof sequenceResult?.currentIndex === "number"
+        ? sequenceResult.currentIndex
+        : state.subtitleCurrentIndex;
+
+    if (
+      !Array.isArray(blocks) ||
+      currentIndex < 0 ||
+      currentIndex >= blocks.length
+    ) {
+      return null;
+    }
+
+    const block = blocks[currentIndex];
+    if (!block) return null;
+
+    return {
+      startTime: block.startTime ?? null,
+      endTime: block.endTime ?? null,
+      primaryText: block.primaryText || block.primary || "",
+      secondaryText: block.secondaryText || block.secondary || "",
+      hasPrimarySignal: Boolean(block.primaryText || block.primary),
+      hasSecondarySignal: Boolean(block.secondaryText || block.secondary),
+      sourceReason: "subtitleBlockSequence",
+      updatedAt: Date.now(),
+      key: block.key || null,
+      stable: block.stable ?? false,
+    };
+  }
+
+  // 現在字幕の更新と一時的なテキスト巻き戻りの抑止
+  function setCurrentSubtitleBlock(block, reason = "unknown") {
+    const previousBlock = state.currentSubtitleBlock || null;
+
+    const isSameTimeWindow =
+      previousBlock &&
+      block &&
+      previousBlock.startTime === block.startTime &&
+      previousBlock.endTime === block.endTime;
+
+    const shouldKeepPreviousTexts =
+      isSameTimeWindow &&
+      previousBlock.hasPrimarySignal &&
+      previousBlock.primaryText &&
+      block?.hasPrimarySignal &&
+      block.primaryText &&
+      previousBlock.primaryText !== block.primaryText &&
+      state.lastPrimaryText === previousBlock.primaryText;
+
+    const nextBlock = shouldKeepPreviousTexts
+      ? {
+          ...block,
+          primaryText: previousBlock.primaryText,
+          secondaryText:
+            previousBlock.secondaryText || block.secondaryText || "",
+          hasPrimarySignal: previousBlock.hasPrimarySignal,
+          hasSecondarySignal:
+            previousBlock.hasSecondarySignal || block.hasSecondarySignal,
+        }
+      : block;
+
+    state.currentSubtitleBlock = nextBlock;
+    state.lastCurrentSubtitleBlockAt = Date.now();
+
+    if (
+      nextBlock?.hasPrimarySignal &&
+      nextBlock.primaryText &&
+      nextBlock.primaryText !== state.lastPrimaryText
+    ) {
+      state.lastPrimaryText = nextBlock.primaryText;
+
+      appendSubtitleHistory({
+        startTime: nextBlock.startTime ?? null,
+        endTime: nextBlock.endTime ?? null,
+        primary: nextBlock.primaryText,
+        secondary: nextBlock.secondaryText || "",
+      });
+    }
+
+    logContent("current subtitle block updated", {
+      reason,
+      hasBlock: Boolean(nextBlock),
+      primaryTextLength: nextBlock?.primaryText?.length || 0,
+      secondaryTextLength: nextBlock?.secondaryText?.length || 0,
+      hasPrimarySignal: Boolean(nextBlock?.hasPrimarySignal),
+      hasSecondarySignal: Boolean(nextBlock?.hasSecondarySignal),
+      blockStartTime: nextBlock?.startTime ?? null,
+      blockEndTime: nextBlock?.endTime ?? null,
+    });
+  }
+
+
+
+  const vttApi = window.ATVB?.vtt || {};
+  const resolverApi = window.ATVB?.resolver || {};
+  const subtitleBlocksApi = window.ATVB?.subtitleBlocks || {};
+  const subtitleBlockResolverApi = window.ATVB?.subtitleBlockResolver || {};
+
+  const vttDeps = {
+    normalizeSubtitleText: (...args) =>
+      vttApi.normalizeSubtitleText?.(...args) ?? "",
+    cleanCueText: (...args) => vttApi.cleanCueText?.(...args) ?? "",
+    formatTime: (...args) => vttApi.formatTime?.(...args) ?? "",
+  };
+
+  const resolverDeps = {
+    getUniqueTracks: (...args) => resolverApi.getUniqueTracks?.(...args) ?? [],
+    getTrackCuesLength: (...args) =>
+      resolverApi.getTrackCuesLength?.(...args) ?? 0,
+    getTrackActiveCuesLength: (...args) =>
+      resolverApi.getTrackActiveCuesLength?.(...args) ?? 0,
+    pickBestSubtitleTrack: (...args) =>
+      resolverApi.pickBestSubtitleTrack?.(...args) ?? null,
+    getSecondarySubtitleTrackCandidates: (...args) =>
+      resolverApi.getSecondarySubtitleTrackCandidates?.(...args) ?? [],
+    resolveSecondarySubtitleTrack: (...args) =>
+      resolverApi.resolveSecondarySubtitleTrack?.(...args) ?? null,
+  };
+
+  const { normalizeSubtitleText, cleanCueText } = vttDeps;
+
+  const {
+    buildSubtitleBlockSequence = () => ({
+      blocks: [],
+      currentIndex: -1,
+      meta: null,
+    }),
+  } = subtitleBlocksApi;
+
+  const { getTrackActiveCuesLength } = resolverDeps;
+
+  (async function loadEJDict() {
+    try {
+      const url = chrome.runtime.getURL("dict/ejdict.json");
+      const res = await fetch(url);
+      state.ejdictMap = await res.json();
+      logContentApi("EJDict loaded", {
+        entries: Object.keys(state.ejdictMap).length,
+      });
+    } catch (e) {
+      logContentError("EJDict load failed", { error: e.message });
+      console.warn("[ATV-Bilingual] EJDict load failed:", e.message);
+    }
+  })();
+
+  function ejdictLookup(word) {
+    if (!state.ejdictMap) return null;
+    return state.ejdictMap[word] || state.ejdictMap[word.toLowerCase()] || null;
+  }
+
+  function findCueAt(track, time) {
+    if (!track) return null;
+
+    let activeCues = null;
+    try {
+      activeCues = track.activeCues;
+    } catch (_) {
+      activeCues = null;
+    }
+
+    if (activeCues && activeCues.length > 0) {
+      let bestActiveCue = null;
+      let bestActiveScore = Infinity;
+
+      for (let i = 0; i < activeCues.length; i++) {
+        const cue = activeCues[i];
+        if (!cue) continue;
+
+        const center = (cue.startTime + cue.endTime) / 2;
+        const score = Math.abs(center - time);
+
+        if (score < bestActiveScore) {
+          bestActiveScore = score;
+          bestActiveCue = cue;
+        }
+      }
+
+      if (bestActiveCue) return bestActiveCue;
+    }
+
+    let cues = null;
+    try {
+      cues = track.cues;
+    } catch (_) {
+      cues = null;
+    }
+    if (!cues) return null;
+
+    let bestCue = null;
+    let bestScore = Infinity;
+
+    for (let i = 0; i < cues.length; i++) {
+      const cue = cues[i];
+      if (!cue) continue;
+
+      const overlapsLoosely =
+        cue.startTime <= time + 0.35 && time <= cue.endTime + 0.35;
+
+      if (!overlapsLoosely) continue;
+
+      const center = (cue.startTime + cue.endTime) / 2;
+      const score = Math.abs(center - time);
+
+      if (score < bestScore) {
+        bestScore = score;
+        bestCue = cue;
+      }
+    }
+
+    return bestCue;
+  }
+
+  function sendToBackground(msg, callback) {
+    logContentApi("sendToBackground start", { type: msg?.type ?? null });
+
+    chrome.runtime.sendMessage(msg, (res) => {
+      if (chrome.runtime.lastError) {
+        logContentError("sendToBackground first attempt failed", {
+          type: msg?.type ?? null,
+          error: chrome.runtime.lastError.message,
+        });
+
+        setTimeout(() => {
+          chrome.runtime.sendMessage(msg, (res2) => {
+            if (chrome.runtime.lastError) {
+              logContentError("sendToBackground retry failed", {
+                type: msg?.type ?? null,
+                error: chrome.runtime.lastError.message,
+              });
+              callback({ ok: false, error: chrome.runtime.lastError.message });
+            } else {
+              logContentApi("sendToBackground retry success", {
+                type: msg?.type ?? null,
+                ok: res2?.ok ?? null,
+              });
+              callback(res2);
+            }
+          });
+        }, 300);
+      } else {
+        logContentApi("sendToBackground success", {
+          type: msg?.type ?? null,
+          ok: res?.ok ?? null,
+        });
+        callback(res);
+      }
+    });
+  }
+
+  function getTarget() {
+    return state.dialogEl || document.body;
+  }
+
+  // -----------------------------------------------------------------------------
+  // playback / content context coordinator helpers
+  // content.js に残す上位入口として、再生対象の把握と content context の切替だけを扱う。
+  // subtitle sync / recovery / DOM 描画の詳細は下位 helper 側へ寄せる。
+  //
+  // 将来の playbackContext module 候補:
+  // - getPlaybackContext
+  // - getVideoAndDialog
+  // - isPlaybackPageReady
+  // - getPlaybackContextLogPayload
+  // - resolvePlaybackContentKey
+  // - getCurrentVideoSrcKey
+  // - syncHistoryContextWithPlayback
+  //
+  // まずは context 解決と history context 切替だけを外出し候補にし、
+  // appendSubtitleHistory や panel / render 側責務はここへ混ぜない。
+  // -----------------------------------------------------------------------------
+
+
+  function getSecondaryTrackDebugPayload(effectiveSecondaryLanguage, track) {
+    return {
+      effectiveSecondaryLanguage: effectiveSecondaryLanguage || "",
+      selectedTrackLanguage: track?.language || "",
+      cuesLength: resolverDeps.getTrackCuesLength(track),
+      activeCuesLength: getTrackActiveCuesLength(track),
+    };
+  }
+
+  function canReadCueFromTrack(track) {
+    if (!track) return false;
+    return track.mode === "hidden" || track.mode === "showing";
+  }
+
+  function getCurrentCue(track, time = state.video?.currentTime ?? 0) {
+    if (!track) return null;
+
+    try {
+      const activeCue = track.activeCues?.[0] ?? null;
+      if (activeCue) return activeCue;
+    } catch (_) {}
+
+    return findCueAt(track, time);
+  }
+
+  function getCurrentCueText(track, time = state.video?.currentTime ?? 0) {
+    return cleanCueText(getCurrentCue(track, time));
+  }
+
+  // cueController の secondary track 同期を content.js から呼ぶための低レベル helper。
+  // 通常同期では、video / language / render 関数を明示して bind 状態をそろえる。
+  function syncSecondarySubtitleTrackBinding(
+    video,
+    requestedLang,
+    renderFn,
+    options = {},
+  ) {
+    cueController.syncSecondarySubtitleTrack(
+      video,
+      requestedLang,
+      renderFn,
+      options,
+    );
+  }
+
+  // secondary missing 復旧のための再同期要求を処理する。
+  // ここでは現在の state から video / language を解決し、
+  // 必要なら forceRebind を付けて cueController 側へ再同期を委譲する。
+  function syncSecondarySubtitleTrack({
+    reason = "unknown",
+    forceRebind = false,
+  } = {}) {
+    const video = state.video;
+    const requestedLang =
+      state.requestedSecondaryLang || state.contentSettings.secondaryLang;
+
+    if (!video || !requestedLang) return;
+
+    const previousTrack = state.secondaryTrack;
+
+    logContent("secondary track resync requested", {
+      reason,
+      forceRebind,
+      requestedLang,
+    });
+
+    syncSecondarySubtitleTrackBinding(
+      video,
+      requestedLang,
+      renderSecondarySubtitle,
+      {
+        forceRebind,
+        suppressRender: true,
+      },
+    );
+
+    state.secondaryTrack = cueController.getBoundSecondaryTrack();
+    const currentTrack = state.secondaryTrack;
+
+    if (!currentTrack) {
+      logContent("secondary sync result: no track resolved (clearing)", {
+        reason,
+        forceRebind,
+      });
+    } else if (previousTrack !== currentTrack || forceRebind) {
+      logContent("secondary sync result: track re-bound", {
+        reason,
+        forceRebind,
+        trackLang: currentTrack.language || "",
+      });
+    } else {
+      logContent("secondary sync result: same track (no re-bind needed)", {
+        reason,
+        forceRebind,
+        trackLang: currentTrack.language || "",
+      });
+    }
+  }
+
 
   function isVisibleElement(el) {
     if (!el) return false;
