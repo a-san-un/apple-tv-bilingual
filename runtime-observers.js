@@ -16,6 +16,7 @@
     const playbackControlsResizeTargets = new Set();
     let playbackControlsResizeHandler = null;
     let playbackControlsOrientationHandler = null;
+    let waitTimer = null;
     function getVideoAndDialog() {
       const ctx = getPlaybackContext();
       if (!ctx.isPlaybackReady) return null;
@@ -63,11 +64,11 @@
           return;
         }
 
-        state.waitTimer = window.setTimeout(check, 500);
+        waitTimer = window.setTimeout(check, 500);
       };
 
-      if (state.waitTimer) {
-        clearTimeout(state.waitTimer);
+      if (waitTimer) {
+        clearTimeout(waitTimer);
       }
 
       check();

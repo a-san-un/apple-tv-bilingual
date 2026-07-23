@@ -87,7 +87,6 @@
     lastPrimaryText: "",
     panelVisible: true,
     ejdictMap: null,
-    waitTimer: null,
     secondaryHideTimer: null,
     overlayRoot: null,
     panelShadowRoot: null,
