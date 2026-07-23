@@ -1502,6 +1502,161 @@
 // - per-module internal init / dispose details
 // =====================================================================
 
+  // [binder/cue: attach] primary / secondary の listener・timer・mode をまとめて解除する。
+  function clearSecondaryTrackState() {
+    state.secondaryTrack = null;
+    cueController.unbindSecondarySubtitleTrack();
+  }
+
+  function clearTrackBindings() {
+    // [attach: detach timers] track resolve retry timer を解除する。
+    reinitializeCoordinator?.clearTrackResolveRetryTimers();
+    clearSecondaryTrackState();
+
+    // [attach: detach primary listener] primary cuechange listener を解除する。
+    if (state.primaryTrack) {
+      try {
+        state.primaryTrack.removeEventListener("cuechange", onCueChange);
+      } catch (_) {}
+    }
+
+    // [attach: detach track modes] textTracks を hidden に戻す。
+    if (state.video?.textTracks) {
+      for (let i = 0; i < state.video.textTracks.length; i++) {
+        try {
+          state.video.textTracks[i].mode = "hidden";
+        } catch (_) {}
+      }
+    }
+
+    // [attach: detach secondary timer] secondary hide timer を解除する。
+    if (state.secondaryHideTimer) {
+      clearTimeout(state.secondaryHideTimer);
+      state.secondaryHideTimer = null;
+    }
+
+    // [attach: detach state reset] binder が保持する track 参照をクリアする。
+    state.primaryTrack = null;
+  }
+
+  function resetRuntimeState(options = {}) {
+    if (options.clearCurrentHistory === true) {
+      state.subtitleHistory = [];
+      saveHistoryForContentKey(state.currentContentKey, []);
+    }
+    state.subtitleBlocks = [];
+    state.subtitleCurrentIndex = -1;
+    state.subtitleBlockMeta = null;
+    state.panelPastBlocks = [];
+    state.currentSubtitleBlock = null;
+    state.lastCurrentSubtitleBlockAt = 0;
+    state.lastPanelRenderSnapshot = null;
+    state.lastPrimaryText = "";
+    state.lastPrimarySnapshotAt = 0;
+    state.lastObservedVideoTime = null;
+  }
+
+  function teardownPlaybackControlsUi() {
+    stopPlaybackControlLayoutObservers();
+
+    if (state.playbackControlsRafId) {
+      window.cancelAnimationFrame(state.playbackControlsRafId);
+      state.playbackControlsRafId = 0;
+    }
+
+    clearPlaybackControlsTransforms();
+  }
+
+  function teardownUiHostsAndListeners() {
+    if (state.popupDocClickHandler) {
+      // createPopupHost で登録した document listener の解除
+      document.removeEventListener("click", state.popupDocClickHandler);
+      state.popupDocClickHandler = null;
+    }
+
+    destroyUiHosts();
+    applyLayout(false);
+  }
+
+  function teardownRuntimeBindingsForRestart() {
+    clearTrackBindings();
+    clearInitialCueRecovery();
+    clearPlaybackControlRetryTimers();
+    clearControlSettlingTimers();
+  }
+
+  function teardownForRestart() {
+    teardownRuntimeBindingsForRestart();
+    teardownPlaybackControlsUi();
+    teardownUiHostsAndListeners();
+  }
+
+  function prepareForRestart() {
+    teardownForRestart();
+    resetRuntimeState();
+  }
+
+  // [binder/cue: attach] bootstrap から呼ばれる track bind の薄い入口。
+  function bindTracks() {
+    return selectPrimaryAndSecondaryTracks(
+      state.video,
+      state.contentSettings.primaryLang,
+      state.requestedSecondaryLang || state.contentSettings.secondaryLang,
+      "bindTracks",
+    );
+  }
+
+  // [bootstrap]
+  function buildUi() {
+    createOverlay();
+    panelUi.createRightPanel();
+    ensureSecondarySubtitleElement();
+    createPopupHost();
+    createToggleButton();
+    panelUi.createDebugPanel();
+    startPlaybackControlLayoutObservers();
+    scheduleAdjustPlaybackControls("buildUi", [700, 1600], {
+      immediate: false,
+    });
+  }
+
+  function applyInitialCueSnapshotOrWait() {
+    // [initial snapshot policy]
+    // 起動時に cue が既に読めるなら通常の cuechange 経路を即時実行する。
+    // まだ cue が無ければ recovery 側に任せ、ここでは待機ログだけ出す。
+
+    if (hasRecoverableInitialCue()) {
+      onCueChange();
+      return;
+    }
+
+    // 初回 activeCues=0 は空描画で確定せず、cuechange 回復導線へ委譲する。
+    logContent("initial snapshot waiting for first cue", {
+      primaryActiveCues: getTrackActiveCuesLength(state.primaryTrack),
+      secondaryActiveCues: getTrackActiveCuesLength(state.secondaryTrack),
+    });
+  }
+
+  // [settings load path: initial snapshot]
+  // 初回ロード時に sync storage / bridge から設定 snapshot を読む入口。
+  // requested settings と effective settings を整え、未設定時は DEFAULT_SETTINGS に退避する。
+  // 実際の起動は startBilingual に委譲する。
+  // [settings reinit path: full restart]
+  // runtime state と UI を teardown してから起動シーケンスをやり直す。
+  // 設定変更反映や大きな再初期化が必要なケースの入口。
+
+  function boot() {
+    if (state.booted) return;
+    state.booted = true;
+    registerDebugLogUpdateCallback();
+    logContent("content startup begin");
+    ensureMessageListener();
+    ensureSecondaryTrackSyncInterval();
+    waitForVideo(attachTracks);
+  }
+
+  boot();
+
   let secondaryTrackCleanup = null;
   let secondaryTrackBound = null;
   let secondaryTrackSyncInterval = null;
@@ -3571,141 +3726,7 @@
     cueController.onPrimaryCueChange();
   }
 
-  // [binder/cue: attach] primary / secondary の listener・timer・mode をまとめて解除する。
-  function clearSecondaryTrackState() {
-    state.secondaryTrack = null;
-    cueController.unbindSecondarySubtitleTrack();
-  }
 
-  function clearTrackBindings() {
-    // [attach: detach timers] track resolve retry timer を解除する。
-    reinitializeCoordinator?.clearTrackResolveRetryTimers();
-    clearSecondaryTrackState();
-
-    // [attach: detach primary listener] primary cuechange listener を解除する。
-    if (state.primaryTrack) {
-      try {
-        state.primaryTrack.removeEventListener("cuechange", onCueChange);
-      } catch (_) {}
-    }
-
-    // [attach: detach track modes] textTracks を hidden に戻す。
-    if (state.video?.textTracks) {
-      for (let i = 0; i < state.video.textTracks.length; i++) {
-        try {
-          state.video.textTracks[i].mode = "hidden";
-        } catch (_) {}
-      }
-    }
-
-    // [attach: detach secondary timer] secondary hide timer を解除する。
-    if (state.secondaryHideTimer) {
-      clearTimeout(state.secondaryHideTimer);
-      state.secondaryHideTimer = null;
-    }
-
-    // [attach: detach state reset] binder が保持する track 参照をクリアする。
-    state.primaryTrack = null;
-  }
-
-  function resetRuntimeState(options = {}) {
-    if (options.clearCurrentHistory === true) {
-      state.subtitleHistory = [];
-      saveHistoryForContentKey(state.currentContentKey, []);
-    }
-    state.subtitleBlocks = [];
-    state.subtitleCurrentIndex = -1;
-    state.subtitleBlockMeta = null;
-    state.panelPastBlocks = [];
-    state.currentSubtitleBlock = null;
-    state.lastCurrentSubtitleBlockAt = 0;
-    state.lastPanelRenderSnapshot = null;
-    state.lastPrimaryText = "";
-    state.lastPrimarySnapshotAt = 0;
-    state.lastObservedVideoTime = null;
-  }
-
-  function teardownPlaybackControlsUi() {
-    stopPlaybackControlLayoutObservers();
-
-    if (state.playbackControlsRafId) {
-      window.cancelAnimationFrame(state.playbackControlsRafId);
-      state.playbackControlsRafId = 0;
-    }
-
-    clearPlaybackControlsTransforms();
-  }
-
-  function teardownUiHostsAndListeners() {
-    if (state.popupDocClickHandler) {
-      // createPopupHost で登録した document listener の解除
-      document.removeEventListener("click", state.popupDocClickHandler);
-      state.popupDocClickHandler = null;
-    }
-
-    destroyUiHosts();
-    applyLayout(false);
-  }
-
-  function teardownRuntimeBindingsForRestart() {
-    clearTrackBindings();
-    clearInitialCueRecovery();
-    clearPlaybackControlRetryTimers();
-    clearControlSettlingTimers();
-  }
-
-  function teardownForRestart() {
-    teardownRuntimeBindingsForRestart();
-    teardownPlaybackControlsUi();
-    teardownUiHostsAndListeners();
-  }
-
-  function prepareForRestart() {
-    teardownForRestart();
-    resetRuntimeState();
-  }
-
-  // [binder/cue: attach] bootstrap から呼ばれる track bind の薄い入口。
-  function bindTracks() {
-    return selectPrimaryAndSecondaryTracks(
-      state.video,
-      state.contentSettings.primaryLang,
-      state.requestedSecondaryLang || state.contentSettings.secondaryLang,
-      "bindTracks",
-    );
-  }
-
-  // [bootstrap]
-
-  function buildUi() {
-    createOverlay();
-    panelUi.createRightPanel();
-    ensureSecondarySubtitleElement();
-    createPopupHost();
-    createToggleButton();
-    panelUi.createDebugPanel();
-    startPlaybackControlLayoutObservers();
-    scheduleAdjustPlaybackControls("buildUi", [700, 1600], {
-      immediate: false,
-    });
-  }
-
-  function applyInitialCueSnapshotOrWait() {
-    // [initial snapshot policy]
-    // 起動時に cue が既に読めるなら通常の cuechange 経路を即時実行する。
-    // まだ cue が無ければ recovery 側に任せ、ここでは待機ログだけ出す。
-
-    if (hasRecoverableInitialCue()) {
-      onCueChange();
-      return;
-    }
-
-    // 初回 activeCues=0 は空描画で確定せず、cuechange 回復導線へ委譲する。
-    logContent("initial snapshot waiting for first cue", {
-      primaryActiveCues: getTrackActiveCuesLength(state.primaryTrack),
-      secondaryActiveCues: getTrackActiveCuesLength(state.secondaryTrack),
-    });
-  }
 
   // [binder/cue: recovery] initial snapshot apply
   // [binder/cue: recovery] 起動時に取得済み cue を即時適用し、未取得なら recovery 経路へ委譲する。
@@ -3875,23 +3896,5 @@
     loadSettingsFromSync();
   }
 
-  // [settings load path: initial snapshot]
-  // 初回ロード時に sync storage / bridge から設定 snapshot を読む入口。
-  // requested settings と effective settings を整え、未設定時は DEFAULT_SETTINGS に退避する。
-  // 実際の起動は startBilingual に委譲する。
-  // [settings reinit path: full restart]
-  // runtime state と UI を teardown してから起動シーケンスをやり直す。
-  // 設定変更反映や大きな再初期化が必要なケースの入口。
 
-  function boot() {
-    if (state.booted) return;
-    state.booted = true;
-    registerDebugLogUpdateCallback();
-    logContent("content startup begin");
-    ensureMessageListener();
-    ensureSecondaryTrackSyncInterval();
-    waitForVideo(attachTracks);
-  }
-
-  boot();
 })();
