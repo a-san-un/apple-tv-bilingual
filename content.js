@@ -811,34 +811,6 @@
 // - recovery decision / lane state / track resolve details
 // =====================================================================
 
-  // sync interval 観測ベースで large seek を検知する。
-  // large seek 後は nearby rebuild / short-lived hold が効く前提で、
-  // panel state も seek 後の再同期モードへ寄せる。
-  function syncIntervalDetectLargeSeek() {
-    const currentVideoTime = Number(state.video?.currentTime ?? 0);
-    const previousObservedTime = Number(state.lastObservedVideoTime);
-    const largeSeekDetected =
-      Number.isFinite(previousObservedTime) &&
-      Number.isFinite(currentVideoTime) &&
-      Math.abs(currentVideoTime - previousObservedTime) > 6;
-
-    state.lastObservedVideoTime = Number.isFinite(currentVideoTime)
-      ? currentVideoTime
-      : null;
-
-    if (!largeSeekDetected) return;
-
-    state.lastLargeSeekAt = Date.now();
-
-    logContent("large seek detected", {
-      previousObservedTime,
-      currentVideoTime,
-      delta: Math.abs(currentVideoTime - previousObservedTime),
-    });
-
-    panelUi.applyPanelState("sync_interval_large_seek_resync");
-  }
-
   function buildSecondarySyncLogPayload({
     effectiveSecondaryLanguage,
     secondaryActiveCues,
