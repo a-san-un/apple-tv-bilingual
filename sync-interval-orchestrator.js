@@ -90,10 +90,11 @@
       function detectLargeSeek() {
         const currentVideoTime = Number(state.video?.currentTime ?? 0);
         const previousObservedTime = Number(state.lastObservedVideoTime);
+        const delta = Math.abs(currentVideoTime - previousObservedTime);
         const largeSeekDetected =
           Number.isFinite(previousObservedTime) &&
           Number.isFinite(currentVideoTime) &&
-          Math.abs(currentVideoTime - previousObservedTime) > 6;
+          delta > 6;
 
         state.lastObservedVideoTime = Number.isFinite(currentVideoTime)
           ? currentVideoTime
@@ -106,11 +107,16 @@
         logContent("large seek detected", {
           previousObservedTime,
           currentVideoTime,
-          delta: Math.abs(currentVideoTime - previousObservedTime),
+          delta,
+          lastLargeSeekAt: state.lastLargeSeekAt,
+          requestedSecondaryLang: state.requestedSecondaryLang || "",
+          activeSecondaryLanguage: state.secondaryTrack?.language || "",
+          textTrackCount: state.video?.textTracks?.length ?? 0,
         });
 
         panelUi.applyPanelState("sync_interval_large_seek_resync");
       }
+
       function buildSecondarySyncLogPayload({
         effectiveSecondaryLanguage,
         secondaryActiveCues,
@@ -149,17 +155,22 @@
       }
 
       function buildSyncIntervalSubtitleSnapshot(now) {
-        const secondaryActiveCues = getTrackActiveCuesLength?.(state.secondaryTrack) ?? 0;
-        const primaryActiveCues = getTrackActiveCuesLength?.(state.primaryTrack) ?? 0;
-        const secondaryCueText = normalizeSubtitleText?.(
-          getCurrentCueText?.(state.secondaryTrack),
-        ) ?? "";
-        const primaryCueText = normalizeSubtitleText?.(
-          getCurrentCueText?.(state.primaryTrack),
-        ) ?? "";
-        const currentPrimaryText = normalizeSubtitleText?.(
-          state.currentSubtitleBlock?.primaryText || state.lastPrimaryText || "",
-        ) ?? "";
+        const secondaryActiveCues =
+          getTrackActiveCuesLength?.(state.secondaryTrack) ?? 0;
+        const primaryActiveCues =
+          getTrackActiveCuesLength?.(state.primaryTrack) ?? 0;
+        const secondaryCueText =
+          normalizeSubtitleText?.(
+            getCurrentCueText?.(state.secondaryTrack),
+          ) ?? "";
+        const primaryCueText =
+          normalizeSubtitleText?.(
+            getCurrentCueText?.(state.primaryTrack),
+          ) ?? "";
+        const currentPrimaryText =
+          normalizeSubtitleText?.(
+            state.currentSubtitleBlock?.primaryText || state.lastPrimaryText || "",
+          ) ?? "";
         const hasPrimaryLiveSignal =
           primaryActiveCues > 0 || Boolean(primaryCueText);
         const hasFreshCurrentPrimary =
@@ -325,9 +336,20 @@
           return;
         }
 
+        const secondaryTrackFoundBefore = Boolean(state.secondaryTrack);
+        const secondaryActiveCuesLengthBefore =
+          getTrackActiveCuesLength?.(state.secondaryTrack) ?? 0;
+
         runSecondaryResolverProbeIfNeeded({
           effectiveSecondaryLanguage,
           secondaryCueText,
+        });
+
+        logContent?.("secondary recovery trigger started", {
+          effectiveSecondaryLanguage,
+          secondaryTrackFoundBefore,
+          secondaryActiveCuesLengthBefore,
+          renderInvoked: false,
         });
 
         logContent?.(
@@ -355,6 +377,19 @@
           reason: recoveryDecision.reason,
           forceRebind: recoveryDecision.action === "force-rebind",
         });
+
+        const secondaryTrackFoundAfter = Boolean(state.secondaryTrack);
+        const secondaryActiveCuesLengthAfter =
+          getTrackActiveCuesLength?.(state.secondaryTrack) ?? 0;
+
+        logContent?.("secondary recovery trigger finished", {
+          effectiveSecondaryLanguage,
+          secondaryTrackFoundBefore,
+          secondaryTrackFoundAfter,
+          secondaryActiveCuesLengthBefore,
+          secondaryActiveCuesLengthAfter,
+          renderInvoked: true,
+        });
       }
 
       function runSecondaryRecoveryPass(effectiveSecondaryLanguage) {
@@ -368,6 +403,20 @@
         state.secondaryTrack = cueController?.getBoundSecondaryTrack?.() ?? null;
 
         const now = Date.now();
+        const millisSinceLargeSeek =
+          state.lastLargeSeekAt > 0 ? now - state.lastLargeSeekAt : null;
+
+        logContent?.("secondary recovery pass started", {
+          effectiveSecondaryLanguage,
+          currentTime: Number(state.video?.currentTime ?? 0),
+          lastLargeSeekAt: state.lastLargeSeekAt ?? null,
+          millisSinceLargeSeek,
+          hasVideo: Boolean(state.video),
+          textTrackCount: state.video?.textTracks?.length ?? 0,
+          hasPrimaryTrackObject: Boolean(state.primaryTrack),
+          hasSecondaryTrackObject: Boolean(state.secondaryTrack),
+        });
+
         const {
           secondaryActiveCues,
           primaryActiveCues,
@@ -409,12 +458,30 @@
             },
             sequence: mergedSubtitleHealth?.sequence || null,
             derived: mergedSubtitleHealth?.derived || null,
-          }) ?? { action: "idle", reason: "orchestrator_unavailable", secondaryLane: null };
+          }) ?? {
+            action: "idle",
+            reason: "orchestrator_unavailable",
+            secondaryLane: null,
+          };
 
         if (recoveryDecision.action !== "idle") {
+          const millisSinceLastRecovery =
+            recoveryDecision.secondaryLane?.lastRecoveredAt > 0
+              ? now - recoveryDecision.secondaryLane.lastRecoveredAt
+              : null;
+
           logContent?.("secondary recovery action evaluated", {
-            action: recoveryDecision.action,
+            hasPrimarySignal,
+            hasSecondarySignal,
+            shouldRecover:
+              recoveryDecision.action === "recover" ||
+              recoveryDecision.action === "force-rebind",
             reason: recoveryDecision.reason,
+            cooldownActive:
+              recoveryDecision.reason === "secondary_cooldown_active",
+            millisSinceLastRecovery,
+            millisSinceLargeSeek,
+            action: recoveryDecision.action,
             missCount: recoveryDecision.secondaryLane?.missCount ?? null,
           });
         }
