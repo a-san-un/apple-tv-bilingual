@@ -369,7 +369,7 @@ Round 4 の目的は、Section 4: Sync Interval - Periodic Orchestration のう�
 - `syncIntervalRunSecondaryRecoveryPass`
 
 設計上の切り分け自体は成立したが、実装では `content.js` 先頭に static `import` を追加する構成を採った。  
-しかし現行の Chrome 拡張では、`content_scripts` 直注入で動く `content.js` にそのまま static `import` を置く構成は安全に成立しなかったため、この方式はいったん採用を見送った。[web:96][web:101]
+しかし現行の Chrome 拡張では、`content_scripts` 直注入で動く `content.js` にそのまま static `import` を置く構成は安全に成立しなかったため、この方式はいったん採用を見送った。
 
 Round 4 で実際に起きたことは次のとおり。
 
@@ -391,36 +391,110 @@ Round 4 の判定は次のとおり。
 
 したがって Round 4 は、**設計整理は前進したが、physical split は rollback して保留** のラウンドとして扱う。
 
+### 6.5 Round 5: sync interval orchestration の module loading strategy 確定（完了）
+
+Round 5 の目的は、Round 4 で rollback した Section 4: Sync Interval - Periodic Orchestration の
+physical split を再開する前に、**content script 向け module loading strategy を先に確定する**ことだった。
+Section 4 の再分割本体には入らず、あくまで loading strategy と依存注入境界の設計に限定した。
+
+#### loading strategy の確定
+
+manifest.json の `content_scripts.js` は配列順で静的注入される構成であり、
+`content.js` は static `import` / `export` を持たない単一 IIFE の通常スクリプトである。
+既存の `playbackContext.js` / `runtime-observers.js` / `reinitialize-coordinator.js` は、
+すでに `window.ATVB.createXxx` 形式の factory を `window.ATVB` へ公開し、
+`content.js` 側は `controller?.method?.(...)` の任意参照 + フォールバックで bridge する
+パターンをすでに実践している。
+
+Round 4 の失敗原因は、分割そのものが不自然だったのではなく、
+この既存パターンを踏まずに static `import` を直接置いたことにあると判断した。
+
+したがって、Round 5 では次を loading strategy として確定する。
+
+- **注入順ベースの分割**を採用する
+- `sync-interval-orchestrator.js` は `window.ATVB.createSyncIntervalOrchestrator = ...` を公開する
+- `content.js` 側は `window.ATVB?.createSyncIntervalOrchestrator?.(...)` で controller を生成する
+- controller は `state` 経由ではなく、top-level の local 変数として保持する
+- manifest.json の修正は不要（既存の `content_scripts.js` 配列順で足りる）
+
+#### 依存注入の境界確定
+
+`createSyncIntervalOrchestrator(...)` へ渡す依存は、次の 3 束 + module 内部 private helpers とする。
+
+- `state`: `video` / `secondaryTrack` / `primaryTrack` / `lastVideoSrcKey` /
+  `lastObservedVideoTime` / `lastLargeSeekAt` / `lastSecondarySyncContext` /
+  `lastPrimaryRecoveryAttemptAt` など Section 4 が直接読み書きするフィールド
+- `controllers`: `cueController`（`evaluateSecondaryRecovery` / `getBoundSecondaryTrack` /
+  `getLaneStates` / `getMergedSubtitleHealth`）、`reinitializeCoordinator`
+  （primary recovery 用。ただし primary recovery の判定本体は content.js に残す）
+- `services`: `resolverDeps` / `getVideoAndDialog` / `syncHistoryContextWithPlayback` /
+  `syncSecondarySubtitleTrackBinding` / `renderSecondarySubtitle` / `renderCurrentSnapshot` /
+  `renderPanel` / `applyPanelState`（`panelUi.applyPanelState`）/ `logContent`
+- Section 4 固有 helper 群（`buildSecondarySyncLogPayload` / `buildSyncIntervalSubtitleSnapshot` /
+  `logSecondarySyncContextIfNeeded` / `logSecondaryRecoveryTermination` /
+  `runSecondaryResolverProbeIfNeeded` / `triggerSecondaryRecovery`）は、
+  module 内部の private 実装として完全移送し、`content.js` からは渡さない
+
+`loggers` を独立した束として切ることは見送った。`logContent` は単一のブリッジ関数であり、
+`runtime-observers.js` など既存 module の注入パターンとも揃えるため、`services` に含めるほうが一貫する。
+
+#### 公開 API の確定
+
+`sync-interval-orchestrator.js` が公開する API は次の 3 本とし、いずれも薄い result object を返す形に揃える。
+
+- `refreshPlaybackContext()` → `{ videoChanged, contentKeyChanged, reinitialized }`
+- `detectLargeSeek()` → `{ largeSeekDetected, delta }`
+- `runSecondaryRecoveryPass(effectiveSecondaryLanguage)` →
+  `{ now, hasSecondarySignal, hasPrimarySignal, recoveryAction, recoveryTriggered, terminated }`
+
+`runSecondaryRecoveryPass` は現行の `syncIntervalRunSecondaryRecoveryPass()` が既に
+`{ now, hasSecondarySignal, hasPrimarySignal }` を返しているため、この形を拡張する形で揃える。
+
+#### `ensureSecondaryTrackSyncInterval()` 側の呼び出し規約
+
+- `syncIntervalOrchestrator` は top-level local 変数として保持する（`state` には入れない）
+- 各呼び出しは `syncIntervalOrchestrator?.method?.(...) ?? {}` の形に統一する
+- primary recovery の判定ロジック（`shouldAttemptPrimaryRecovery` の算出、
+  `reinitializeCoordinator?.reinitializeSubtitlePipeline` の呼び出し）は、
+  Section 4 の主題（secondary recovery pass）とは別責務のため、`content.js` 側に残す
+
+#### Round 5 の判定
+
+- module loading strategy の確定: 完了
+- 依存注入境界の確定: 完了
+- 公開 API 3 本の署名・戻り値確定: 完了
+- fallback 方針の確定: 完了（`?? {}` 形に統一、二重正本を作らない）
+- Section 4 の物理移送本体: 未着手（次ラウンドまたは別スレへ）
+
+したがって Round 5 は、**Section 4 再分割の前提設計が完了したラウンド**として扱う。
+物理移送そのものは Round 6（または別スレ）で行う。
+
 ---
 
 ## 7. 現在の次アクション
 
 ### 7.1 最優先候補
 
-Round 2 / 3 が完了し、Round 4 は rollback 付きで部分完了となったため、次の着手候補としては次の順を推奨する。
+Round 5 で sync interval orchestration の module loading strategy 整理が完了したため、次の着手候補としては次の順を推奨する。
 
-1. sync interval orchestration の module loading strategy 整理
+1. sync interval orchestration の physical split 実施
 2. secondary subtitle DOM
 3. initial cue recovery
 4. observer deps 整理の継続
 
 ### 7.2 次ラウンドの着手順
 
-次ラウンドでは、次の順で入るのが安全である。
+Round 5 で module loading strategy / 依存注入境界 / 公開 API が確定したため、
+次ラウンド（Round 6）では、次の順で Section 4 の physical split に入ってよい。
 
-1. 次に `content.js` から大きく減らせる責務塊を 1 つ決める
-2. 対象セクションの helper / callback / orchestrator 本体を棚卸しする
-3. `content.js` に残す入口と module 側へ移す実装本体を切り分ける
-4. physical move-only で cut & paste する
-5. import / export / wiring を最小限で成立させる
-6. 構文確認と簡易実機確認を行う
-7. docs に導入範囲と残課題を反映する
-
-ただし、Section 4 については Round 4 の結果を踏まえ、次の前段を追加する。
-
-1.5. **content script 向け module 読み込み戦略を先に確定する**
-
-この前段を飛ばして Section 4 を再移送すると、責務分割はできても runtime で再び壊れる可能性が高い。[web:96][web:101]
+1. `sync-interval-orchestrator.js` を新規作成し、Round 5 で確定した公開 API 3 本を実装する
+2. Section 4 固有 helper 群を module 内部 private 実装として移送する
+3. `content.js` 側で `window.ATVB?.createSyncIntervalOrchestrator?.(...)` を生成する
+4. `ensureSecondaryTrackSyncInterval()` から、Round 5 で確定した呼び出し規約で orchestrator API を呼ぶ
+5. primary recovery の判定ロジックは `content.js` に残置する
+6. `manifest.json` の `content_scripts.js` に `sync-interval-orchestrator.js` を `content.js` より前の位置で追加する
+7. `node --check content.js` と簡易実機確認を行う
+8. docs に Section 4 の physical split 導入範囲を反映する
 
 ### 7.3 Round 2 / 3 完了ライン
 
@@ -432,9 +506,9 @@ Round 2 / 3 完了時点で、次を「終わった」とみなす。
 - observer の意味・条件・挙動は Round 2 / 3 を通して変更していない
 - `node --check` と軽い拡張更新確認でエラーが出ていない
 
-### 7.4 Round 4 完了ライン
+### 7.4 Round 4 / 5 完了ライン
 
-Round 4 は「完全完了」ではなく、現時点では次を達成した段階とみなす。
+Round 4 / 5 は、Section 4 の physical split を安全に再開するための前提整理ラウンドとして、現時点では次を達成した段階とみなす。
 
 - Section 4 の helper / recovery pass 群の責務境界が明文化されている
 - どの関数群を module 候補として扱うかが特定済みである
@@ -442,7 +516,13 @@ Round 4 は「完全完了」ではなく、現時点では次を達成した段
 - rollback 後の `content.js` が再び正常動作している
 - `function syncIntervalRunSecondaryRecoveryPass(...)` が `content.js` に存在する
 - `createSyncIntervalOrchestrator` / `syncIntervalOrchestrator` 参照が `content.js` に存在しない
+- `content script` 向け loading strategy として、`window.ATVB.createXxx` + 注入順ベースの分割を採用すると確定している
+- `createSyncIntervalOrchestrator(...)` に渡す依存注入境界が `state` / `controllers` / `services` / module private helpers で整理済みである
+- `refreshPlaybackContext` / `detectLargeSeek` / `runSecondaryRecoveryPass` の公開 API 3 本が確定している
+- `ensureSecondaryTrackSyncInterval()` 側の呼び出し規約が確定している
 - `node --check content.js` と実機確認が通っている
+
+したがって Round 4 / 5 は、**Section 4 の責務境界整理と loading strategy 整理は完了し、physical split 本体だけが次ラウンドへ残っている状態**として扱う。
 
 ---
 
