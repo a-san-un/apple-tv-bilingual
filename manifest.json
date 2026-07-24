@@ -36,6 +36,7 @@
         "settings-runtime.js",
         "playbackContext.js",
         "reinitialize-coordinator.js",
+        "sync-interval-orchestrator.js",
         "content.js"
       ],
       "css": ["overlay.css"],

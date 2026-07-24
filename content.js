@@ -818,39 +818,40 @@
     if (secondaryTrackSyncInterval) return;
 
     secondaryTrackSyncInterval = window.setInterval(() => {
+      const orchestrator = ensureSyncIntervalOrchestrator();
+
+      logContent("sync interval tick", {
+        restarting: state.restarting,
+        hasSyncIntervalOrchestrator: Boolean(orchestrator),
+        hasVideo: Boolean(state.video),
+        requestedSecondaryLang:
+          state.requestedSecondaryLang ||
+          state.contentSettings.secondaryLang ||
+          "",
+        currentTime: Number(state.video?.currentTime ?? 0),
+      });
+
       if (state.restarting) return;
-      if (!syncIntervalOrchestrator) return;
+      if (!orchestrator) return;
 
-
-      syncIntervalOrchestrator.refreshPlaybackContext();
-      syncIntervalOrchestrator.detectLargeSeek();
-
+      orchestrator.refreshPlaybackContext();
+      orchestrator.detectLargeSeek();
 
       const effectiveSecondaryLanguage =
         state.requestedSecondaryLang || state.contentSettings.secondaryLang;
       if (!state.video || !effectiveSecondaryLanguage) return;
 
-
       const { now, hasSecondarySignal, hasPrimarySignal } =
-        syncIntervalOrchestrator.runSecondaryRecoveryPass(
-          effectiveSecondaryLanguage,
-        );
+        orchestrator.runSecondaryRecoveryPass(effectiveSecondaryLanguage);
 
-
-      // secondary はあるが primary が欠ける場合だけ、
-      // sync interval 経由の primary recovery を試行する。
       const trackCount = state.video?.textTracks?.length ?? 0;
       const shouldAttemptPrimaryRecovery =
         hasSecondarySignal && !hasPrimarySignal && trackCount > 1;
 
-
       if (!shouldAttemptPrimaryRecovery) {
-        if (hasPrimarySignal) {
-          state.lastPrimaryRecoveryAttemptAt = 0;
-        }
+        if (hasPrimarySignal) state.lastPrimaryRecoveryAttemptAt = 0;
         return;
       }
-
 
       if (
         state.lastPrimaryRecoveryAttemptAt &&
@@ -859,14 +860,12 @@
         return;
       }
 
-
       state.lastPrimaryRecoveryAttemptAt = now;
-      // sync interval 側の primary recovery は settings 再読込を介さず、
-      // 現在の state / track 前提で coordinator 本体を直呼びする。
       const recoveryResult =
-        reinitializeCoordinator?.reinitializeSubtitlePipeline(
-          "sync_interval_primary_recovery",
-        );
+        reinitializeCoordinator?.reinitializeSubtitlePipeline?.(
+          "syncintervalprimaryrecovery",
+        ) ?? {};
+
       logContent("sync interval primary recovery", {
         trackCount,
         primaryTrackFound: recoveryResult.primaryTrackFound,
@@ -874,7 +873,6 @@
         primaryListenerBound: recoveryResult.primaryListenerBound,
         secondaryListenerBound: recoveryResult.secondaryListenerBound,
       });
-
 
       if (recoveryResult.primaryTrackFound) {
         state.lastPrimaryRecoveryAttemptAt = 0;
@@ -2955,8 +2953,14 @@
       })
     : null;
 
-  const syncIntervalOrchestrator =
-    window.ATVB?.createSyncIntervalOrchestrator?.({
+let syncIntervalOrchestrator = null;
+
+function ensureSyncIntervalOrchestrator() {
+  if (syncIntervalOrchestrator) return syncIntervalOrchestrator;
+  if (!window.ATVB?.createSyncIntervalOrchestrator) return null;
+
+  syncIntervalOrchestrator =
+    window.ATVB.createSyncIntervalOrchestrator({
       state,
       controllers: {
         cueController,
@@ -2982,6 +2986,9 @@
         panelUi,
       },
     }) || null;
+
+  return syncIntervalOrchestrator;
+}
 
   const { setOverlayVisible, destroyOverlay, createOverlay } =
     overlayController;

@@ -61,6 +61,17 @@
           Boolean(state.lastVideoSrcKey) &&
           nextVideoSrcKey !== state.lastVideoSrcKey;
 
+        logContent("sync interval playback context", {
+          hasFoundVideo: Boolean(found?.video),
+          hasStateVideo: Boolean(state.video),
+          sameVideoObject: Boolean(found?.video && found.video === state.video),
+          previousVideoSrcKey: state.lastVideoSrcKey || "",
+          nextVideoSrcKey: nextVideoSrcKey || "",
+          hasCurrentSrcChanged,
+          currentTime: Number(nextVideo?.currentTime ?? 0),
+          lastObservedVideoTime: Number(state.lastObservedVideoTime),
+        });
+
         if (hasCurrentSrcChanged) {
           logContent("currentSrc changed", {
             previousVideoSrcKey: state.lastVideoSrcKey,
@@ -94,7 +105,17 @@
         const largeSeekDetected =
           Number.isFinite(previousObservedTime) &&
           Number.isFinite(currentVideoTime) &&
-          delta > 6;
+          delta > 3;
+
+        logContent("large seek baseline", {
+          previousObservedTime,
+          currentVideoTime,
+          delta,
+          previousObservedTimeFinite: Number.isFinite(previousObservedTime),
+          currentVideoTimeFinite: Number.isFinite(currentVideoTime),
+          largeSeekDetected,
+          lastLargeSeekAt: state.lastLargeSeekAt ?? 0,
+        });
 
         state.lastObservedVideoTime = Number.isFinite(currentVideoTime)
           ? currentVideoTime
@@ -516,5 +537,11 @@
           hasPrimarySignal,
         };
       }
+
+      return {
+        refreshPlaybackContext,
+        detectLargeSeek,
+        runSecondaryRecoveryPass,
+      };
     };
 })();
