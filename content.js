@@ -1270,7 +1270,11 @@
       if (!state.video || !effectiveSecondaryLanguage) return;
 
       const { now, hasSecondarySignal, hasPrimarySignal } =
-        syncIntervalRunSecondaryRecoveryPass(effectiveSecondaryLanguage);
+        syncIntervalOrchestrator?.runSecondaryRecoveryPass
+          ? syncIntervalOrchestrator.runSecondaryRecoveryPass(
+              effectiveSecondaryLanguage,
+            )
+        : syncIntervalRunSecondaryRecoveryPass(effectiveSecondaryLanguage);
 
       // secondary はあるが primary が欠ける場合だけ、
       // sync interval 経由の primary recovery を試行する。
