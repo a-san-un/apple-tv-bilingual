@@ -811,43 +811,6 @@
 // - recovery decision / lane state / track resolve details
 // =====================================================================
 
-  // sync interval ごとに、video / dialog 差し替えと content key の切り替わりを監視する。
-  // 再生対象が変わった場合は subtitle pipeline を再初期化し、
-  // 同一再生内の content key 変更だけなら history / panel を追従させる。
-  function syncIntervalRefreshPlaybackContext() {
-    const found = getVideoAndDialog();
-    const nextVideo = found?.video || state.video;
-    const nextVideoSrcKey = getCurrentVideoSrcKey(nextVideo);
-    const hasCurrentSrcChanged =
-      Boolean(nextVideoSrcKey) &&
-      Boolean(state.lastVideoSrcKey) &&
-      nextVideoSrcKey !== state.lastVideoSrcKey;
-
-    if (hasCurrentSrcChanged) {
-      logContent("currentSrc changed", {
-        previousVideoSrcKey: state.lastVideoSrcKey,
-        nextVideoSrcKey,
-      });
-    }
-
-    if (found && (found.video !== state.video || hasCurrentSrcChanged)) {
-      state.video = found.video;
-      state.dialogEl = found.dialog;
-      state.lastVideoSrcKey = nextVideoSrcKey;
-      state.lastObservedVideoTime = null;
-      reinitializeCoordinator?.reloadSettingsAndReinitialize("video_changed");
-      return;
-    }
-
-    if (found && state.video) {
-      const switched = syncHistoryContextWithPlayback("content_key_changed");
-      if (switched) {
-        renderCurrentSnapshot();
-        renderPanel();
-      }
-    }
-  }
-
   // sync interval 観測ベースで large seek を検知する。
   // large seek 後は nearby rebuild / short-lived hold が効く前提で、
   // panel state も seek 後の再同期モードへ寄せる。
@@ -3401,6 +3364,8 @@
         syncHistoryContextWithPlayback,
         renderCurrentSnapshot,
         renderPanel,
+        reloadSettingsAndReinitialize: (reason) =>
+          reinitializeCoordinator?.reloadSettingsAndReinitialize?.(reason),
         getTrackActiveCuesLength,
         getCurrentCueText,
         normalizeSubtitleText,

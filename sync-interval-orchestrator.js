@@ -49,7 +49,38 @@
       void panelUi;
 
       function refreshPlaybackContext() {
-        return null;
+        const found = getVideoAndDialog();
+        const nextVideo = found?.video || state.video;
+        const nextVideoSrcKey = getCurrentVideoSrcKey(nextVideo);
+        const hasCurrentSrcChanged =
+          Boolean(nextVideoSrcKey) &&
+          Boolean(state.lastVideoSrcKey) &&
+          nextVideoSrcKey !== state.lastVideoSrcKey;
+
+        if (hasCurrentSrcChanged) {
+          logContent("currentSrc changed", {
+            previousVideoSrcKey: state.lastVideoSrcKey,
+            nextVideoSrcKey,
+          });
+        }
+
+        if (found && (found.video !== state.video || hasCurrentSrcChanged)) {
+          state.video = found.video;
+          state.dialogEl = found.dialog;
+          state.lastVideoSrcKey = nextVideoSrcKey;
+          state.lastObservedVideoTime = null;
+          reloadSettingsAndReinitialize?.("video_changed");
+          return;
+        }
+
+        if (found && state.video) {
+          const switched =
+            syncHistoryContextWithPlayback("content_key_changed");
+          if (switched) {
+            renderCurrentSnapshot();
+            renderPanel();
+          }
+        }
       }
 
       function detectLargeSeek() {
