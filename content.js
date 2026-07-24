@@ -1252,35 +1252,30 @@
 
     secondaryTrackSyncInterval = window.setInterval(() => {
       if (state.restarting) return;
+      if (!syncIntervalOrchestrator) return;
 
-      if (syncIntervalOrchestrator?.refreshPlaybackContext) {
-        syncIntervalOrchestrator.refreshPlaybackContext();
-      } else {
-        syncIntervalRefreshPlaybackContext();
-      }
 
-      if (syncIntervalOrchestrator?.detectLargeSeek) {
-        syncIntervalOrchestrator.detectLargeSeek();
-      } else {
-        syncIntervalDetectLargeSeek();
-      }
+      syncIntervalOrchestrator.refreshPlaybackContext();
+      syncIntervalOrchestrator.detectLargeSeek();
+
 
       const effectiveSecondaryLanguage =
         state.requestedSecondaryLang || state.contentSettings.secondaryLang;
       if (!state.video || !effectiveSecondaryLanguage) return;
 
+
       const { now, hasSecondarySignal, hasPrimarySignal } =
-        syncIntervalOrchestrator?.runSecondaryRecoveryPass
-          ? syncIntervalOrchestrator.runSecondaryRecoveryPass(
-              effectiveSecondaryLanguage,
-            )
-        : syncIntervalRunSecondaryRecoveryPass(effectiveSecondaryLanguage);
+        syncIntervalOrchestrator.runSecondaryRecoveryPass(
+          effectiveSecondaryLanguage,
+        );
+
 
       // secondary はあるが primary が欠ける場合だけ、
       // sync interval 経由の primary recovery を試行する。
       const trackCount = state.video?.textTracks?.length ?? 0;
       const shouldAttemptPrimaryRecovery =
         hasSecondarySignal && !hasPrimarySignal && trackCount > 1;
+
 
       if (!shouldAttemptPrimaryRecovery) {
         if (hasPrimarySignal) {
@@ -1289,12 +1284,14 @@
         return;
       }
 
+
       if (
         state.lastPrimaryRecoveryAttemptAt &&
         now - state.lastPrimaryRecoveryAttemptAt < 4000
       ) {
         return;
       }
+
 
       state.lastPrimaryRecoveryAttemptAt = now;
       // sync interval 側の primary recovery は settings 再読込を介さず、
@@ -1310,6 +1307,7 @@
         primaryListenerBound: recoveryResult.primaryListenerBound,
         secondaryListenerBound: recoveryResult.secondaryListenerBound,
       });
+
 
       if (recoveryResult.primaryTrackFound) {
         state.lastPrimaryRecoveryAttemptAt = 0;
