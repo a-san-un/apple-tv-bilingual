@@ -3377,6 +3377,31 @@
       })
     : null;
 
+  const syncIntervalOrchestrator =
+    window.ATVB?.createSyncIntervalOrchestrator?.({
+      state,
+      controllers: {
+        cueController,
+      },
+      services: {
+        logContent,
+        getVideoAndDialog,
+        getCurrentVideoSrcKey,
+        syncHistoryContextWithPlayback,
+        renderCurrentSnapshot,
+        renderPanel,
+        getTrackActiveCuesLength,
+        getCurrentCueText,
+        normalizeSubtitleText,
+        getMergedSubtitleHealthSnapshot,
+        syncSecondarySubtitleTrackBinding,
+        syncSecondarySubtitleTrack,
+        renderSecondarySubtitle,
+        resolverDeps,
+        panelUi,
+      },
+    }) || null;
+
   const { setOverlayVisible, destroyOverlay, createOverlay } =
     overlayController;
 
