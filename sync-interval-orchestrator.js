@@ -19,6 +19,8 @@
         syncHistoryContextWithPlayback,
         renderCurrentSnapshot,
         renderPanel,
+        reloadSettingsAndReinitialize,
+        debugPanelProbe,
         getTrackActiveCuesLength,
         getCurrentCueText,
         normalizeSubtitleText,
@@ -38,6 +40,8 @@
       void syncHistoryContextWithPlayback;
       void renderCurrentSnapshot;
       void renderPanel;
+      void reloadSettingsAndReinitialize;
+      void debugPanelProbe;
       void getTrackActiveCuesLength;
       void getCurrentCueText;
       void normalizeSubtitleText;
