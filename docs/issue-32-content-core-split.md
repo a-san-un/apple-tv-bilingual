@@ -143,7 +143,7 @@ Round 1 完了時点の前提は次のとおり。
 
 - `content.js` を 7 セクションで読む構成を採用済み
 - Section 1〜7 のコメントを `state` 定義後に挿入済み
-- 関数ブロックは、正本 A の対応表に沿ってセクション単位に寄せ済み
+- 関数ブロックは、Round 1 の section regroup 方針に沿ってセクション単位に寄せ済み
 - Section 7: Lifecycle 関数群（boot / restart / teardown / bind / initial snapshot）はコメント直下へ集約済み
 - `createRuntimeObservers(...)` / `createSettingsRuntime(...)` / `createReinitializeCoordinator(...)` などの top-level wiring は、依存順優先で後段に残置済み
 - Section 6: Observer は、Round 1 では **空セクションのまま許容**と判断済み
@@ -273,11 +273,12 @@ Round 1 の正本では、`content.js` を次の 7 セクションで読む。
 
 #### Section 4: Sync Interval - Periodic Orchestration
 
-
 - sync interval ごとの playback context refresh
 - large seek detection
 - secondary recovery pass 起動
-- runtime snapshot 採取と orchestration 順制御
+- sync interval scheduling / orchestration 順制御 / primary recovery 判定
+- `content.js` 側では thin coordinator を読む
+- `sync-interval-orchestrator.js` 側では Section 4 実装本体の正本を読む
 
 
 #### Section 5: Layout - Playback Controls Adjustment
@@ -679,18 +680,16 @@ Round 6 で sync interval orchestration の physical split が完了したため
 3. observer deps 整理の継続
 
 
-### 7.2 次ラウンドの着手順
+### 7.2 次スレ TODO
 
-
-Round 6 完了後の次ラウンドでは、次の順で進めるとよい。
-
-
-1. secondary subtitle DOM 管理の責務境界を再確認する
-2. DOM 探索 / panel host 確保 / secondary subtitle 描画導線のうち、module private にできる部分を特定する
-3. `content.js` 側に残す thin coordinator の責務を固定する
-4. `window.ATVB.createXxx` + 注入順ベースの既存 loading strategy に沿って module 化する
-5. `node --check` と簡易実機確認を行う
-6. docs に反映する
+- secondary subtitle DOM 管理の責務境界を再確認する
+- `getSecondarySubtitleElements` / `ensureSecondarySubtitleElement` /
+  `renderSecondarySubtitle` などのうち module private にできる部分を特定する
+- `content.js` 側に残す thin coordinator の責務を固定する
+- initial cue recovery を別責務として切り出す準備を行う
+- `window.ATVB.createXxx` + 注入順ベースの既存 loading strategy に沿って module 化する
+- `node --check` と簡易実機確認を行う
+- docs / 設計スレへ反映する
 
 
 ### 7.3 Round 2 / 3 完了ライン
