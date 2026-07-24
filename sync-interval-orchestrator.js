@@ -53,7 +53,27 @@
       }
 
       function detectLargeSeek() {
-        return null;
+        const currentVideoTime = Number(state.video?.currentTime ?? 0);
+        const previousObservedTime = Number(state.lastObservedVideoTime);
+
+        const largeSeekDetected =
+            Number.isFinite(previousObservedTime) &&
+            Number.isFinite(currentVideoTime) &&
+            Math.abs(currentVideoTime - previousObservedTime) > 6;
+
+        state.lastObservedVideoTime = Number.isFinite(currentVideoTime)
+            ? currentVideoTime
+            : null;
+
+        if (!largeSeekDetected) return;
+
+        state.lastLargeSeekAt = Date.now();
+        logContent?.("large seek detected", {
+            previousObservedTime,
+            currentVideoTime,
+            delta: Math.abs(currentVideoTime - previousObservedTime),
+        });
+        panelUi?.applyPanelState?.("sync_interval_large_seek_resync");
       }
 
       function runSecondaryRecoveryPass(effectiveSecondaryLanguage) {

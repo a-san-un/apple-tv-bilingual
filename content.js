@@ -1253,8 +1253,17 @@
     secondaryTrackSyncInterval = window.setInterval(() => {
       if (state.restarting) return;
 
-      syncIntervalRefreshPlaybackContext();
-      syncIntervalDetectLargeSeek();
+      if (syncIntervalOrchestrator?.refreshPlaybackContext) {
+        syncIntervalOrchestrator.refreshPlaybackContext();
+      } else {
+        syncIntervalRefreshPlaybackContext();
+      }
+
+      if (syncIntervalOrchestrator?.detectLargeSeek) {
+        syncIntervalOrchestrator.detectLargeSeek();
+      } else {
+        syncIntervalDetectLargeSeek();
+      }
 
       const effectiveSecondaryLanguage =
         state.requestedSecondaryLang || state.contentSettings.secondaryLang;
