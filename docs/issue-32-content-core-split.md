@@ -131,6 +131,7 @@ Issue #32 の流れの中で、すでに次の到達点がある。
 - Round 6 の sync interval orchestration physical split が完了している
 - Round 6 follow-up として、large seek 後 secondary missing の観測ログ追加が完了している
 - Round 6 follow-up の観測結果として、large seek 後 secondary missing の再現系の中に、Section 4 の large seek / secondary recovery 経路へ到達していないケースが存在することを確認している
+- seek 閾値調整ラウンドの観測結果として、同じ large seek 後 secondary missing の再現系の中に、Section 4 へ到達したうえで recovery が成立していないケースが存在することも確認している
 
 ### 3.2 Round 1 後の現在地
 
@@ -731,7 +732,7 @@ Section 4 の `detectLargeSeek()` / `runSecondaryRecoveryPass()` /
   **Section 4 の large seek / secondary recovery 経路へ入っていないケース** がある
 - 次段では Section 4 の recovery 条件修正へ直行するのではなく、
   `detectLargeSeek()` の前提条件
-  （呼び出しタイミング / `lastObservedVideoTime` の持ち方 / `delta > 6` 閾値）
+  （呼び出しタイミング / `lastObservedVideoTime` の持ち方 / 当時の `delta > 6` 閾値）
   を先に見直す必要がある
 - 併せて、initial cue recovery 側を別系統の観測対象として扱うかどうかも設計側で再整理する
 
@@ -743,31 +744,30 @@ Section 4 の `detectLargeSeek()` / `runSecondaryRecoveryPass()` /
 
 ### 7.1 最優先候補
 
-
 Round 6 で sync interval orchestration の physical split は完了し、
 Round 6 follow-up で Section 4 の観測ログ追加も完了した。  
 その結果、large seek 後 secondary missing の再現系の中に、
 Section 4 の large seek / secondary recovery 経路へ到達していないケースがあることが分かった。
 
+さらに、seek 閾値調整ラウンドでは、
+`detectLargeSeek()` の閾値を `delta > 6` から `delta > 3` に下げたうえで、
+同じ large seek 後 secondary missing の再現系の中に、
+Section 4 へ到達したうえで recovery が成立していないケースがあることも確認した。
 
 したがって、次の着手に入る前に、まずは
-`detectLargeSeek()` の前提条件を設計側で再整理する。
-
+「Section 4 到達後の recovery 条件」を設計側で再整理する。
 
 具体的には次を確認対象とする。
-
 
 - `detectLargeSeek()` がどのタイミングで呼ばれているか
 - `state.lastObservedVideoTime` が null / 非有限になりうる条件
 - `delta` が何を意味するか（通常進行との差分か、離散 seek の差分か）
-- 現行の `delta > 6` 閾値が、Apple TV+ 上の実際の seek 操作と噛み合っているか
+- 現行の `delta > 3` 閾値が、Apple TV+ 上の実際の seek 操作と噛み合っているか
 - Section 4 に入らない再現経路を、initial cue recovery 系統として別管理すべきか
-
 
 そのうえで、次の着手候補としては次の順を推奨する。
 
-
-1. `detectLargeSeek()` 条件の見直し
+1. Section 4 到達後の `mergedShouldRecoverSecondary` / miss count / trigger 条件の見直し
 2. secondary subtitle DOM
 3. initial cue recovery
 4. observer deps 整理の継続
@@ -775,17 +775,25 @@ Section 4 の large seek / secondary recovery 経路へ到達していないケ�
 
 ### 7.2 次スレ TODO
 
+次スレ（「recovery 条件見直しラウンド」）では、seek 閾値調整ラウンドで得た結果を前提に、
+Section 4 到達後の recovery 条件にフォーカスする。
 
-- `detectLargeSeek()` の前提条件（呼び出しタイミング / previousObservedTime / currentVideoTime / `delta > 6`）を確認する
-- large seek とみなしたい実操作（seekbar ドラッグ / サム移動 / 短距離 skip / 長距離 jump）を整理する
+- `detectLargeSeek()` の呼び出しタイミングと `state.lastObservedVideoTime` の更新タイミングを再確認する
+- large seek とみなしたい実操作（seekbar ドラッグ / サム移動 / 短距離 skip / 長距離 jump）を整理し、
+  現行の `delta > 3` 閾値と観測ログでカバーできているかを確認する
+- Section 4 へ到達している代表ケースについて、
+  `mergedShouldRecoverSecondary` 判定と miss count / termination 条件をログベースで洗い出す
 - Section 4 に入らない再現経路を、initial cue recovery 系統として別観測対象に含めるか決める
-- `detectLargeSeek()` の条件見直しを、閾値変更・null 初回扱い・別トリガ導入のどれで試すか決める
-- 変更対象を Section 4 の seek 検知条件に限定して、次の実装スレのスコープを小さく固定する
+- recovery 条件の見直し候補を 1 箇所に絞る
+  - 例: `mergedShouldRecoverSecondary` 判定条件
+  - 例: secondary recovery の miss count 進行と termination 条件
+  - 例: `triggerSecondaryRecovery(...)` 前後の再評価タイミング
+- 変更対象を Section 4 の recovery 条件 1 箇所に限定して、
+  次の実装スレのスコープを小さく固定する
 - `node --check` と簡易テスト確認を行う
 - docs / 設計スレへ反映する
 
 ### 7.3 detectLargeSeek() 設計メモ
-
 
 Round 6 follow-up の観測では、large seek 後 secondary missing の既知問題は再現した一方で、
 Section 4 の観測ログ
@@ -793,86 +801,123 @@ Section 4 の観測ログ
 `cueController.evaluateSecondaryRecovery(...)` / `triggerSecondaryRecovery(...)`）
 は 1 行も出なかった。
 
-
 この結果から、既知問題の再現系の中に、
 **Section 4 の large seek / secondary recovery 経路へ到達していないケース**
 が存在すると考える。
 
+そのため、Round 6 follow-up の次ラウンドとして、
+Section 4 の recovery 条件を先に修正するのではなく、
+まず `detectLargeSeek()` の前提条件そのものを見直す方針を採った。
 
-したがって次段では、Section 4 の recovery 条件を先に修正するのではなく、
-まず `detectLargeSeek()` の前提条件そのものを見直す。
-
+この「seek 閾値調整ラウンド」（本スレ）では、
+この方針に従って `sync-interval-orchestrator.js` 側の `detectLargeSeek()` を最小限に変更し、
+large seek 判定閾値と観測ログの両方を更新した。
 
 #### 7.3.1 いまの `detectLargeSeek()` が前提としていること
 
-
-現行の `detectLargeSeek()` は、おおむね次の条件で large seek を認識する前提に立っている。
-
+「seek 閾値調整ラウンド」後の `detectLargeSeek()` は、
+おおむね次の条件で large seek を認識する前提に立っている。
 
 - `previousObservedTime` が有限である
 - `currentVideoTime` が有限である
 - 両者の差分 `delta` が閾値を超えている
-- その閾値として、現時点では `delta > 6` を採用している
+- その閾値として、現時点では `delta > 3` を採用している
 
+`delta` は「前回観測時刻と今回の再生位置の差分（秒）」を意味し、
+通常再生の連続した time 進行と、ユーザー操作による離散的な time jump を分けるための指標として使っている。
 
-この設計は、「通常再生による自然な time 進行」と
-「ユーザー操作による離散的な time jump」を分けたい、という意図には合っている。  
-一方で、Apple TV+ 上の実際の seek 操作が常にこの形で観測できるとは限らない。
+もともと docs では `delta > 6` を暫定値として採用していたが、
+この値は「強い根拠で凍結された閾値」ではなく、
+あくまで「通常再生と離散 seek を分ける当面の値」として位置付けていた。
 
+「seek 閾値調整ラウンド」では、この暫定値を 6 秒から 3 秒へ下げ、
+代表的な large seek 再現ケースで Section 4 へ到達しやすくすることを目的とした。
 
-#### 7.3.2 次に確認すべき論点
+#### 7.3.2 観測ログの更新
 
+`detectLargeSeek()` の前提を実際の再現ケースと突き合わせるため、
+同じ「seek 閾値調整ラウンド」で `sync-interval-orchestrator.js` 側に
+次の観測ログを追加した。
 
-次段では、少なくとも次の論点を確認対象とする。
+- `sync interval playback context`  
+  - `found.video` / `state.video` の有無と同一性  
+  - `previousVideoSrcKey` / `nextVideoSrcKey`  
+  - `hasCurrentSrcChanged`  
+  - `currentTime` / `state.lastObservedVideoTime`
 
+- `large seek baseline`  
+  - `previousObservedTime`  
+  - `currentVideoTime`  
+  - `delta`  
+  - `previousObservedTimeFinite` / `currentVideoTimeFinite`  
+  - `largeSeekDetected`  
+  - `lastLargeSeekAt`
 
-- `detectLargeSeek()` が sync interval のどのタイミングで呼ばれているか
-- `state.lastObservedVideoTime` が null / 非有限のまま残る経路がないか
-- seekbar ドラッグ、サム移動、短距離 skip、長距離 jump のどれを「large seek」とみなすべきか
-- 実際の再現操作が `delta > 6` を満たしていない可能性があるか
-- `delta` の意味が「前 tick との差分」であるため、
-  seek 操作の観測タイミング次第では想定より小さく見えていないか
+あわせて、`content.js` 側の sync interval tick でも次をログするようにした。
 
+- `sync interval tick`  
+  - `restarting`  
+  - `hasSyncIntervalOrchestrator`  
+  - `hasVideo`  
+  - `requestedSecondaryLang`  
+  - `currentTime`
 
-特に今回の観測結果は、
-「large seek 後 secondary missing の再現」イコール
-「Section 4 の `detectLargeSeek()` が必ず発火する」
-ではないことを示している。
+この組み合わせにより、
 
+- orchestrator が生成されているか
+- `refreshPlaybackContext()` の結果として playback context がどのように変化したか
+- `detectLargeSeek()` がどの delta で large seek を検知したか / しなかったか
+- その後の secondary recovery pass がどのタイミングで走ったか
 
-#### 7.3.3 設計上の仮説
+を一連のログとして追えるようになった。
 
+#### 7.3.3 seek 閾値調整ラウンドでの代表ケース評価
 
-現時点で優先して疑う仮説は次のとおりである。
+3 秒閾値適用後、「seek 閾値調整ラウンド」で対象とした
+large seek 後 secondary missing の代表ケースでは、
+次の Section 4 ログが揃っていることを確認した。
 
+- `secondary recovery pass started`
+- `secondary recovery trigger finished`
+- `secondary recovery terminated`
 
-1. `delta > 6` の閾値が大きすぎて、実際の再現操作を拾えていない
-2. `lastObservedVideoTime` の更新タイミングにより、seek 後の差分が吸収されている
-3. initial cue recovery 系統だけが動作し、Section 4 の periodic recovery 文脈には入っていない
-4. 「large seek 後 secondary missing」という見た目が同じでも、
-   実際には Section 4 到達系と未到達系の 2 系統が混在している
+また、この到達系では `mergedShouldRecoverSecondary=true`（recover 判定あり）でありながら、
+secondary subtitle が復帰せず、`hasPrimarySignal: true` / `hasSecondarySignal: false` の状態が続いていることも確認された。
 
+このため、「seek 閾値調整ラウンド」の結論は次のとおりとする。
 
-このため、次の実装ラウンドでは
-**Section 4 の seek 検知条件だけを小さく見直す** ことを優先し、
-recovery 条件の緩和や UI 側修正はまだ同時に行わない。
-
+- 3 秒閾値適用後、今回観測した代表的な再現パターンの範囲では、
+  「large seek 後 secondary missing が Section 4 に一度も入らない」という
+  **Section 4 未到達系** は解消されたと見なす
+- 問題の主座は、Section 4 入口条件ではなく、
+  **Section 4 到達後の recovery 不成立系** へ移ったと整理する
+- 未到達系が別の極端な操作に残っている可能性は否定しないが、
+  少なくとも「seek 閾値調整ラウンド」の対象ケースでは、
+  次に見るべき対象は `mergedShouldRecoverSecondary` / missCount / trigger 周りの
+  recovery 条件側である
 
 #### 7.3.4 次ラウンドで固定したいスコープ
 
+次ラウンド（Round 6 follow-up と「seek 閾値調整ラウンド」に続く
+「recovery 条件見直しラウンド」）では、
+`detectLargeSeek()` 前提確認ラウンドから一歩進み、
+Section 4 到達後の recovery 条件にフォーカスする。
 
-次ラウンドでは、変更対象を次のいずれか 1 つに絞る。
+ただし、スコープを広げすぎないために、
+次のように「最小 1 箇所」を選ぶラウンドとして扱う。
 
+- `mergedShouldRecoverSecondary` 判定条件
+- secondary recovery の miss count 進行と termination 条件
+- `triggerSecondaryRecovery(...)` 前後の再評価タイミング
+- track 再取得 / re-bind の抜け（`secondaryTrackFoundAfter` など）
 
-- `delta` 閾値の見直し
-- `lastObservedVideoTime` の初回 / null 扱いの見直し
-- large seek とみなす入力経路の再定義
-- Section 4 未到達系を別観測系統として扱うための追加ログ
+「seek 閾値調整ラウンド」（本スレ）では、
+あくまで `detectLargeSeek()` 閾値と観測ログの更新までを扱い、
+recovery 条件そのものの変更にはまだ入らない。
 
-
-この段階では、secondary subtitle DOM、panel / overlay、initial cue recovery 本体の責務変更までは入れない。  
-まずは `detectLargeSeek()` の前提を安定させ、
-Section 4 に入るケースと入らないケースを明確に分けて扱える状態を先に作る。
+次ラウンドのゴールは、代表的な Section 4 到達系に対して
+「どの recovery 条件を最小 1 箇所だけ動かすか」を決め、
+その挙動とログを docs / Issue に反映するところまでとする。
 
 ### 7.4 Round 2 / 3 完了ライン
 
@@ -1048,8 +1093,8 @@ Round 6 follow-up の手動再現で、この系統の存在を確認した。
 
 - `detectLargeSeek()` の前提条件が、実際の seek 操作に噛み合っていない
 - `state.lastObservedVideoTime` が null / 非有限のままになっている
-- `delta > 6` の閾値が大きすぎて、再現操作を拾えていない
-- initial cue recovery 系統だけが動いており、Section 4 の periodic recovery 文脈には入っていない
+- （seek 閾値調整ラウンド以前は）`delta > 6` の閾値が大きすぎて、再現操作を拾えていなかった可能性
+- 現行の `delta > 3` でもなお Section 4 未到達のケースが残るかどうか
 
 
 この系統では、まず seek 検知条件と入口条件を見直し、
