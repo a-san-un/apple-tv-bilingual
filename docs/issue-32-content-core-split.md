@@ -130,6 +130,7 @@ Issue #32 の流れの中で、すでに次の到達点がある。
 - Round 5 の module loading strategy 整理が完了している
 - Round 6 の sync interval orchestration physical split が完了している
 - Round 6 follow-up として、large seek 後 secondary missing の観測ログ追加が完了している
+- Round 6 follow-up の観測結果として、large seek 後 secondary missing の再現系の中に、Section 4 の large seek / secondary recovery 経路へ到達していないケースが存在することを確認している
 
 ### 3.2 Round 1 後の現在地
 
@@ -667,24 +668,31 @@ Round 6 の判定は次のとおり。
 
 ### 6.7 Round 6 follow-up: large seek 後 secondary missing の観測ログ追加（完了）
 
+
 Round 6 で Section 4: Sync Interval - Periodic Orchestration の physical split は完了したが、
 large seek 後に secondary subtitle が復帰しない既存 Known Issue 自体は未解消のまま残っていた。
+
 
 この follow-up では、挙動修正を先に入れるのではなく、
 `sync-interval-orchestrator.js` に最小限の観測ログを追加し、
 既知問題の発生位置を時系列で切り分けられるようにした。
 
+
 今回の追加対象は次の 4 点である。
+
 
 - `detectLargeSeek()` の large seek 観測ログ
 - `runSecondaryRecoveryPass(effectiveSecondaryLanguage)` 入口の recovery pass 開始ログ
 - `cueController.evaluateSecondaryRecovery(...)` 呼び出し直後の decision ログ
 - `triggerSecondaryRecovery(...)` 前後の trigger 開始 / 終了ログ
 
+
 ログは通常再生中の毎 tick ノイズを避けるため、
 large seek 文脈と secondary recovery 文脈に限定した。
 
+
 今回のラウンドでは、次は行っていない。
+
 
 - primary recovery 判定ロジックの変更
 - recovery 条件の緩和
@@ -692,11 +700,40 @@ large seek 文脈と secondary recovery 文脈に限定した。
 - secondary subtitle DOM / panel / overlay の責務変更
 - UI 挙動修正
 
+
 したがってこの追記は、Section 4 の挙動変更ではなく、
 既存 Known Issue の切り分け材料を増やすための **observability 強化** として扱う。
 
+
 確認結果として、`node --check sync-interval-orchestrator.js` は通過した。
 実装コミットは `57763d8`（`chore: large seek 後 secondary missing の観測ログを追加する (Issue #32)`）である。
+
+
+手動再現では、large seek 後に「メインは出るがサブが戻らない」既知バグ自体は再現した。  
+ただしこのとき、追加した Section 4 観測ログ
+（`large seek detected` / `secondary recovery pass started` /
+`secondary recovery action evaluated` / `secondary recovery trigger`）
+は 1 行も出なかった。
+
+
+一方で、同じ再現ケースでは
+`initial cue recovery render` と `current subtitle block updated` のみ確認された。  
+このことから、今回の再現経路では initial cue recovery 側は動いている一方、
+Section 4 の `detectLargeSeek()` / `runSecondaryRecoveryPass()` /
+`triggerSecondaryRecovery()` には到達していない可能性が高い。
+
+
+したがって、Round 6 follow-up の結論は次のとおりである。
+
+
+- Section 4 の observability 強化自体は完了した
+- large seek 後 secondary missing の再現系の中に、
+  **Section 4 の large seek / secondary recovery 経路へ入っていないケース** がある
+- 次段では Section 4 の recovery 条件修正へ直行するのではなく、
+  `detectLargeSeek()` の前提条件
+  （呼び出しタイミング / `lastObservedVideoTime` の持ち方 / `delta > 6` 閾値）
+  を先に見直す必要がある
+- 併せて、initial cue recovery 側を別系統の観測対象として扱うかどうかも設計側で再整理する
 
 ---
 
@@ -706,30 +743,138 @@ large seek 文脈と secondary recovery 文脈に限定した。
 
 ### 7.1 最優先候補
 
-Round 6 で sync interval orchestration の physical split が完了したため、
-次の着手に入る前に、まずは large seek 後 secondary missing Known Issue の観測ログを回収・整理し、切り分け材料を固める。
+
+Round 6 で sync interval orchestration の physical split は完了し、
+Round 6 follow-up で Section 4 の観測ログ追加も完了した。  
+その結果、large seek 後 secondary missing の再現系の中に、
+Section 4 の large seek / secondary recovery 経路へ到達していないケースがあることが分かった。
+
+
+したがって、次の着手に入る前に、まずは
+`detectLargeSeek()` の前提条件を設計側で再整理する。
+
+
+具体的には次を確認対象とする。
+
+
+- `detectLargeSeek()` がどのタイミングで呼ばれているか
+- `state.lastObservedVideoTime` が null / 非有限になりうる条件
+- `delta` が何を意味するか（通常進行との差分か、離散 seek の差分か）
+- 現行の `delta > 6` 閾値が、Apple TV+ 上の実際の seek 操作と噛み合っているか
+- Section 4 に入らない再現経路を、initial cue recovery 系統として別管理すべきか
+
 
 そのうえで、次の着手候補としては次の順を推奨する。
 
-1. secondary subtitle DOM
-2. initial cue recovery
-3. observer deps 整理の継続
+
+1. `detectLargeSeek()` 条件の見直し
+2. secondary subtitle DOM
+3. initial cue recovery
+4. observer deps 整理の継続
 
 
 ### 7.2 次スレ TODO
 
-- 観測ログを用いた large seek 後 secondary missing Known Issue の時系列整理を行う
-- secondary subtitle DOM 管理の責務境界を再確認する
-- `getSecondarySubtitleElements` / `ensureSecondarySubtitleElement` /
-  `renderSecondarySubtitle` などのうち module private にできる部分を特定する
-- `content.js` 側に残す thin coordinator の責務を固定する
-- initial cue recovery を別責務として切り出す準備を行う
-- `window.ATVB.createXxx` + 注入順ベースの既存 loading strategy に沿って module 化する
+
+- `detectLargeSeek()` の前提条件（呼び出しタイミング / previousObservedTime / currentVideoTime / `delta > 6`）を確認する
+- large seek とみなしたい実操作（seekbar ドラッグ / サム移動 / 短距離 skip / 長距離 jump）を整理する
+- Section 4 に入らない再現経路を、initial cue recovery 系統として別観測対象に含めるか決める
+- `detectLargeSeek()` の条件見直しを、閾値変更・null 初回扱い・別トリガ導入のどれで試すか決める
+- 変更対象を Section 4 の seek 検知条件に限定して、次の実装スレのスコープを小さく固定する
 - `node --check` と簡易テスト確認を行う
 - docs / 設計スレへ反映する
 
+### 7.3 detectLargeSeek() 設計メモ
 
-### 7.3 Round 2 / 3 完了ライン
+
+Round 6 follow-up の観測では、large seek 後 secondary missing の既知問題は再現した一方で、
+Section 4 の観測ログ
+（`detectLargeSeek()` / `runSecondaryRecoveryPass(...)` /
+`cueController.evaluateSecondaryRecovery(...)` / `triggerSecondaryRecovery(...)`）
+は 1 行も出なかった。
+
+
+この結果から、既知問題の再現系の中に、
+**Section 4 の large seek / secondary recovery 経路へ到達していないケース**
+が存在すると考える。
+
+
+したがって次段では、Section 4 の recovery 条件を先に修正するのではなく、
+まず `detectLargeSeek()` の前提条件そのものを見直す。
+
+
+#### 7.3.1 いまの `detectLargeSeek()` が前提としていること
+
+
+現行の `detectLargeSeek()` は、おおむね次の条件で large seek を認識する前提に立っている。
+
+
+- `previousObservedTime` が有限である
+- `currentVideoTime` が有限である
+- 両者の差分 `delta` が閾値を超えている
+- その閾値として、現時点では `delta > 6` を採用している
+
+
+この設計は、「通常再生による自然な time 進行」と
+「ユーザー操作による離散的な time jump」を分けたい、という意図には合っている。  
+一方で、Apple TV+ 上の実際の seek 操作が常にこの形で観測できるとは限らない。
+
+
+#### 7.3.2 次に確認すべき論点
+
+
+次段では、少なくとも次の論点を確認対象とする。
+
+
+- `detectLargeSeek()` が sync interval のどのタイミングで呼ばれているか
+- `state.lastObservedVideoTime` が null / 非有限のまま残る経路がないか
+- seekbar ドラッグ、サム移動、短距離 skip、長距離 jump のどれを「large seek」とみなすべきか
+- 実際の再現操作が `delta > 6` を満たしていない可能性があるか
+- `delta` の意味が「前 tick との差分」であるため、
+  seek 操作の観測タイミング次第では想定より小さく見えていないか
+
+
+特に今回の観測結果は、
+「large seek 後 secondary missing の再現」イコール
+「Section 4 の `detectLargeSeek()` が必ず発火する」
+ではないことを示している。
+
+
+#### 7.3.3 設計上の仮説
+
+
+現時点で優先して疑う仮説は次のとおりである。
+
+
+1. `delta > 6` の閾値が大きすぎて、実際の再現操作を拾えていない
+2. `lastObservedVideoTime` の更新タイミングにより、seek 後の差分が吸収されている
+3. initial cue recovery 系統だけが動作し、Section 4 の periodic recovery 文脈には入っていない
+4. 「large seek 後 secondary missing」という見た目が同じでも、
+   実際には Section 4 到達系と未到達系の 2 系統が混在している
+
+
+このため、次の実装ラウンドでは
+**Section 4 の seek 検知条件だけを小さく見直す** ことを優先し、
+recovery 条件の緩和や UI 側修正はまだ同時に行わない。
+
+
+#### 7.3.4 次ラウンドで固定したいスコープ
+
+
+次ラウンドでは、変更対象を次のいずれか 1 つに絞る。
+
+
+- `delta` 閾値の見直し
+- `lastObservedVideoTime` の初回 / null 扱いの見直し
+- large seek とみなす入力経路の再定義
+- Section 4 未到達系を別観測系統として扱うための追加ログ
+
+
+この段階では、secondary subtitle DOM、panel / overlay、initial cue recovery 本体の責務変更までは入れない。  
+まずは `detectLargeSeek()` の前提を安定させ、
+Section 4 に入るケースと入らないケースを明確に分けて扱える状態を先に作る。
+
+### 7.4 Round 2 / 3 完了ライン
 
 
 Round 2 / 3 完了時点で、次を「終わった」とみなす。
@@ -742,7 +887,7 @@ Round 2 / 3 完了時点で、次を「終わった」とみなす。
 - `node --check` と軽い拡張更新確認でエラーが出ていない
 
 
-### 7.4 Round 4 / 5 完了ライン
+### 7.5 Round 4 / 5 完了ライン
 
 
 Round 4 / 5 は、Section 4 の physical split を安全に再開するための前提整理ラウンドとして、次を達成した段階とみなす。
@@ -764,7 +909,7 @@ Round 4 / 5 は、Section 4 の physical split を安全に再開するための
 したがって Round 4 / 5 は、**Section 4 の責務境界整理と loading strategy 整理が完了した状態**として扱う。
 
 
-### 7.5 Round 6 完了ライン
+### 7.6 Round 6 完了ライン
 
 
 Round 6 完了時点で、次を「終わった」とみなす。
@@ -848,10 +993,12 @@ Round 6 の確認では、加えて次を確認した。
 
 Round 6 follow-up の確認では、さらに次を確認する。
 
-- large seek が観測ログ上で検知されている
-- recovery pass 開始ログが seek 後に続いて出ている
+
+- large seek が観測ログ上で検知されている、または今回ケースでは未検知であることが明示できる
+- recovery pass 開始ログが seek 後に続いて出ている、または Section 4 に未到達であることが切り分けられる
 - decision ログで recover 判定の有無と reason が確認できる
 - trigger 前後ログで secondary track / active cues の戻り有無が確認できる
+- Section 4 ログが 0 件の場合、initial cue recovery 系統だけが動いていないかを併せて確認する
 
 
 ### 8.3 Known Issue の切り分け
@@ -859,29 +1006,70 @@ Round 6 follow-up の確認では、さらに次を確認する。
 
 現時点では、次を拡張側ロジックの問題と即断しない。
 
+
 - recovery / force-rebind は走っている
 - track の再バインドも行われている
 - それでも JA track の active cues が復帰しない
 
+
 このケースは Apple TV+ 側挙動に依存する Known Issue として切り分ける。
 
+
 large seek 後 secondary missing の Known Issue については、
-次の 4 観測点を満たしているかどうかで切り分ける。
+次の 2 系統を分けて観測する。
+
+
+#### A. Section 4 到達系
+
+
+Section 4 の large seek / secondary recovery 経路へ到達しているケースである。  
+この場合は、次の 4 観測点を満たしているかどうかで切り分ける。
+
 
 - `detectLargeSeek()` の large seek 観測ログが出ているか
 - `runSecondaryRecoveryPass(...)` の recovery pass 開始ログが出ているか
 - `cueController.evaluateSecondaryRecovery(...)` の decision ログで `shouldRecover` が立っているか
 - `triggerSecondaryRecovery(...)` の前後ログで、secondary track / active cues が実際に戻っていないか
 
-observer 分割後も、この Known Issue の切り分け方は変わらない。  
+
+この系統では、Section 4 の recovery 条件・binding・trigger・Apple TV+ 側 active cues 挙動を順に疑う。
+
+
+#### B. Section 4 未到達系
+
+
+large seek 後 secondary missing は再現しているが、
+Section 4 の観測ログが 1 行も出ていないケースである。  
+Round 6 follow-up の手動再現で、この系統の存在を確認した。
+
+
+この場合は、次を優先して疑う。
+
+
+- `detectLargeSeek()` の前提条件が、実際の seek 操作に噛み合っていない
+- `state.lastObservedVideoTime` が null / 非有限のままになっている
+- `delta > 6` の閾値が大きすぎて、再現操作を拾えていない
+- initial cue recovery 系統だけが動いており、Section 4 の periodic recovery 文脈には入っていない
+
+
+この系統では、まず seek 検知条件と入口条件を見直し、
+必要なら initial cue recovery 側も別系統の観測対象として扱う。
+
+
+observer 分割後も、この Known Issue の切り分け方の基本は変わらない。  
 Round 2 / 3 は observer の配置と state 保持場所を変えたラウンドであり、subtitle recovery 仕様そのものは変更していない。
 
 
 Round 4 についても同様で、rollback は Section 4 の**置き場所**を戻しただけであり、secondary recovery の仕様変更とは扱わない。
 
 
-Round 6 の手動テストでも、large seek 後に `hasPrimarySignal: true` / `hasSecondarySignal: false` のまま current subtitle block 更新が継続し、primary のみ表示される既存挙動を確認した。  
-この結果は Section 4 の physical split 後も再現しており、今回の分割による regress ではなく既存 Known Issue の維持として扱う。
+Round 6 の手動テストでは、large seek 後に `hasPrimarySignal: true` / `hasSecondarySignal: false` のまま current subtitle block 更新が継続し、primary のみ表示される既存挙動を確認した。  
+Round 6 follow-up では、同系の再現ケースで Section 4 観測ログが 0 件であり、initial cue recovery render と current subtitle block updated のみ確認された。
+
+
+したがって現時点では、
+large seek 後 secondary missing Known Issue を **Section 4 到達系** と
+**Section 4 未到達系** に分けて扱う。
 
 
 ---
