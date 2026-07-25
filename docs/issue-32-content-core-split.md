@@ -97,7 +97,6 @@ Issue #32 開始時点の `content.js` は、次のような構造的要因に�
 これらの要因により、module へのロジック移送を進めても、state 配線や手続き記述が `content.js` に残りやすく、
 結果として「物理ファイルとしては分割されているが、論理的には fat なエントリーポイント」の状態になっている。
 
-### 2.4 今後の改善方針（設計原則レベル）
 
 ### 2.4 今後の改善方針（設計原則レベル）
 
@@ -181,8 +180,13 @@ Issue #32 の最終ゴールは、`content.js` を「再生ページ全体の co
 Section 4 の実装本体は `sync-interval-orchestrator.js`、Section 6 の実装本体は `runtime-observers.js` を正本として読む。  
 一方で、secondary subtitle DOM 管理と initial cue recovery は、引き続き主な分割候補として残っている。
 
-large seek 後 secondary missing の既知問題については、現在の主因候補を Section 4 単体には置かず、secondary signal lane、すなわち `resolveSecondarySubtitleTrack()`、`syncSecondarySubtitleTrackBinding()`、cue-readable 判定の境界に置く。  
-したがって、次スレでの重点観測対象は、resolver → binding → cue-readable の一直線とする。
+large seek 後 secondary missing の既知問題については、主因候補を Section 4 単体ではなく secondary signal lane に置く。  
+Round 8 では、`resolveSecondarySubtitleTrack()`、`syncSecondarySubtitleTrackBinding()`、cuechange listener を含む binding 層までを観測し、representative case においては resolver / binding がいずれも成立していることを確認した。  
+そのうえで、cue-readable 層（`getTrackActiveCuesLength()` などの runtime 観測）と secondary subtitle DOM / overlay 側に、次の主因候補を置く。
+
+Round 8 の representative case では、secondary track が `track found`（`label / language` / `cuesLength > 0` / currentTime での overlap あり）であり、binding 層でも cuechange listener が少なくとも 1 回以上発火している一方で、`secondaryActiveCuesLengthAfter: 0` が継続することが観測された。  
+このことから、「resolver / binding / cuechange の 1〜2 手だけでは representative case を倒しきれず、cue-readable 層および secondary subtitle DOM / initial cue recovery / overlay 側の設計に踏み込む必要がある」という現在位置にいると整理する。  
+Round 8 では resolver → binding → cue-readable を重点観測し、この切り分けまでを Section 4 のスコープとし、以降のラウンドでは cue-readable 後段（DOM / overlay / fallback）を主戦場として扱う。
 
 ---
 
@@ -199,6 +203,7 @@ Issue #32 のラウンドは、詳細な実況ではなく「どの種類の整�
 | 5 | sync interval loading strategy | 設計確定 | `window.ATVB.createXxx` 前提の loading strategy 確定 |
 | 6 | sync interval physical split | physical split | Section 4 実装本体は `sync-interval-orchestrator.js` 側 |
 | 7 | secondary recovery observability | observability | resolver / binding / cue-readable 境界を重点観測する段階 |
+| 8 | secondary signal lane probe | observability + small change | resolver / binding / cuechange を観測しつつ、小さな rebind 条件を試すラウンド |
 
 この表の目的は、ラウンドごとの詳細を記録することではなく、各ラウンドを「何のための整理だったか」という粒度で読み直せるようにすることにある。
 
@@ -224,7 +229,7 @@ resolver 層は、candidate track の列挙と最適 track の選定を担当す
 
 代表的な実装は `subtitle-track-resolver.js` であり、`resolveSecondarySubtitleTrack(...)` の戻り値として「どの TextTrack を secondary とみなすか」と、そのときの diagnostics を返す。
 
-### 4.3 binding 層
+### 4.3 binding層
 
 binding 層は、resolver 層で選ばれた TextTrack に対して bind / unbind / listener 更新を行う。
 
@@ -234,7 +239,9 @@ binding 層は、resolver 層で選ばれた TextTrack に対して bind / unbin
 
 cue-readable 層は、現在時刻で、その track から読める cue が存在するかどうかを判定する。
 
-代表的な実装は `getTrackActiveCuesLength(...)` / `hasCueOverlapAtTime(...)` / `getCurrentCue()` / `getCurrentCueText(...)` などであり、`activeCuesLength` や `hasCueOverlapAtCurrentTime` を基準に `cue readable` かどうかを判断する。
+代表的な実装は `getTrackActiveCuesLength(...)` / `hasCueOverlapAtTime(...)` / `getCurrentCue()` / `getCurrentCueText(...)` などであり、`activeCuesLength` や `hasCueOverlapAtCurrentTime` を基準に `cue readable` かどうかを判断する。  
+Apple TV+ の TextTrack 実装では、`activeCues` の更新タイミングと `getCurrentCue()` / `getCurrentCueText()` の戻り値が常に一致するとは限らず、短時間のあいだ「`currentCue` は読めているが `activeCuesLength` は 0」といった状態が存在しうる。  
+cue-readable 層の実装では、`getTrackActiveCuesLength(...)` 単独を truth source とするのではなく、`activeCues`、`currentCue` / `getCurrentCueText(...)`、SubtitleBlockSequence 側の sequenceHealth（current pair の alignment / missing secondary）を組み合わせて判断する設計とし、大シーク後の secondary missing についても `track found` と `cue unreadable` のズレを前提に読む。
 
 ### 4.5 orchestration lane と signal lane
 
@@ -274,7 +281,8 @@ large seek 後に「メインは出るがサブが出ない」既知問題につ
 - **B. Section 4 未到達系**
   - large seek 後 secondary missing は再現するが、Section 4 の recovery 文脈に入っていないケース
 
-Known Issue を記録する際は、必ずどちらの系統かを明示する。
+Known Issue を記録する際は、必ずどちらの系統かを明示する。  
+Round 8 の representative case で観測されたような、「`track found`（resolver）かつ `cue unreadable`（runtime 観測）であり、`secondary recovery trigger` が継続している」系統の現象は、A. Section 4 到達系の中でも secondary signal lane（resolver / binding / cue-readable）の設計課題として扱う。Section 4（orchestration lane）単体の条件変更ではなく、cue-readable 層および secondary subtitle DOM / initial cue recovery 側で対処すべき Known Issue として整理する。
 
 ### 5.3 secondary sync logging / naming 方針
 
@@ -295,13 +303,14 @@ secondary sync / recovery に関するログの message prefix は `secondary-sy
 
 ### 6.2 ラウンド運用上の注意
 
-- Round 1 / Round 2 / Round 3 / Round 4 / Round 5 / Round 6 / Round 7 を混ぜない
+- Round 1 / Round 2 / Round 3 / Round 4 / Round 5 / Round 6 / Round 7 / Round 8 を混ぜない
 - **区画整理 / 物理移送 / private 化 / observability 追加 / rollback 判断** を常に別論点として扱う
 - Round 2 は physical move-only、Round 3 は state カプセル化 only として扱い、挙動変更を混ぜない
 - Round 4 は責務境界整理と試行的 physical split を含むが、rollback 済みの部分完了ラウンドとして扱う
 - Round 5 は content script 向け module loading strategy / 依存注入境界 / 公開 API の確定ラウンドとして扱う
 - Round 6 は Section 4 の physical split 完了ラウンドとして扱い、既存 Known Issue の解消とは分けて扱う
 - Round 7 は secondary recovery の observability 強化ラウンドとして扱い、挙動変更とは分けて扱う
+- Round 8 は secondary signal lane（resolver / binding / cue-readable）の観測と、小さな挙動変更の試行ラウンドとして扱う
 
 ### 6.3 設計変更とログ追加の分離
 
