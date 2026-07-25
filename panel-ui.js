@@ -28,12 +28,7 @@
       if (document.getElementById(PANEL_SLOT_LAYER_STYLE_ID)) return;
       const style = document.createElement("style");
       style.id = PANEL_SLOT_LAYER_STYLE_ID;
-      style.textContent = `
-        #atv-panel-host > .dual-subtitles-secondary,
-        #atv-panel-host > [data-secondary-subtitle] {
-          display: none !important;
-        }
-      `;
+      style.textContent = ``;
       document.head.appendChild(style);
     }
 
