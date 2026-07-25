@@ -1614,13 +1614,55 @@
     renderFn,
     options = {},
   ) {
+    const forceRebind = options?.forceRebind === true;
+    const suppressRender = options?.suppressRender === true;
+    const previousTrack = state.secondaryTrack || null;
+
+    logContent("secondary track binding sync requested", {
+      requestedLang: requestedLang || "",
+      forceRebind,
+      suppressRender,
+      hasVideo: Boolean(video),
+      previousTrackExists: Boolean(previousTrack),
+      previousTrackLanguage: previousTrack?.language || "",
+      previousTrackMode: previousTrack?.mode || "",
+    });
+
     cueController.syncSecondarySubtitleTrack(
       video,
       requestedLang,
       renderFn,
       options,
     );
+
+    const boundTrack = cueController.getBoundSecondaryTrack?.() || null;
+
+    logContent("secondary track binding sync finished", {
+      requestedLang: requestedLang || "",
+      forceRebind,
+      suppressRender,
+      previousTrackExists: Boolean(previousTrack),
+      boundTrackExists: Boolean(boundTrack),
+      sameTrackRef: Boolean(previousTrack && boundTrack && previousTrack === boundTrack),
+      boundTrackLanguage: boundTrack?.language || "",
+      boundTrackMode: boundTrack?.mode || "",
+      boundTrackCuesLength: (() => {
+        try {
+          return boundTrack?.cues?.length ?? 0;
+        } catch (_) {
+          return -1;
+        }
+      })(),
+      boundTrackActiveCuesLength: (() => {
+        try {
+          return boundTrack?.activeCues?.length ?? 0;
+        } catch (_) {
+          return -1;
+        }
+      })(),
+    });
   }
+
 
   // secondary missing 復旧のための再同期要求を処理する。
   // ここでは現在の state から video / language を解決し、
@@ -1633,45 +1675,114 @@
     const requestedLang =
       state.requestedSecondaryLang || state.contentSettings.secondaryLang;
 
-    if (!video || !requestedLang) return;
-
-    const previousTrack = state.secondaryTrack;
+    const previousTrack = state.secondaryTrack || null;
 
     logContent("secondary track resync requested", {
       reason,
       forceRebind,
-      requestedLang,
+      requestedLang: requestedLang || "",
+      hasVideo: Boolean(video),
+      previousTrackExists: Boolean(previousTrack),
+      previousTrackLanguage: previousTrack?.language || "",
+      previousTrackMode: previousTrack?.mode || "",
+      previousTrackCuesLength: (() => {
+        try {
+          return previousTrack?.cues?.length ?? 0;
+        } catch (_) {
+          return -1;
+        }
+      })(),
+      previousTrackActiveCuesLength: (() => {
+        try {
+          return previousTrack?.activeCues?.length ?? 0;
+        } catch (_) {
+          return -1;
+        }
+      })(),
     });
 
-    syncSecondarySubtitleTrackBinding(
-      video,
-      requestedLang,
-      renderSecondarySubtitle,
-      {
+    if (!video || !requestedLang) {
+      logContent("secondary sync result: skipped before binding", {
+        reason,
         forceRebind,
-        suppressRender: true,
-      },
-    );
+        requestedLang: requestedLang || "",
+        hasVideo: Boolean(video),
+      });
+      return;
+    }
 
-    state.secondaryTrack = cueController.getBoundSecondaryTrack();
+    try {
+      syncSecondarySubtitleTrackBinding(
+        video,
+        requestedLang,
+        renderSecondarySubtitle,
+        {
+          forceRebind,
+          suppressRender: true,
+        },
+      );
+    } catch (error) {
+      logContent("secondary sync result: binding threw", {
+        reason,
+        forceRebind,
+        requestedLang,
+        message: String(error?.message || error || ""),
+      });
+      throw error;
+    }
+
+    state.secondaryTrack = cueController.getBoundSecondaryTrack?.() || null;
     const currentTrack = state.secondaryTrack;
 
     if (!currentTrack) {
       logContent("secondary sync result: no track resolved (clearing)", {
         reason,
         forceRebind,
+        requestedLang,
       });
     } else if (previousTrack !== currentTrack || forceRebind) {
       logContent("secondary sync result: track re-bound", {
         reason,
         forceRebind,
+        requestedLang,
         trackLang: currentTrack.language || "",
+        trackMode: currentTrack.mode || "",
+        cuesLength: (() => {
+          try {
+            return currentTrack?.cues?.length ?? 0;
+          } catch (_) {
+            return -1;
+          }
+        })(),
+        activeCuesLength: (() => {
+          try {
+            return currentTrack?.activeCues?.length ?? 0;
+          } catch (_) {
+            return -1;
+          }
+        })(),
       });
     } else {
       logContent("secondary sync result: same track (no re-bind needed)", {
         reason,
         forceRebind,
+        requestedLang,
         trackLang: currentTrack.language || "",
+        trackMode: currentTrack.mode || "",
+        cuesLength: (() => {
+          try {
+            return currentTrack?.cues?.length ?? 0;
+          } catch (_) {
+            return -1;
+          }
+        })(),
+        activeCuesLength: (() => {
+          try {
+            return currentTrack?.activeCues?.length ?? 0;
+          } catch (_) {
+            return -1;
+          }
+        })(),
       });
     }
   }
