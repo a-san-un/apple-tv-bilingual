@@ -75,30 +75,54 @@ Issue #32 の主題は、単なる subtitle sync / recovery の不具合修正�
 - 観測ログの入口
 - module public API を top-level で束ねる wiring
 
-### 2.3 `content.js` から外へ出す責務
+### 2.3 content.js が thin coordinator になりづらい要因
 
-`content.js` から段階的に外へ出す責務は、次のような実装本体である。
+Issue #32 開始時点の `content.js` は、次のような構造的要因により、thin coordinator というよりは「state 配線＋ UI 具現化のハブ」として振る舞いやすい。
 
-- playback context / content key / history context の詳細実装
-- subtitle sync / recovery の本体判定
-- secondary subtitle DOM の探索 / host 確保 / 描画導線
-- sync interval の詳細 orchestration
-- layout 計算や managed style の本体
-- observer callback / resize handler / orientation handler の実装詳細
-- module 内部 state
-- reinitialize / retry / result bridge の内部処理
+- state の中央集権:
+  - ファイル冒頭に巨大な `state` オブジェクトがあり、DOM 参照、タイマー ID 群、字幕履歴、UI の表示フラグなど多くのフィールドを一括で保持している。
+  - 各 module へ処理を委譲しても、データの所有権が `content.js` に残っているため、
+    「state から値を読み出して module に渡し、結果をまた state に書き戻す」配線コードが `content.js` 側に集中しやすい。
 
-### 2.4 `content.js` の 7 セクション設計
+- bridge 関数（ラッパー）の fat 化:
+  - ログ出力や controller 呼び出しのための bridge 関数（例: `logContent(...)` 相当、secondary sync 向けの helper 群）が、
+    単なる 1 行の委譲ではなく、payload 構築、バッファ管理、条件分岐などのロジックを内包している。
+  - このため「module を呼ぶだけ」のつもりだった箇所が、実際には 10〜数十行規模の処理になり、`content.js` に残り続ける。
 
-`content.js` は、現在次の 7 セクションで読む。
+- 命令型シーケンスと UI 具現化の残留:
+  - observer が変化を検知したときの「A を呼んで、結果に応じて B を更新し、C を再描画する」といった具体的な手順書が、`content.js` 側に記述されている。
+  - popup や辞書表示など、一部の UI コンポーネントは module ではなく `content.js` 後半に残っており、
+    DOM 操作とイベントバインドを直接含むクロージャとして存在している。
 
-1. Logger & Debug Bridge
-2. Playback Context Bridge
-3. UI: Secondary Subtitle DOM
-4. Sync Interval: Periodic Orchestration
-5. Layout: Playback Controls Adjustment
-6. Observer: Runtime Monitoring
-7. Lifecycle: Boot & Teardown
+これらの要因により、module へのロジック移送を進めても、state 配線や手続き記述が `content.js` に残りやすく、
+結果として「物理ファイルとしては分割されているが、論理的には fat なエントリーポイント」の状態になっている。
+
+### 2.4 今後の改善方針（設計原則レベル）
+
+Issue #32 では、Section 4 の secondary sync など個別ラウンドごとの不具合切り分けと並行して、
+`content.js` をより thin coordinator に近づけるため、次の方向性を設計原則として持つ。
+
+- state 所有権の分散とカプセル化:
+  - timer 系、subtitle history 系、UI 表示状態などを、それぞれの controller / store / UI module が自前で管理できるようにし、
+    `content.js` の `state` は「起動時の初期配線」と「最小限の共有コンテキスト」のみに縮小する。
+  - 具体的には、`timerState`・`subtitleState`・`uiState` といった粒度での state オブジェクト分割を中長期の候補とし、
+    各 module の関心事と一致する単位に state を寄せていく。
+
+- bridge / helper の薄化:
+  - `content.js` に残る bridge 関数や helper は、「module への 1 行の委譲」を基本形とし、
+    payload の構築や条件分岐といったロジックは module 側へ寄せる。
+  - これにより、bridge は「責務境界の明示」と「呼び出し点の名前付け」のみに近づける。
+
+- イベント境界の限定的な導入:
+  - すべてを Pub/Sub 化するのではなく、secondary sync や subtitle history 更新など、
+    一部の責務境界に限って `CustomEvent` / observer パターンを用い、
+    module 間の結合を「状態共有」から「変化通知」に寄せる。
+  - event-driven 化の対象は、debug / log / playback observer など、
+    既に「イベント」という概念で読んでいる層に限定し、全体を event bus で覆うことはこの Issue の範囲外とする。
+
+これらはあくまで中長期の設計指針であり、
+個別ラウンド（例: Section 4 secondary recovery）のバグ調査・修正そのものは、
+従来通り representative case を起点とした観測と small experiment を優先する。
 
 ### 2.5 各セクションの役割
 
