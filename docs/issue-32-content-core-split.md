@@ -99,6 +99,8 @@ Issue #32 開始時点の `content.js` は、次のような構造的要因に�
 
 ### 2.4 今後の改善方針（設計原則レベル）
 
+### 2.4 今後の改善方針（設計原則レベル）
+
 Issue #32 では、Section 4 の secondary sync など個別ラウンドごとの不具合切り分けと並行して、
 `content.js` をより thin coordinator に近づけるため、次の方向性を設計原則として持つ。
 
@@ -120,9 +122,23 @@ Issue #32 では、Section 4 の secondary sync など個別ラウンドごと�
   - event-driven 化の対象は、debug / log / playback observer など、
     既に「イベント」という概念で読んでいる層に限定し、全体を event bus で覆うことはこの Issue の範囲外とする。
 
+- fallback / popup / state ownership の構造改善:
+  - `getPlaybackContext` などの fallback 実装を見直し、必要に応じて module 必須化（fail-open / fail-soft 方針の再設計）を検討する。
+  - `createLanguageSetupNotice` や辞書連携などの popup / overlay 系 UI を、
+    `content.js` から独立した UI module として切り出す。
+  - shared state（巨大な `state` オブジェクト）に集約されている ownership を、
+    timer / subtitle / UI といったドメインごとに module 側へ移していく。
+
 これらはあくまで中長期の設計指針であり、
 個別ラウンド（例: Section 4 secondary recovery）のバグ調査・修正そのものは、
-従来通り representative case を起点とした観測と small experiment を優先する。
+representative case を起点とした観測と、原因層の切り分けを優先する。
+
+large seek 後の Known Issue については、特に
+
+- primary は出ているが secondary が復帰せず、2字幕が揃わない状態（primary のみ表示）
+
+を代表的な現象として読み、この状態を解消するための secondary resolver / binding / cue-readable 境界の整理と、
+上記の構造改善（fallback 整理・popup 切り出し・state 分散・Thin Coordinator 化）を組み合わせて進める。
 
 ### 2.5 各セクションの役割
 
