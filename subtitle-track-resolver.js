@@ -99,6 +99,27 @@
     }
   }
 
+  function hasCueOverlapAtTime(track, now) {
+    if (!Number.isFinite(now)) return false;
+
+    try {
+      const cues = track?.cues;
+      if (!cues || cues.length === 0) return false;
+
+      for (let i = 0; i < cues.length; i++) {
+        const cue = cues[i];
+        if (!cue) continue;
+        if (cue.startTime <= now && now <= cue.endTime) {
+          return true;
+        }
+      }
+    } catch {
+      return false;
+    }
+
+    return false;
+  }
+
   function scoreSubtitleTrack(track, index) {
     const cuesLength = getTrackCuesLength(track);
     const activeCuesLength = getTrackActiveCuesLength(track);
@@ -123,7 +144,7 @@
     return score;
   }
 
-  function pickBestSubtitleTrack(textTracks, requestedLang) {
+  function pickBestSubtitleTrack(textTracks, requestedLang, currentTime = null) {
     const tracks = Array.from(textTracks || []);
     const candidates = tracks
       .map((track, index) => ({ track, index }))
@@ -139,6 +160,16 @@
       return null;
     }
 
+    const overlapCandidate = Number.isFinite(currentTime)
+      ? candidates.find(({ track }) =>
+          hasCueOverlapAtTime(track, currentTime),
+        ) || null
+      : null;
+
+    if (overlapCandidate) {
+      return overlapCandidate.track;
+    }
+
     candidates.sort((a, b) => {
       return (
         scoreSubtitleTrack(b.track, b.index) -
@@ -151,6 +182,8 @@
 
   function getSecondarySubtitleTrackCandidates(video, requestedLang) {
     const tracks = Array.from(video?.textTracks || []);
+    const currentTime = Number(video?.currentTime ?? NaN);
+
     return tracks.map((track, index) => ({
       index,
       language: track?.language || "",
@@ -161,6 +194,7 @@
       activeCuesLength: getTrackActiveCuesLength(track),
       matchesRequestedLanguage: matchesRequestedLanguage(track, requestedLang),
       forcedLike: isForcedLikeTrack(track),
+      hasCueOverlapAtCurrentTime: hasCueOverlapAtTime(track, currentTime),
       score: scoreSubtitleTrack(track, index),
     }));
   }
@@ -168,9 +202,11 @@
   function resolveSecondarySubtitleTrack(video, requestedLang) {
     if (!video || !video.textTracks) return null;
 
+    const currentTime = Number(video.currentTime ?? NaN);
     const selectedTrack = pickBestSubtitleTrack(
       video.textTracks,
       requestedLang,
+      currentTime,
     );
 
     if (!selectedTrack) {
@@ -186,6 +222,21 @@
       }
     } catch (_) {}
 
+    window.ATVB?.logger?.debug?.("secondary resolver selected track", {
+      requestedLang,
+      currentTime,
+      language: selectedTrack?.language ?? "",
+      label: normalizeTrackLabel(selectedTrack?.label),
+      kind: selectedTrack?.kind ?? "",
+      mode: selectedTrack?.mode ?? "",
+      cuesLength: getTrackCuesLength(selectedTrack),
+      activeCuesLength: getTrackActiveCuesLength(selectedTrack),
+      hasCueOverlapAtCurrentTime: hasCueOverlapAtTime(
+        selectedTrack,
+        currentTime,
+      ),
+    });
+
     return selectedTrack;
   }
 
@@ -197,6 +248,7 @@
     getUniqueTracks,
     getTrackCuesLength,
     getTrackActiveCuesLength,
+    hasCueOverlapAtTime,
     scoreSubtitleTrack,
     pickBestSubtitleTrack,
     getSecondarySubtitleTrackCandidates,
