@@ -267,7 +267,9 @@
     const textTrackCount = video?.textTracks?.length ?? 0;
 
     // 再生判定は URL ではなく DOM 条件を基準にする。
-    const isPlaybackReady = Boolean(video) && textTrackCount > 0;
+    const isPlaybackReady =
+    Boolean(video) &&
+    (Boolean(playbackDialog) || Boolean(playbackView));
 
     return {
       video,
@@ -288,6 +290,9 @@
 
     const resolvedDialog =
       ctx.playbackDialog || ctx.playbackView?.closest("dialog") || null;
+
+    if (!resolvedDialog && !ctx.playbackView) return null;
+
     return { video: ctx.video, dialog: resolvedDialog };
   }
 
@@ -3486,6 +3491,51 @@ function ensureSyncIntervalOrchestrator() {
       ejdictLoaded: !!state.ejdictMap,
     });
   }
+
+  let lastObservedUrl = location.href;
+
+  function handlePotentialNavigationChange(reason = "unknown") {
+    if (location.href === lastObservedUrl) return;
+    lastObservedUrl = location.href;
+
+    logContent("navigation changed", {
+      reason,
+      url: location.href,
+    });
+
+    teardownForRestart();
+    prepareForRestart();
+
+    const found = getVideoAndDialog();
+    if (found) {
+      state.video = found.video;
+      state.dialogEl = found.dialog;
+      state.lastVideoSrcKey = getCurrentVideoSrcKey(found.video);
+      startBilingual();
+      return;
+    }
+
+    state.video = null;
+    state.dialogEl = null;
+    state.lastVideoSrcKey = "";
+    destroyUiHosts();
+    applyLayout(false);
+
+    logContent("navigation changed: playback target not ready yet", {
+      reason,
+      url: location.href,
+      ...getPlaybackContextLogPayload(),
+    });
+  }
+
+  const navigationObserver = new MutationObserver(() => {
+    handlePotentialNavigationChange("mutation_observer");
+  });
+
+  navigationObserver.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
 
   function attachTracks(v) {
     state.video = v;
