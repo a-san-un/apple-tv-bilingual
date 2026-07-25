@@ -227,6 +227,13 @@ Round 6 完了後の Section 4 の読み方は次のとおり。
 その後の follow-up として、large seek 後 secondary missing Known Issue の切り分けを進めるため、
 Section 4 実装本体である `sync-interval-orchestrator.js` に観測ログを追加した。
 
+### 3.6 Round 7 後の現在地
+
+- Round 7 では、`secondary recovery terminated` の到達条件を緩和しつつ、`triggerSecondaryRecovery()` 前後と `resolveSecondarySubtitleTrack()` の最終選定結果を観測するログを追加した。
+- representative case では、`secondary recovery trigger finished` 後も `secondaryTrackFoundAfter: true` かつ `secondaryActiveCuesLengthAfter: 0` が継続し、recovery 実行自体は走っているのに secondary 字幕が復帰しないことを確認した。
+- そのため、現在の主因候補は「Section 4 の termination 条件が早すぎること」単体ではなく、secondary resolver / binding 境界、つまり「選ばれた track が currentTime に重なる cue を本当に供給できているか」の側へ移っている。
+- すでに `content.js` では Section 4 が orchestration lane、secondary track sync は cue controller / resolver lane として分離可能な形が見え始めているため、Issue 32 の split でもこの境界を明示的に扱う必要がある。
+- 現時点では「track が見つからない」よりも、「track は見つかっているが active cue が 0 のまま」であり、用語上もこの状態を primary/secondary の signal 非対称として整理したほうが、以後のログ読解と docs 更新が安定する。
 
 ---
 
@@ -744,54 +751,29 @@ Section 4 の `detectLargeSeek()` / `runSecondaryRecoveryPass()` /
 
 ### 7.1 最優先候補
 
-Round 6 で sync interval orchestration の physical split は完了し、
-Round 6 follow-up で Section 4 の観測ログ追加も完了した。  
-その結果、large seek 後 secondary missing の再現系の中に、
-Section 4 の large seek / secondary recovery 経路へ到達していないケースがあることが分かった。
-
-さらに、seek 閾値調整ラウンドでは、
-`detectLargeSeek()` の閾値を `delta > 6` から `delta > 3` に下げたうえで、
-同じ large seek 後 secondary missing の再現系の中に、
-Section 4 へ到達したうえで recovery が成立していないケースがあることも確認した。
-
-したがって、次の着手に入る前に、まずは
-「Section 4 到達後の recovery 条件」を設計側で再整理する。
-
-具体的には次を確認対象とする。
-
-- `detectLargeSeek()` がどのタイミングで呼ばれているか
-- `state.lastObservedVideoTime` が null / 非有限になりうる条件
-- `delta` が何を意味するか（通常進行との差分か、離散 seek の差分か）
-- 現行の `delta > 3` 閾値が、Apple TV+ 上の実際の seek 操作と噛み合っているか
-- Section 4 に入らない再現経路を、initial cue recovery 系統として別管理すべきか
-
-そのうえで、次の着手候補としては次の順を推奨する。
-
-1. Section 4 到達後の `mergedShouldRecoverSecondary` / miss count / trigger 条件の見直し
-2. secondary subtitle DOM
-3. initial cue recovery
-4. observer deps 整理の継続
+- 最優先で潰す対象は、`primary は出ているが secondary が復帰せず、2字幕が揃わない状態` とする。
+- 直近の representative case では、`mergedPrimaryHealthy: true` と `mergedShouldRecoverSecondary: true` のまま recovery が発火しても、`secondaryTrackFoundAfter: true` かつ `secondaryActiveCuesLengthAfter: 0` が続いたため、Section 4 の trigger 条件よりも secondary resolver / binding 境界の優先度が上がった。
+- したがって、次の first candidate は `sync-interval-orchestrator` 単体の再調整ではなく、`resolveSecondarySubtitleTrack()` → `syncSecondarySubtitleTrackBinding()` → cue readable 判定、の一直線を追うことに置く。
+- Issue 32 の split 観点でも、Section 4 は「いつ recovery を走らせるか」、resolver / cue controller 側は「どの track を bind し、その track から cue を読めるか」を担当する、と責務境界を固定する。
 
 
 ### 7.2 次スレ TODO
 
-次スレ（「recovery 条件見直しラウンド」）では、seek 閾値調整ラウンドで得た結果を前提に、
-Section 4 到達後の recovery 条件にフォーカスする。
+1. `subtitle-track-resolver.js`
+   - `resolver-selected` の観測を維持しつつ、最終採用 track の cue 範囲と currentTime overlap を見分けられる最小ログを残す。
+   - 見る順番は `language / label / kind / mode / cuesLength / activeCuesLength / hasCueOverlapAtCurrentTime` を優先し、必要なら first/last cue 境界を補助的に出す。
 
-- `detectLargeSeek()` の呼び出しタイミングと `state.lastObservedVideoTime` の更新タイミングを再確認する
-- large seek とみなしたい実操作（seekbar ドラッグ / サム移動 / 短距離 skip / 長距離 jump）を整理し、
-  現行の `delta > 3` 閾値と観測ログでカバーできているかを確認する
-- Section 4 へ到達している代表ケースについて、
-  `mergedShouldRecoverSecondary` 判定と miss count / termination 条件をログベースで洗い出す
-- Section 4 に入らない再現経路を、initial cue recovery 系統として別観測対象に含めるか決める
-- recovery 条件の見直し候補を 1 箇所に絞る
-  - 例: `mergedShouldRecoverSecondary` 判定条件
-  - 例: secondary recovery の miss count 進行と termination 条件
-  - 例: `triggerSecondaryRecovery(...)` 前後の再評価タイミング
-- 変更対象を Section 4 の recovery 条件 1 箇所に限定して、
-  次の実装スレのスコープを小さく固定する
-- `node --check` と簡易テスト確認を行う
-- docs / 設計スレへ反映する
+2. secondary binding 境界
+   - `syncSecondarySubtitleTrackBinding()` の直後に、bind 後 track 参照・mode・`activeCues.length`・render 実行有無を確認する。
+   - ここで `track は同一参照だが active cue を返せない` のか、`再 bind 後に別 track へ差し替わる` のかを切り分ける。
+
+3. cue listener / readable 判定
+   - `cuechange` listener が発火しているか、`getCurrentCue()` / `getCurrentCueText()` が currentTime 近傍で fallback 読みできるかを確認する。
+   - これにより「resolver の選定問題」なのか「bind 後の cue 読み取り問題」なのかを分離する。
+
+4. docs / naming 整理
+   - 以後の docs とログコメントでは、現象名を `secondary recovery 不発` ではなく `primary は出るが secondary が signal 化しないケース` に寄せる。
+   - `Section 4 到達 = orchestrator の問題` と短絡せず、resolver / binding 境界まで含めて記録する。
 
 ### 7.3 detectLargeSeek() 設計メモ
 
@@ -1064,20 +1046,13 @@ large seek 後 secondary missing の Known Issue については、
 次の 2 系統を分けて観測する。
 
 
-#### A. Section 4 到達系
+#### A. Section 4 到達系（sync interval / recovery pass は走るが 2字幕が揃わない）
 
-
-Section 4 の large seek / secondary recovery 経路へ到達しているケースである。  
-この場合は、次の 4 観測点を満たしているかどうかで切り分ける。
-
-
-- `detectLargeSeek()` の large seek 観測ログが出ているか
-- `runSecondaryRecoveryPass(...)` の recovery pass 開始ログが出ているか
-- `cueController.evaluateSecondaryRecovery(...)` の decision ログで `shouldRecover` が立っているか
-- `triggerSecondaryRecovery(...)` の前後ログで、secondary track / active cues が実際に戻っていないか
-
-
-この系統では、Section 4 の recovery 条件・binding・trigger・Apple TV+ 側 active cues 挙動を順に疑う。
+- representative case では、`hasPrimarySignal: true`、`mergedPrimaryHealthy: true`、`mergedShouldRecoverSecondary: true` の条件で secondary recovery が発火しているにもかかわらず、`secondary recovery trigger finished` 後も `secondaryTrackFoundAfter: true` かつ `secondaryActiveCuesLengthAfter: 0` が継続した。
+- このケースでは「secondary track が見つからない」のではなく、「選ばれた secondary track から、その時刻で読める cue が得られていない」可能性が高い。
+- したがって Section 4 の termination 条件や missCount だけを調整しても、根治しない可能性がある。
+- split 設計上は、Section 4 を recovery orchestration lane、`subtitle-track-resolver` / `syncSecondarySubtitleTrackBinding()` / cue readable 判定を secondary signal lane として分離し、後者を次の重点観測対象に置く。
+- 既知問題の表現としては、`Section 4 に到達しても recovery 後の secondary signal が 0 のまま残る representative case がある` と記録するのが現状に最も合っている。
 
 
 #### B. Section 4 未到達系
