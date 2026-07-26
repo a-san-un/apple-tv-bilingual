@@ -252,6 +252,23 @@ Issue #32 の split では、
 を secondary signal lane の API 境界として扱い、Section 4 はこれらを呼び出す orchestration lane として薄く保つ。
 これにより、「いつ recovery を走らせるか」と「どの track を bind し、その track から cue を読めるか」を分けて扱う。
 
+### 4.6 secondary sync logging / DEBUG 層の扱い（Round 9）
+
+secondary sync / recovery に関するログは、orchestration lane / signal lane の切り分けに合わせて、常設ログと DEBUG 専用ログの 2 層に分けて運用する。
+
+- DEBUG ガード付き `secondary-sync ...`（DEBUG_SECONDARY_SUBS true 時のみ有効）
+  - `secondary-sync render-entry`
+  - `secondary-sync cuechange-fired`
+  - `secondary-sync cue-readable-snapshot`
+- 常設で残す `secondary-sync ...`（DEBUG フラグに依存せず常時出力）
+  - `secondary-sync resolver-selected`
+  - `secondary-sync rebind-required`
+  - `secondary-sync mode-apply failed`
+  - `secondary-sync mode-applied`
+  - `secondary-sync bind-result`
+
+意図として、orchestration lane 側では `secondary-sync resolver-selected` / `rebind-required` / `mode-apply ...` / `bind-result` などの節目ログのみを常設とし、secondary signal lane の詳細な観測（render-entry / cuechange-fired / cue-readable-snapshot）は DEBUG_SECONDARY_SUBS をオンにしたときの調査用レイヤーとして扱う。これにより、通常運用でのログノイズと payload 負荷を抑えつつ、Round 9 以降の representative case 調査では同じ観測粒度を再現できるようにしている。
+
 ---
 
 ## 5. Known Issue の切り分けラベル
