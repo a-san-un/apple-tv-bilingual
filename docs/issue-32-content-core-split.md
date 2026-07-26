@@ -97,7 +97,6 @@ Issue #32 開始時点の `content.js` は、次のような構造的要因に�
 これらの要因により、module へのロジック移送を進めても、state 配線や手続き記述が `content.js` に残りやすく、
 結果として「物理ファイルとしては分割されているが、論理的には fat なエントリーポイント」の状態になっている。
 
-
 ### 2.4 今後の改善方針（設計原則レベル）
 
 Issue #32 では、Section 4 の secondary sync など個別ラウンドごとの不具合切り分けと並行して、
@@ -179,19 +178,12 @@ Issue #32 の最終ゴールは、`content.js` を「再生ページ全体の co
 
 ### 2.8 現在位置
 
-現在、`content.js` の責務分割として、`playbackContext`、`reinitialize-coordinator`、`runtime-observers`、`sync-interval-orchestrator`、playback controls layout は正本分離済みとして扱う。
+現在、`content.js` の責務分割として、`playbackContext`、`reinitialize-coordinator`、`runtime-observers`、`sync-interval-orchestrator`、playback controls layout は正本分離済みとして扱う。  
+Section 4 の実装本体は `sync-interval-orchestrator.js`、Section 6 の実装本体は `runtime-observers.js` を正本として読む。一方で、secondary subtitle DOM 管理と initial cue recovery は、引き続き主な分割候補として残っている。
 
-Section 4 の実装本体は `sync-interval-orchestrator.js`、Section 6 の実装本体は `runtime-observers.js` を正本として読む。  
-一方で、secondary subtitle DOM 管理と initial cue recovery は、引き続き主な分割候補として残っている。
+large seek 後 secondary missing の既知問題については、主因候補を Section 4 単体ではなく secondary signal lane に置く。secondary track 自体は `track found` であり、binding も一度は成立していることを前提に、原因を cue-readable 層と secondary subtitle DOM / overlay 側に置いている。
 
-large seek 後 secondary missing の既知問題については、主因候補を Section 4 単体ではなく secondary signal lane に置く。  
-Round 8 では、`resolveSecondarySubtitleTrack()`、`syncSecondarySubtitleTrackBinding()`、cuechange listener を含む binding 層までを観測し、representative case においては resolver / binding がいずれも成立していることを確認した。  
-そのうえで、cue-readable 層（`getTrackActiveCuesLength()` などの runtime 観測）と secondary subtitle DOM / overlay 側に、次の主因候補を置く。
-
-Round 8 の representative case では、secondary track が `track found`（`label / language` / `cuesLength > 0` / currentTime での overlap あり）であり、binding 層でも cuechange listener が少なくとも 1 回以上発火している一方で、`secondaryActiveCuesLengthAfter: 0` が継続することが観測された。  
-このことから、「resolver / binding / cuechange の 1〜2 手だけでは representative case を倒しきれず、cue-readable 層および secondary subtitle DOM / initial cue recovery / overlay 側の設計に踏み込む必要がある」という現在位置にいると整理する。  
-Round 8 では resolver → binding → cue-readable を重点観測し、この切り分けまでを Section 4 前半のスコープとする。  
-以降のラウンドでは cue-readable 後段（secondary subtitle DOM / initial cue recovery / overlay / fallback）を主戦場とし、small change に限定しない構造変更や責務整理も扱う。
+Round 9 では、cue-readable 層の観測と局所修正により、`hidden` mode の secondary TextTrack が代表ケースで cue unreadable を引き起こしていたことを確認し、debug 時に `showing` mode で bind することで secondary signal を復帰させた。このため、代表ケースに関しては primary cause を cue-readable 層の mode / 可読性側に置き、以降のラウンドでは secondary subtitle DOM / initial cue recovery / overlay / fallback といった cue-readable 後段の設計・責務分割、および mode 方針と Apple 標準字幕 UI との干渉評価を進める。
 
 ---
 
@@ -199,16 +191,16 @@ Round 8 では resolver → binding → cue-readable を重点観測し、この
 
 Issue #32 のラウンドは、詳細な実況ではなく「どの種類の整理を行ったラウンドか」という観点で次のように読む。
 
-| Round | 主題 | 性質 | 現在の読み方 |
-|---|---|---|---|
-| 1 | section regroup | ordering-only | `content.js` を 7 セクションで読むための基準面 |
-| 2 | runtime observers move | physical move-only | Section 6 実装本体は `runtime-observers.js` 側 |
-| 3 | observer state capsule | private 化 | observer 内部 state は module private |
-| 4 | sync interval split trial | 試行 + rollback | Section 4 の責務境界整理ラウンド |
-| 5 | sync interval loading strategy | 設計確定 | `window.ATVB.createXxx` 前提の loading strategy 確定 |
-| 6 | sync interval physical split | physical split | Section 4 実装本体は `sync-interval-orchestrator.js` 側 |
-| 7 | secondary recovery observability | observability | resolver / binding / cue-readable 境界を重点観測する段階 |
-| 8 | secondary signal lane probe | observability + probe | resolver / binding / cuechange を観測しつつ、cue-readable 後段（DOM / overlay）に主因候補を渡すための切り分けラウンド |
+| Round | 主題                         | 性質                | 現在の読み方                                                                 |
+|-------|------------------------------|---------------------|------------------------------------------------------------------------------|
+| 1     | section regroup              | ordering-only       | `content.js` を 7 セクションで読むための基準面                              |
+| 2     | runtime observers move       | physical move-only  | Section 6 実装本体は `runtime-observers.js` 側                              |
+| 3     | observer state capsule       | private 化          | observer 内部 state は module private                                       |
+| 4     | sync interval split trial    | 試行 + rollback     | Section 4 の責務境界整理ラウンド                                            |
+| 5     | sync interval loading strategy | 設計確定          | `window.ATVB.createXxx` 前提の loading strategy 確定                         |
+| 6     | sync interval physical split | physical split      | Section 4 実装本体は `sync-interval-orchestrator.js` 側                     |
+| 7     | secondary recovery observability | observability   | resolver / binding / cue-readable 境界を重点観測する段階                    |
+| 8     | secondary signal lane probe  | observability + probe | resolver / binding / cuechange を観測しつつ、cue-readable 後段（DOM / overlay）に主因候補を渡すための切り分けラウンド |
 
 この表の目的は、ラウンドごとの詳細を記録することではなく、各ラウンドを「何のための整理だったか」という粒度で読み直せるようにすることにある。
 
@@ -246,7 +238,8 @@ cue-readable 層は、現在時刻で、その track から読める cue が存�
 
 代表的な実装は `getTrackActiveCuesLength(...)` / `hasCueOverlapAtTime(...)` / `getCurrentCue()` / `getCurrentCueText(...)` などであり、`activeCuesLength` や `hasCueOverlapAtCurrentTime` を基準に `cue readable` かどうかを判断する。  
 Apple TV+ の TextTrack 実装では、`activeCues` の更新タイミングと `getCurrentCue()` / `getCurrentCueText()` の戻り値が常に一致するとは限らず、短時間のあいだ「`currentCue` は読めているが `activeCuesLength` は 0」といった状態が存在しうる。  
-cue-readable 層の実装では、`getTrackActiveCuesLength(...)` 単独を truth source とするのではなく、`activeCues`、`currentCue` / `getCurrentCueText(...)`、SubtitleBlockSequence 側の sequenceHealth（current pair の alignment / missing secondary）を組み合わせて判断する設計とし、大シーク後の secondary missing についても `track found` と `cue unreadable` のズレを前提に読む。
+cue-readable 層の実装では、`getTrackActiveCuesLength(...)` 単独を truth source とするのではなく、`activeCues`、`currentCue` / `getCurrentCueText(...)`、SubtitleBlockSequence 側の sequenceHealth（current pair の alignment / missing secondary）を組み合わせて判断する設計とし、大シーク後の secondary missing についても `track found` と `cue unreadable` のズレを前提に読む。  
+また、代表的な large seek ケースでは、secondary TextTrack を `hidden` mode のまま扱うと cue unreadable となることがあり、debug 時に `showing` bind を試すことで cue-readable であることを確認している。
 
 ### 4.5 orchestration lane と signal lane
 
@@ -257,7 +250,6 @@ Issue #32 の split では、
 - cue-readable 層
 
 を secondary signal lane の API 境界として扱い、Section 4 はこれらを呼び出す orchestration lane として薄く保つ。
-
 これにより、「いつ recovery を走らせるか」と「どの track を bind し、その track から cue を読めるか」を分けて扱う。
 
 ---
