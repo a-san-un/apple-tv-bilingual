@@ -269,6 +269,36 @@ secondary sync / recovery に関するログは、orchestration lane / signal la
 
 意図として、orchestration lane 側では `secondary-sync resolver-selected` / `rebind-required` / `mode-apply ...` / `bind-result` などの節目ログのみを常設とし、secondary signal lane の詳細な観測（render-entry / cuechange-fired / cue-readable-snapshot）は DEBUG_SECONDARY_SUBS をオンにしたときの調査用レイヤーとして扱う。これにより、通常運用でのログノイズと payload 負荷を抑えつつ、Round 9 以降の representative case 調査では同じ観測粒度を再現できるようにしている。
 
+`### 4.7 lane common API 方針（Issue #32 の範囲）` を差し込む。
+
+[差し込み本文]
+
+### 4.7 lane common API 方針（Issue #32 の範囲）
+
+Issue #32 では、secondary sync を resolver / binding / cue-readable / orchestration の 4 層に分けて読む一方で、中長期の設計として primary / secondary 両方に共通する **subtitle lane 観測 API** を導入する方針を持つ。ただし、この lane common API は今ラウンドですべてを実装する対象ではなく、Section 4 の観測・切り分け結果を踏まえた「次フェーズの設計指針」として扱う。
+
+共通化の対象は、まず **lane ごとの runtime snapshot と readability 評価** に限定する。代表的には、`buildSubtitleLaneSnapshot({ lane, track, currentTime })` が `mode` / `cuesLength` / `activeCuesLength` / `currentCue` / `currentCueText` など TextTrack の runtime 状態を採取し、`evaluateSubtitleLaneReadability({ lane, snapshot, sequenceHealth })` がそれらを元に `readableNow` と `unreadableReason` を説明可能な形で返す helper として導入される。ここでの一次判定は runtime observation を基準とし、`sequenceHealth` は readableNow の truth source ではなく、unreadableReason の補助説明や recovery / mode policy の補助材料として使う。
+
+一方で、secondary の rescue policy 本体（`default-hidden + readability-promote` による showing 昇格、large seek window / repeated miss による recovery trigger、missCount 上限と termination 判定、Apple 標準字幕 UI との干渉評価、secondary fallback / merged assist の優先規則）は、当面 **secondary lane 固有責務**として維持する。代表的な large seek ケースでは、secondary を `hidden` mode のまま扱うと cue unreadable となり、debug 時に `showing` bind を試すことで cue-readable であることが確認されているが、この救済経路は primary lane の安定表示にはまだ不要であり、Issue #32 の範囲で全面 lane 共通 policy として押し上げるにはリスクが大きい。
+
+mode policy の entry point については、インターフェース名だけ lane 共通に揃える方向を採る。具体的には、`resolveTrackModePolicy({ lane, ... })` を共通 entry point としつつ、primary 側は常に `requestedMode: "showing"` を返す `primary-default` 分岐を持ち、secondary 側は既存の `resolveSecondaryTrackModePolicy(input)` を内部で呼び出す。
+
+```js
+function resolveTrackModePolicy(input) {
+  if (input.lane === "primary") {
+    return {
+      requestedMode: "showing",
+      policy: "primary-default",
+      rationale: "primary_track_visible",
+    };
+  }
+
+  return resolveSecondaryTrackModePolicy(input);
+}
+```
+
+この構成により、Issue #32 の期間中は interface 名のみ lane 共通にし、dangerous な差分（secondary の showing 昇格条件や Apple 標準字幕 UI との干渉評価）は secondary 実装に隔離できる。Section 4 の sync interval は、こうした lane observation / readability / mode policy への入口として薄い orchestrator を維持し、「いつ recovery を走らせるか」と「どの track を bind し、その track から cue を読めるか」を分けて読む役割に専念する。
+
 ---
 
 ## 5. Known Issue の切り分けラベル

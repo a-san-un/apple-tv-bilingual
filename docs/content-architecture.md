@@ -547,7 +547,30 @@ secondary recovery 候補は、runtime missing を lane state へ入れる条件
 - `shouldForceSecondaryRebind`
   - `shouldRecoverSecondary && sequence.consecutiveCurrentMissingSecondary`
 
-### 7.4 lane state
+### 7.4 lane observation / readability 共通 API方針
+
+secondary recovery の設計では、runtime first / merged assists / lane state という 3 層構造を採用しているが、`SubtitleBlockSequence` を唯一の truth source とする前提は維持する。  
+このため、primary / secondary それぞれの subtitle lane について、「いま runtime 上 readable かどうか」を評価する層を、truth の代替ではなく truth 前段の **lane observation 層**として正式に位置づける。
+
+lane observation 層は、TextTrack の runtime 状態を lane 共通 API で観測し、説明可能な形で `readableNow` と `unreadableReason` を返す責務を持つ。  
+代表的には、`buildSubtitleLaneSnapshot({ lane, track, currentTime })` が `mode` / `cuesLength` / `activeCuesLength` / `currentCue` / `currentCueText` を採取し、`evaluateSubtitleLaneReadability({ lane, snapshot, sequenceHealth })` がそれらを元に readable 状態を評価する。  
+ここでの一次判定は runtime observation を基準とし、`sequenceHealth` は readableNow の truth source ではなく、unreadableReason の補助説明や recovery / mode policy の補助材料として使う。
+
+設計上の境界として、lane observation / readability API は hidden / showing の切り替え判断、missCount、termination、force-rebind などの救済 policy 本体を持たない。  
+救済 policy 層は observation 結果を受けて、「いつ showing に昇格するか」「いつ rebind を試みるか」「いつ termination へ進むか」を決める責務とし、Apple TV+ 固有の挙動（large seek 後の secondary unreadable や Apple 標準字幕 UI との干渉）は主に secondary lane 側へ閉じ込める。  
+これにより、`SubtitleBlockSequence` を唯一の truth source としつつ、runtime observation / readability 判定を primary / secondary 共通の API へ寄せる一方で、secondary 固有の救済 policy を thin coordinator とは独立した層に保持できる。
+
+今後のリファクタでは、まず snapshot / readability を lane 共通 helper として導入し、secondary lane の unreadable 判定、rebind 判定、secondaryRecovery の入力材料をこのレイヤーへ集約する。  
+そのうえで、mode policy entry point を `resolveTrackModePolicy({ lane, ... })` のような共通インターフェースへ揃えつつ、dangerous な差分（`default-hidden + readability-promote` による showing 昇格や Apple 標準字幕 UI との干渉評価）は当面 secondary lane 固有の実装に留める。  
+`content.js` はこの lane common API を呼び出す thin coordinator として、truth / lane / UI の三層をつなぐ役割のみに専念する。
+
+[補足]
+この追加に合わせて、`### 9.2 binder / cue logic` の方針 bullets にも
+次の 1 行を足すと文書全体の接続がさらに分かりやすい。
+
+- primary / secondary の runtime cue 観測は lane observation / readability helper を通して集約し、救済 policy と分離して扱う
+
+### 7.5 lane state
 
 recovery の実行状態は lane state で持つ。
 
@@ -579,7 +602,7 @@ secondary lane の評価は概ね次の順で進める。
 5. 閾値超過後、`derived.*` を補助条件として見て `recover` または `force-rebind` を決める
 6. `missCount` が上限を超えたら `terminated` に移行する
 
-### 7.5 large seek 方針
+### 7.6 large seek 方針
 
 large seek 時は、secondary recovery を **miss limit 付きの runtime retry** として扱う。
 
@@ -590,7 +613,7 @@ large seek 時は、secondary recovery を **miss limit 付きの runtime retry*
 - 打ち切り後は `terminated` として primary-only 表示へ切り替える
 - `terminated` は次 block または新しい seek で reset されうる
 
-### 7.6 現行採用パラメータ
+### 7.7 現行採用パラメータ
 
 現行運用値は次のとおり。
 
@@ -607,7 +630,7 @@ large seek 時は、secondary recovery を **miss limit 付きの runtime retry*
 - miss limit 8 回
   - 無限 retry を避けつつ、戻るケースには複数回の再挑戦を許す
 
-### 7.7 Runtime First 方針
+### 7.8 Runtime First 方針
 
 secondary recovery の基本方針は **Runtime First** とする。
 
@@ -618,7 +641,7 @@ secondary recovery の基本方針は **Runtime First** とする。
 
 この方針により、large seek 後に runtime missing が継続しているのに、derived の揺れだけで recovery が遅延・停止することを避ける。
 
-### 7.8 large seek 直後の truth 保護
+### 7.9 large seek 直後の truth 保護
 
 large seek 直後は、secondary sync 後に **近傍 truth rebuild** と **short-lived hold** を許す。
 
@@ -628,7 +651,7 @@ large seek 直後は、secondary sync 後に **近傍 truth rebuild** と **shor
 - hold / guard は latest-only とし、新しい nearby rebuild が来たら古い保護は上書きする
 - hold は次の `onPrimaryCueChange()` で 1 回だけ使い、その後は通常の truth 解決に戻す
 
-### 7.9 通常再生時の hold 制御
+### 7.10 通常再生時の hold 制御
 
 hold / rebuild 系の保護は large seek 向けの補助手段であり、通常再生時の常用ロジックにはしない。
 
@@ -636,7 +659,7 @@ hold / rebuild 系の保護は large seek 向けの補助手段であり、通�
 - 一時停止中や通常 cue 進行中に hold が overlay の短表示やちらつき原因にならないようにする
 - large seek 用の強い保護と、通常再生用の軽い安定化は分けて扱う
 
-### 7.10 Known Issue 境界
+### 7.11 Known Issue 境界
 
 拡張側で担保する範囲は次のとおり。
 
