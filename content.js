@@ -612,7 +612,7 @@
         "",
     };
 
-    if (DEBUGSECONDARYSUBS) {
+    if (DEBUG_SECONDARY_SUBS) {
       logContent("secondary-dom ensure-start", {
         existingElementCount: getSecondarySubtitleElements().length,
         hasDialogEl: Boolean(state.dialogEl),
@@ -635,7 +635,7 @@
         allExisting[i].remove();
       }
 
-      if (DEBUGSECONDARYSUBS) {
+      if (DEBUG_SECONDARY_SUBS) {
         logContent(
           "secondary duplicate elements cleaned",
           getSecondaryRenderLogPayload(
@@ -655,7 +655,7 @@
 
     const panelHost = getOrCreatePanelHost();
 
-    if (DEBUGSECONDARYSUBS) {
+    if (DEBUG_SECONDARY_SUBS) {
       logContent("secondary-dom host-resolved", {
         hasPanelHost: Boolean(panelHost),
         existingElementCount: getSecondarySubtitleElements().length,
@@ -673,7 +673,7 @@
 
     findSecondarySubtitlePanel(panelHost);
 
-    if (DEBUGSECONDARYSUBS) {
+    if (DEBUG_SECONDARY_SUBS) {
       logContent("secondary-dom create-element", {
         hasPanelHost: Boolean(panelHost),
         panelHasShadowRoot: Boolean(panelHost?.shadowRoot),
@@ -687,7 +687,7 @@
     el.slot = "secondary-subtitle-slot";
     panelHost.appendChild(el);
 
-    if (DEBUGSECONDARYSUBS) {
+    if (DEBUG_SECONDARY_SUBS) {
       logContent("secondary element ensured");
     }
 
@@ -698,7 +698,7 @@
   // secondary subtitle の描画は、要素確保 → cue text 解決 → idle clear 判定 →
   // text / language 反映、の順で行う。
   function renderSecondarySubtitle(text, track) {
-    if (DEBUGSECONDARYSUBS) {
+    if (DEBUG_SECONDARY_SUBS) {
       logContent("secondary-dom render-entry", {
         textLength: String(text || "").length,
         trackLanguage: track?.language || "",
@@ -715,7 +715,7 @@
 
     const elementCountBefore = countSecondarySubtitleElements();
     if (elementCountBefore > 1) {
-      if (DEBUGSECONDARYSUBS) {
+      if (DEBUG_SECONDARY_SUBS) {
         logContent(
           "secondary duplicate elements cleaned",
           getSecondaryRenderLogPayload(text, track, elementCountBefore),
@@ -725,7 +725,7 @@
     }
 
     if (!el) {
-      if (DEBUGSECONDARYSUBS) {
+      if (DEBUG_SECONDARY_SUBS) {
         logContent("secondary element missing, recreating");
       }
       el = ensureSecondarySubtitleElement();
@@ -738,7 +738,7 @@
     let resolvedText = text || "";
     if (!resolvedText && activeCuesLength > 0) {
       resolvedText = getCurrentCueText(track) || "";
-      if (DEBUGSECONDARYSUBS) {
+      if (DEBUG_SECONDARY_SUBS) {
         logContent(
           "secondary cue text resolved",
           getSecondaryRenderLogPayload(resolvedText, track, elementCount),
@@ -758,14 +758,14 @@
       !finalText &&
       !!lastSecondaryText &&
       lastSecondarySignalAt > 0 &&
-      now - lastSecondarySignalAt <= SECONDARYSUBTITLEIDLECLEARMS;
+      now - lastSecondarySignalAt <= SECONDARY_SUBTITLE_IDLE_CLEAR_MS;
 
     if (finalText) {
       lastSecondaryText = finalText;
       lastSecondaryTextAt = now;
     } else if (willRetainPreviousText) {
       finalText = lastSecondaryText;
-      if (DEBUGSECONDARYSUBS) {
+      if (DEBUG_SECONDARY_SUBS) {
         logContent(
           "secondary subtitle retained until next cue or idle clear",
           getSecondaryRenderLogPayload(finalText, track, elementCount),
@@ -774,9 +774,9 @@
     } else if (
       !finalText &&
       lastSecondarySignalAt > 0 &&
-      now - lastSecondarySignalAt > SECONDARYSUBTITLEIDLECLEARMS
+      now - lastSecondarySignalAt > SECONDARY_SUBTITLE_IDLE_CLEAR_MS
     ) {
-      if (el.textContent && DEBUGSECONDARYSUBS) {
+      if (el.textContent && DEBUG_SECONDARY_SUBS) {
         logContent(
           "secondary subtitle cleared after idle timeout",
           getSecondaryRenderLogPayload("", track, elementCount),
@@ -787,7 +787,7 @@
       lastSecondarySignalAt = 0;
     }
 
-    if (DEBUGSECONDARYSUBS) {
+    if (DEBUG_SECONDARY_SUBS) {
       logContent("secondary-dom render-final", {
         resolvedTextLength: String(resolvedText || "").length,
         finalTextLength: String(finalText || "").length,
@@ -798,7 +798,7 @@
       });
     }
 
-    if (DEBUGSECONDARYSUBS) {
+    if (DEBUG_SECONDARY_SUBS) {
       logContent(
         "secondary render called",
         getSecondaryRenderLogPayload(finalText, track, elementCount),
@@ -807,7 +807,7 @@
 
     el.textContent = finalText;
     el.dataset.language = track?.language || "";
-    if (DEBUGSECONDARYSUBS) {
+    if (DEBUG_SECONDARY_SUBS) {
       logContent("secondary-dom render-applied", {
         appliedTextLength: String(el.textContent || "").length,
         appliedLanguage: el.dataset.language || "",

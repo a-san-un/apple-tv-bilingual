@@ -258,17 +258,58 @@
       secondaryTrackBound = null;
     }
 
-    // secondary bind 時に適用する track.mode を決める。
-    // Patch 3: hidden で cue が読めない可能性を切るため、
-    // debug 時だけ showing を試せるようにする。
-    function resolveSecondaryTrackModeForBind(track) {
-      if (!track) return "hidden";
-
-      if (DEBUG_SECONDARY_SUBS) {
-        return "showing";
+    // secondary bind 時の mode を、実行文脈と readable snapshot から決定する。
+    // Round 10:
+    // - 既定は hidden
+    // - same track / unreadable snapshot 成立時だけ showing へ readability-promote する
+    // - DEBUG 時は showing を強制できる
+    function resolveSecondaryTrackModePolicy({
+      track,
+      reason,
+      debugForceShowing = false,
+      allowShowing = true,
+      unreadableSnapshot = null,
+    }) {
+      if (!track) {
+        return {
+          requestedMode: "hidden",
+          policy: "no-track",
+          rationale: "track_missing",
+          reason: reason || "unknown",
+        };
       }
 
-      return "hidden";
+      if (debugForceShowing) {
+        return {
+          requestedMode: "showing",
+          policy: "debug-force-showing",
+          rationale: "debug_override",
+          reason: reason || "unknown",
+        };
+      }
+
+      const unreadable =
+        unreadableSnapshot &&
+        unreadableSnapshot.cuesLength > 0 &&
+        unreadableSnapshot.activeCuesLength === 0 &&
+        !unreadableSnapshot.hasCueOverlapAtCurrentTime &&
+        unreadableSnapshot.currentCueTextLength === 0;
+
+      if (allowShowing && unreadable) {
+        return {
+          requestedMode: "showing",
+          policy: "readability-promote",
+          rationale: "same_track_unreadable_in_hidden_mode",
+          reason: reason || "unknown",
+        };
+      }
+
+      return {
+        requestedMode: "hidden",
+        policy: "default-hidden",
+        rationale: "no_readability_issue_detected",
+        reason: reason || "unknown",
+      };
     }
 
     // secondary cue change を受けて secondary 表示と primary 側更新を進める。
@@ -307,14 +348,15 @@
     }
 
     // secondary track を bind して cuechange 監視を始める。
-    function bindSecondarySubtitleTrack(track) {
+    // mode の決定は呼び出し側で行い、ここでは mode 適用 + listener attach / cleanup のみを担う。
+    function bindSecondarySubtitleTrack(track, modeDecision) {
       if (!track) return;
 
       const previousBoundTrack = secondaryTrackBound;
       unbindSecondarySubtitleTrack();
 
       const previousMode = track?.mode || "";
-      const requestedMode = resolveSecondaryTrackModeForBind(track);
+      const requestedMode = modeDecision?.requestedMode || "hidden";
 
       try {
         track.mode = requestedMode;
@@ -324,6 +366,9 @@
           trackKind: track?.kind || "",
           requestedMode,
           previousMode,
+          policy: modeDecision?.policy || "",
+          rationale: modeDecision?.rationale || "",
+          decisionReason: modeDecision?.reason || "",
           message: String(error?.message || error || ""),
         });
       }
@@ -333,6 +378,9 @@
         trackKind: track?.kind || "",
         requestedMode,
         appliedMode: track?.mode || "",
+        policy: modeDecision?.policy || "",
+        rationale: modeDecision?.rationale || "",
+        decisionReason: modeDecision?.reason || "",
         cuesLength: getTrackCuesLength(track),
         activeCuesLength: getTrackActiveCuesLength(track),
         sameAsPreviousBound: previousBoundTrack === track,
@@ -344,6 +392,9 @@
           trackLanguage: track?.language || "",
           trackKind: track?.kind || "",
           trackMode: track?.mode || "",
+          policy: modeDecision?.policy || "",
+          rationale: modeDecision?.rationale || "",
+          decisionReason: modeDecision?.reason || "",
           cuesLength: getTrackCuesLength(track),
           activeCuesLength: getTrackActiveCuesLength(track),
           sameAsPreviousBound: previousBoundTrack === track,
@@ -435,6 +486,9 @@
           trackLanguage: track?.language || "",
           trackKind: track?.kind || "",
           trackMode: track?.mode || "",
+          policy: modeDecision?.policy || "",
+          rationale: modeDecision?.rationale || "",
+          decisionReason: modeDecision?.reason || "",
           message: String(error?.message || error || ""),
         });
         return;
@@ -452,6 +506,9 @@
         trackLanguage: track?.language || "",
         trackKind: track?.kind || "",
         trackMode: track?.mode || "",
+        policy: modeDecision?.policy || "",
+        rationale: modeDecision?.rationale || "",
+        decisionReason: modeDecision?.reason || "",
         cuesLength: getTrackCuesLength(track),
         activeCuesLength: getTrackActiveCuesLength(track),
         boundTrackExists: Boolean(secondaryTrackBound),
@@ -544,12 +601,19 @@
         return;
       }
 
+      const unreadableSnapshot = {
+        cuesLength: resolvedTrackCuesLength,
+        activeCuesLength: resolvedTrackActiveCuesLength,
+        hasCueOverlapAtCurrentTime: Boolean(resolvedTrackCurrentCue),
+        currentCueTextLength: resolvedTrackCurrentCueText.length,
+      };
+
       const shouldRebindBecauseUnreadable =
         sameTrackRef &&
-        resolvedTrackCuesLength > 0 &&
-        resolvedTrackActiveCuesLength === 0 &&
-        !resolvedTrackCurrentCue &&
-        !resolvedTrackCurrentCueText;
+        unreadableSnapshot.cuesLength > 0 &&
+        unreadableSnapshot.activeCuesLength === 0 &&
+        !unreadableSnapshot.hasCueOverlapAtCurrentTime &&
+        unreadableSnapshot.currentCueTextLength === 0;
 
       if (shouldRebindBecauseUnreadable) {
         logContent("secondary-sync rebind-required", {
@@ -567,8 +631,41 @@
         });
       }
 
-      if (secondaryTrackBound !== track || forceRebind || shouldRebindBecauseUnreadable) {
-        bindSecondarySubtitleTrack(track);
+      const modeDecision = resolveSecondaryTrackModePolicy({
+        track,
+        reason: forceRebind
+          ? "forceRebind"
+          : shouldRebindBecauseUnreadable
+            ? "sameTrackUnreadable"
+            : "syncSecondarySubtitleTrack",
+        debugForceShowing: DEBUG_SECONDARY_SUBS,
+        allowShowing: true,
+        unreadableSnapshot,
+      });
+
+      if (modeDecision.policy === "readability-promote") {
+        logContent("secondary-sync mode-policy readability-promote", {
+          requestedLang: requestedLang || "",
+          currentTime,
+          sameTrackRef,
+          forceRebind,
+          trackLanguage: track?.language || "",
+          trackKind: track?.kind || "",
+          trackModeBefore: track?.mode || "",
+          requestedMode: modeDecision.requestedMode,
+          policy: modeDecision.policy,
+          rationale: modeDecision.rationale,
+          decisionReason: modeDecision.reason,
+          unreadableSnapshot,
+        });
+      }
+
+      if (
+        secondaryTrackBound !== track ||
+        forceRebind ||
+        shouldRebindBecauseUnreadable
+      ) {
+        bindSecondarySubtitleTrack(track, modeDecision);
         rebuildCurrentSceneSubtitleBlocks();
         return;
       }
