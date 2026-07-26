@@ -132,6 +132,10 @@ Issue #32 では、Section 4 の secondary sync など個別ラウンドごと�
 個別ラウンド（例: Section 4 secondary recovery）のバグ調査・修正そのものは、
 representative case を起点とした観測と、原因層の切り分けを優先する。
 
+ただし、Section 4 後半およびその周辺（cue-readable / secondary subtitle DOM / initial cue recovery / overlay / fallback）では、
+「1〜2 手の small change」に限定せず、
+representative case の解消に必要であれば複数ファイルにまたがる構造変更や責務移送も候補として扱う。
+
 large seek 後の Known Issue については、特に
 
 - primary は出ているが secondary が復帰せず、2字幕が揃わない状態（primary のみ表示）
@@ -186,7 +190,8 @@ Round 8 では、`resolveSecondarySubtitleTrack()`、`syncSecondarySubtitleTrack
 
 Round 8 の representative case では、secondary track が `track found`（`label / language` / `cuesLength > 0` / currentTime での overlap あり）であり、binding 層でも cuechange listener が少なくとも 1 回以上発火している一方で、`secondaryActiveCuesLengthAfter: 0` が継続することが観測された。  
 このことから、「resolver / binding / cuechange の 1〜2 手だけでは representative case を倒しきれず、cue-readable 層および secondary subtitle DOM / initial cue recovery / overlay 側の設計に踏み込む必要がある」という現在位置にいると整理する。  
-Round 8 では resolver → binding → cue-readable を重点観測し、この切り分けまでを Section 4 のスコープとし、以降のラウンドでは cue-readable 後段（DOM / overlay / fallback）を主戦場として扱う。
+Round 8 では resolver → binding → cue-readable を重点観測し、この切り分けまでを Section 4 前半のスコープとする。  
+以降のラウンドでは cue-readable 後段（secondary subtitle DOM / initial cue recovery / overlay / fallback）を主戦場とし、small change に限定しない構造変更や責務整理も扱う。
 
 ---
 
@@ -203,7 +208,7 @@ Issue #32 のラウンドは、詳細な実況ではなく「どの種類の整�
 | 5 | sync interval loading strategy | 設計確定 | `window.ATVB.createXxx` 前提の loading strategy 確定 |
 | 6 | sync interval physical split | physical split | Section 4 実装本体は `sync-interval-orchestrator.js` 側 |
 | 7 | secondary recovery observability | observability | resolver / binding / cue-readable 境界を重点観測する段階 |
-| 8 | secondary signal lane probe | observability + small change | resolver / binding / cuechange を観測しつつ、小さな rebind 条件を試すラウンド |
+| 8 | secondary signal lane probe | observability + probe | resolver / binding / cuechange を観測しつつ、cue-readable 後段（DOM / overlay）に主因候補を渡すための切り分けラウンド |
 
 この表の目的は、ラウンドごとの詳細を記録することではなく、各ラウンドを「何のための整理だったか」という粒度で読み直せるようにすることにある。
 
@@ -310,10 +315,12 @@ secondary sync / recovery に関するログの message prefix は `secondary-sy
 - Round 5 は content script 向け module loading strategy / 依存注入境界 / 公開 API の確定ラウンドとして扱う
 - Round 6 は Section 4 の physical split 完了ラウンドとして扱い、既存 Known Issue の解消とは分けて扱う
 - Round 7 は secondary recovery の observability 強化ラウンドとして扱い、挙動変更とは分けて扱う
-- Round 8 は secondary signal lane（resolver / binding / cue-readable）の観測と、小さな挙動変更の試行ラウンドとして扱う
+- Round 8 は secondary signal lane（resolver / binding / cue-readable）の観測と、small change による probe を行うラウンドとして扱う
+- Round 9 以降は、cue-readable 後段（secondary subtitle DOM / initial cue recovery / overlay / fallback）について、必要に応じて複数ファイルにまたがる構造変更や責務移送も許容し、small change に限定しない
 
 ### 6.3 設計変更とログ追加の分離
 
 - 行数削減や `node --check` の通過より重要なのは、**責務が正しい場所へ移っていること**である
 - 設計変更とログ追加は、常に別の commit / ラウンドとして扱う
+- Section 4 後半〜後続ラウンドでは、representative case の解消に必要であれば、small change に限定せず構造変更や責務移送を優先してよい
 - Known Issue の記録では、`track found` / `cue unreadable` / `signal missing` の語彙を使い、原因を resolver / binding / cue-readable / orchestration のどこに置くべきかを意識する
