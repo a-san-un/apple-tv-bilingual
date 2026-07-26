@@ -18,6 +18,7 @@
 - `content.js` の 7 セクション設計
 - Section 4 / Section 6 を含む、各セクションの正本の読み方
 - secondary sync の責務境界
+- secondary subtitle DOM / initial cue recovery の設計方針
 - Known Issue の切り分けラベル
 - ラウンドごとの意味づけの要約
 
@@ -38,14 +39,14 @@
 
 文書の分担は次のように整理する。
 
-- `docs/content-architecture.md`
-  - content 層全体の設計正本
-- `docs/issue-32-content-core-split.md`
-  - Issue #32 における `content.js` 分割方針の正本
-- `docs/ai-session-templates.md`
-  - AI セッション運用テンプレート
-- `docs/archive/issue-32-content-core-split-archive.md`
-  - 過去ラウンドの詳細記録、実況、観測ログの保管先
+- `docs/content-architecture.md`  
+  content 層全体の設計正本
+- `docs/issue-32-content-core-split.md`  
+  Issue #32 における `content.js` 分割方針の正本
+- `docs/ai-session-templates.md`  
+  AI セッション運用テンプレート
+- `docs/archive/issue-32-content-core-split-archive.md`  
+  過去ラウンドの詳細記録、実況、観測ログの保管先
 
 ---
 
@@ -81,83 +82,65 @@ Issue #32 開始時点の `content.js` は、次のような構造的要因に�
 
 - state の中央集権:
   - ファイル冒頭に巨大な `state` オブジェクトがあり、DOM 参照、タイマー ID 群、字幕履歴、UI の表示フラグなど多くのフィールドを一括で保持している。
-  - 各 module へ処理を委譲しても、データの所有権が `content.js` に残っているため、
-    「state から値を読み出して module に渡し、結果をまた state に書き戻す」配線コードが `content.js` 側に集中しやすい。
+  - 各 module へ処理を委譲しても、データの所有権が `content.js` に残っているため、「state から値を読み出して module に渡し、結果をまた state に書き戻す」配線コードが `content.js` 側に集中しやすい。
 
 - bridge 関数（ラッパー）の fat 化:
-  - ログ出力や controller 呼び出しのための bridge 関数（例: `logContent(...)` 相当、secondary sync 向けの helper 群）が、
-    単なる 1 行の委譲ではなく、payload 構築、バッファ管理、条件分岐などのロジックを内包している。
+  - ログ出力や controller 呼び出しのための bridge 関数（例: `logContent(...)` 相当、secondary sync 向けの helper 群）が、単なる 1 行の委譲ではなく、payload 構築、バッファ管理、条件分岐などのロジックを内包している。
   - このため「module を呼ぶだけ」のつもりだった箇所が、実際には 10〜数十行規模の処理になり、`content.js` に残り続ける。
 
 - 命令型シーケンスと UI 具現化の残留:
   - observer が変化を検知したときの「A を呼んで、結果に応じて B を更新し、C を再描画する」といった具体的な手順書が、`content.js` 側に記述されている。
-  - popup や辞書表示など、一部の UI コンポーネントは module ではなく `content.js` 後半に残っており、
-    DOM 操作とイベントバインドを直接含むクロージャとして存在している。
+  - popup や辞書表示など、一部の UI コンポーネントは module ではなく `content.js` 後半に残っており、DOM 操作とイベントバインドを直接含むクロージャとして存在している。
 
-これらの要因により、module へのロジック移送を進めても、state 配線や手続き記述が `content.js` に残りやすく、
-結果として「物理ファイルとしては分割されているが、論理的には fat なエントリーポイント」の状態になっている。
+これらの要因により、module へのロジック移送を進めても、state 配線や手続き記述が `content.js` に残りやすく、結果として「物理ファイルとしては分割されているが、論理的には fat なエントリーポイント」の状態になっている。
 
 ### 2.4 今後の改善方針（設計原則レベル）
 
-Issue #32 では、Section 4 の secondary sync など個別ラウンドごとの不具合切り分けと並行して、
-`content.js` をより thin coordinator に近づけるため、次の方向性を設計原則として持つ。
+Issue #32 では、Section 4 の secondary sync など個別ラウンドごとの不具合切り分けと並行して、`content.js` をより thin coordinator に近づけるため、次の方向性を設計原則として持つ。
 
 - state 所有権の分散とカプセル化:
-  - timer 系、subtitle history 系、UI 表示状態などを、それぞれの controller / store / UI module が自前で管理できるようにし、
-    `content.js` の `state` は「起動時の初期配線」と「最小限の共有コンテキスト」のみに縮小する。
-  - 具体的には、`timerState`・`subtitleState`・`uiState` といった粒度での state オブジェクト分割を中長期の候補とし、
-    各 module の関心事と一致する単位に state を寄せていく。
+  - timer 系、subtitle history 系、UI 表示状態などを、それぞれの controller / store / UI module が自前で管理できるようにし、`content.js` の `state` は「起動時の初期配線」と「最小限の共有コンテキスト」のみに縮小する。
+  - 具体的には、`timerState`・`subtitleState`・`uiState` といった粒度での state オブジェクト分割を中長期の候補とし、各 module の関心事と一致する単位に state を寄せていく。
 
 - bridge / helper の薄化:
-  - `content.js` に残る bridge 関数や helper は、「module への 1 行の委譲」を基本形とし、
-    payload の構築や条件分岐といったロジックは module 側へ寄せる。
+  - `content.js` に残る bridge 関数や helper は、「module への 1 行の委譲」を基本形とし、payload の構築や条件分岐といったロジックは module 側へ寄せる。
   - これにより、bridge は「責務境界の明示」と「呼び出し点の名前付け」のみに近づける。
 
 - イベント境界の限定的な導入:
-  - すべてを Pub/Sub 化するのではなく、secondary sync や subtitle history 更新など、
-    一部の責務境界に限って `CustomEvent` / observer パターンを用い、
-    module 間の結合を「状態共有」から「変化通知」に寄せる。
-  - event-driven 化の対象は、debug / log / playback observer など、
-    既に「イベント」という概念で読んでいる層に限定し、全体を event bus で覆うことはこの Issue の範囲外とする。
+  - すべてを Pub/Sub 化するのではなく、secondary sync や subtitle history 更新など、一部の責務境界に限って `CustomEvent` / observer パターンを用い、module 間の結合を「状態共有」から「変化通知」に寄せる。
+  - event-driven 化の対象は、debug / log / playback observer など、既に「イベント」という概念で読んでいる層に限定し、全体を event bus で覆うことはこの Issue の範囲外とする。
 
 - fallback / popup / state ownership の構造改善:
   - `getPlaybackContext` などの fallback 実装を見直し、必要に応じて module 必須化（fail-open / fail-soft 方針の再設計）を検討する。
-  - `createLanguageSetupNotice` や辞書連携などの popup / overlay 系 UI を、
-    `content.js` から独立した UI module として切り出す。
-  - shared state（巨大な `state` オブジェクト）に集約されている ownership を、
-    timer / subtitle / UI といったドメインごとに module 側へ移していく。
+  - `createLanguageSetupNotice` や辞書連携などの popup / overlay 系 UI を、`content.js` から独立した UI module として切り出す。
+  - shared state（巨大な `state` オブジェクト）に集約されている ownership を、timer / subtitle / UI といったドメインごとに module 側へ移していく。
 
-これらはあくまで中長期の設計指針であり、
-個別ラウンド（例: Section 4 secondary recovery）のバグ調査・修正そのものは、
-representative case を起点とした観測と、原因層の切り分けを優先する。
+これらはあくまで中長期の設計指針であり、個別ラウンド（例: Section 4 secondary recovery）のバグ調査・修正そのものは、representative case を起点とした観測と、原因層の切り分けを優先する。
 
-ただし、Section 4 後半およびその周辺（cue-readable / secondary subtitle DOM / initial cue recovery / overlay / fallback）では、
-「1〜2 手の small change」に限定せず、
-representative case の解消に必要であれば複数ファイルにまたがる構造変更や責務移送も候補として扱う。
+ただし、Section 4 後半およびその周辺（cue-readable / secondary subtitle DOM / initial cue recovery / overlay / fallback）では、「1〜2 手の small change」に限定せず、representative case の解消に必要であれば複数ファイルにまたがる構造変更や責務移送も候補として扱う。
 
 large seek 後の Known Issue については、特に
 
-- primary は出ているが secondary が復帰せず、2字幕が揃わない状態（primary のみ表示）
+- primary は出ているが secondary が復帰せず、2 字幕が揃わない状態（primary のみ表示）
 
-を代表的な現象として読み、この状態を解消するための secondary resolver / binding / cue-readable 境界の整理と、
-上記の構造改善（fallback 整理・popup 切り出し・state 分散・Thin Coordinator 化）を組み合わせて進める。
+を代表的な現象として読み、この状態を解消するための secondary resolver / binding / cue-readable 境界の整理と、上記の構造改善（fallback 整理・popup 切り出し・state 分散・Thin Coordinator 化）を組み合わせて進める。
 
 ### 2.5 各セクションの役割
 
-- **Section 1: Logger & Debug Bridge**
-  - logger / debug panel への橋渡しと payload 正規化を扱う
-- **Section 2: Playback Context Bridge**
-  - playback DOM / textTrack から context を検出し、content 切替の入口を扱う
-- **Section 3: UI: Secondary Subtitle DOM**
-  - secondary subtitle element / panel host の確保と描画入口を扱う
-- **Section 4: Sync Interval: Periodic Orchestration**
-  - sync interval の scheduling、orchestration 順制御、recovery 起動判断の入口を扱う
-- **Section 5: Layout: Playback Controls Adjustment**
-  - controls の位置・幅・translate 調整と layout retry の配線を扱う
-- **Section 6: Observer: Runtime Monitoring**
-  - mutation / resize / orientation / video change 監視の入口を扱う
-- **Section 7: Lifecycle: Boot & Teardown**
-  - boot / restart / teardown と、bind / initial snapshot / cleanup の入口を扱う
+- **Section 1: Logger & Debug Bridge**  
+  logger / debug panel への橋渡しと payload 正規化を扱う
+- **Section 2: Playback Context Bridge**  
+  playback DOM / textTrack から context を検出し、content 切替の入口を扱う
+- **Section 3: UI: Secondary Subtitle DOM**  
+  secondary subtitle element / panel host の確保と描画入口を扱う
+- **Section 4: Sync Interval: Periodic Orchestration**  
+  sync interval の scheduling、orchestration 順制御、recovery 起動判断の入口を扱う
+- **Section 5: Layout: Playback Controls Adjustment**  
+  controls の位置・幅・translate 調整と layout retry の配線を扱う
+- **Section 6: Observer: Runtime Monitoring**  
+  mutation / resize / orientation / video change 監視の入口を扱う
+- **Section 7: Lifecycle: Boot & Teardown**  
+  boot / restart / teardown と、bind / initial snapshot / cleanup の入口を扱う
 
 ### 2.6 Section 4 / Section 6 の正本
 
@@ -185,22 +168,42 @@ large seek 後 secondary missing の既知問題については、主因候補�
 
 Round 9 では、cue-readable 層の観測と局所修正により、`hidden` mode の secondary TextTrack が代表ケースで cue unreadable を引き起こしていたことを確認し、debug 時に `showing` mode で bind することで secondary signal を復帰させた。このため、代表ケースに関しては primary cause を cue-readable 層の mode / 可読性側に置き、以降のラウンドでは secondary subtitle DOM / initial cue recovery / overlay / fallback といった cue-readable 後段の設計・責務分割、および mode 方針と Apple 標準字幕 UI との干渉評価を進める。
 
+Round 10 では、Round 9 の debug 観測結果を踏まえ、secondary lane の mode 方針として次を採用した。
+
+- 通常時は `mode: "hidden"` を維持する。
+- ただし、same track に対する unreadable snapshot（`activeCuesLength = 0` / `currentCueTextLength = 0` / overlap なし 等）が成立した場合に限り、`readability-promote` policy として `requestedMode: "showing"` へ昇格させる。
+
+この `default hidden + conditional readability-promote` 方針は、`DEBUG_SECONDARY_SUBS = false` の状態で representative case に対して、
+
+- `secondary-sync rebind-required (reason:"sameTrackButUnreadableAtCurrentTime")`
+- `secondary-sync mode-policy readability-promote (policy:"readability-promote", requestedMode:"showing")`
+- `secondary-sync mode-applied (policy:"readability-promote", requestedMode:"showing")`
+- `secondary-sync bind-result (policy:"readability-promote", trackMode:"showing")`
+
+が成立することをログで確認し、字幕パネル / overlay 双方で 2 字幕が揃うことを目視確認した上で採用している。  
+Apple 標準字幕 UI は secondary track の `showing` により ON になるが、代表ケースの解消を優先し、本方針の副作用として当面は許容する。
+
+Round 10 の補助調査では、representative case の主戦場を引き続き secondary cue-readable layer に置いたまま、secondary subtitle DOM の責務分離と initial cue recovery の断面整理を次段の設計課題として扱う。  
+`content.js` は orchestration と module wiring に留め、secondary subtitle DOM の host / element / render / clear は独立 UI module へ移送する方針を採る。また initial cue recovery は attach 直後・rebind 直後・large seek 直後の 3 断面で分けて扱い、共通化するのは lane snapshot / readability / mode policy API に限定し、各断面では「最初の readable snapshot と initial render / signal delivery完了まで」を initial cue recovery と定義する。
+
 ---
 
 ## 3. ラウンドサマリ表
 
 Issue #32 のラウンドは、詳細な実況ではなく「どの種類の整理を行ったラウンドか」という観点で次のように読む。
 
-| Round | 主題                         | 性質                | 現在の読み方                                                                 |
-|-------|------------------------------|---------------------|------------------------------------------------------------------------------|
-| 1     | section regroup              | ordering-only       | `content.js` を 7 セクションで読むための基準面                              |
-| 2     | runtime observers move       | physical move-only  | Section 6 実装本体は `runtime-observers.js` 側                              |
-| 3     | observer state capsule       | private 化          | observer 内部 state は module private                                       |
-| 4     | sync interval split trial    | 試行 + rollback     | Section 4 の責務境界整理ラウンド                                            |
-| 5     | sync interval loading strategy | 設計確定          | `window.ATVB.createXxx` 前提の loading strategy 確定                         |
-| 6     | sync interval physical split | physical split      | Section 4 実装本体は `sync-interval-orchestrator.js` 側                     |
-| 7     | secondary recovery observability | observability   | resolver / binding / cue-readable 境界を重点観測する段階                    |
-| 8     | secondary signal lane probe  | observability + probe | resolver / binding / cuechange を観測しつつ、cue-readable 後段（DOM / overlay）に主因候補を渡すための切り分けラウンド |
+| Round | 主題                             | 性質                     | 現在の読み方                                                                 |
+|-------|----------------------------------|--------------------------|------------------------------------------------------------------------------|
+| 1     | section regroup                  | ordering-only            | `content.js` を 7 セクションで読むための基準面                              |
+| 2     | runtime observers move           | physical move-only       | Section 6 実装本体は `runtime-observers.js` 側                              |
+| 3     | observer state capsule           | private 化               | observer 内部 state は module private                                       |
+| 4     | sync interval split trial        | 試行 + rollback          | Section 4 の責務境界整理ラウンド                                            |
+| 5     | sync interval loading strategy   | 設計確定                 | `window.ATVB.createXxx` 前提の loading strategy 確定                         |
+| 6     | sync interval physical split     | physical split           | Section 4 実装本体は `sync-interval-orchestrator.js` 側                     |
+| 7     | secondary recovery observability | observability            | resolver / binding / cue-readable 境界を重点観測する段階                    |
+| 8     | secondary signal lane probe      | observability + probe    | resolver / binding / cuechange を観測しつつ、cue-readable 後段（DOM / overlay）に主因候補を渡すための切り分けラウンド |
+| 9     | cue-readable mode probe          | observability + debug    | `hidden` mode secondary による cue unreadable を representative case で観測し、debug 用 `debug-force-showing` policy で secondary signal を復帰させるラウンド |
+| 10    | mode policy + DOM/recovery設計  | policy + design          | `default hidden + conditional readability-promote` を採用し、secondary subtitle DOM 責務移送と initial cue recovery 3 断面設計を docs レベルで整理するラウンド |
 
 この表の目的は、ラウンドごとの詳細を記録することではなく、各ラウンドを「何のための整理だったか」という粒度で読み直せるようにすることにある。
 
@@ -241,6 +244,15 @@ Apple TV+ の TextTrack 実装では、`activeCues` の更新タイミングと 
 cue-readable 層の実装では、`getTrackActiveCuesLength(...)` 単独を truth source とするのではなく、`activeCues`、`currentCue` / `getCurrentCueText(...)`、SubtitleBlockSequence 側の sequenceHealth（current pair の alignment / missing secondary）を組み合わせて判断する設計とし、大シーク後の secondary missing についても `track found` と `cue unreadable` のズレを前提に読む。  
 また、代表的な large seek ケースでは、secondary TextTrack を `hidden` mode のまま扱うと cue unreadable となることがあり、debug 時に `showing` bind を試すことで cue-readable であることを確認している。
 
+Round 10 では、この観測結果を前提に、secondary lane の mode 方針として次を採用した。
+
+- 通常時は `mode: "hidden"` を維持する。
+- ただし、same track に対する unreadable snapshot（`activeCuesLength = 0` / `currentCueTextLength = 0` / `hasCueOverlapAtCurrentTime = false` 等）が成立した場合に限り、`readability-promote` policy として `requestedMode: "showing"` へ昇格させる。
+
+この `default hidden + conditional readability-promote` 方針は、`DEBUG_SECONDARY_SUBS = false` の状態で representative case に対して、`secondary-sync mode-policy readability-promote` / `secondary-sync mode-applied (policy:"readability-promote", requestedMode:"showing")` を観測し、字幕パネル / overlay 双方で 2 字幕が揃うことを確認した上で採用されている。
+
+initial cue recovery との関係では、attach / rebind / large seek 各断面で「最初の readable snapshot と initial render / signal delivery完了まで」を initial フェーズとみなし、それ以降は periodic sync /長期 recovery policy に委ねる。
+
 ### 4.5 orchestration lane と signal lane
 
 Issue #32 の split では、
@@ -249,10 +261,10 @@ Issue #32 の split では、
 - binding 層
 - cue-readable 層
 
-を secondary signal lane の API 境界として扱い、Section 4 はこれらを呼び出す orchestration lane として薄く保つ。
+を secondary signal lane の API 境界として扱い、Section 4 はこれらを呼び出す orchestration lane として薄く保つ。  
 これにより、「いつ recovery を走らせるか」と「どの track を bind し、その track から cue を読めるか」を分けて扱う。
 
-### 4.6 secondary sync logging / DEBUG 層の扱い（Round 9）
+### 4.6 secondary sync logging / DEBUG 層の扱い（Round 9〜10）
 
 secondary sync / recovery に関するログは、orchestration lane / signal lane の切り分けに合わせて、常設ログと DEBUG 専用ログの 2 層に分けて運用する。
 
@@ -266,12 +278,10 @@ secondary sync / recovery に関するログは、orchestration lane / signal la
   - `secondary-sync mode-apply failed`
   - `secondary-sync mode-applied`
   - `secondary-sync bind-result`
+  - `secondary-sync mode-policy readability-promote`（Round 10 で追加）
 
-意図として、orchestration lane 側では `secondary-sync resolver-selected` / `rebind-required` / `mode-apply ...` / `bind-result` などの節目ログのみを常設とし、secondary signal lane の詳細な観測（render-entry / cuechange-fired / cue-readable-snapshot）は DEBUG_SECONDARY_SUBS をオンにしたときの調査用レイヤーとして扱う。これにより、通常運用でのログノイズと payload 負荷を抑えつつ、Round 9 以降の representative case 調査では同じ観測粒度を再現できるようにしている。
-
-`### 4.7 lane common API 方針（Issue #32 の範囲）` を差し込む。
-
-[差し込み本文]
+意図として、orchestration lane 側では `secondary-sync resolver-selected` / `rebind-required` / `mode-apply ...` / `bind-result` などの節目ログのみを常設とし、secondary signal lane の詳細な観測（render-entry / cuechange-fired / cue-readable-snapshot）は DEBUG_SECONDARY_SUBS をオンにしたときの調査用レイヤーとして扱う。  
+`secondary-sync mode-policy readability-promote` は、secondary lane の mode decision（`policy:"readability-promote"` / `decisionReason:"sameTrackUnreadable" or "forceRebind"` / `rationale:"same_track_unreadable_in_hidden_mode"` / `requestedMode:"showing"`）を可観測にするための常設寄りログとして扱い、Round 10 以降の representative case 調査では、このログを基準に policy 適用の有無を読む。
 
 ### 4.7 lane common API 方針（Issue #32 の範囲）
 
@@ -301,18 +311,133 @@ function resolveTrackModePolicy(input) {
 
 ---
 
+## 4.8 secondary subtitle DOM responsibility（設計方針）
+
+secondary subtitle DOM は panel / overlay / popup と分けて、Apple TV playback surface 上の live secondary text を描く UI shell として扱う。
+
+- `content.js` は render / clear の契機だけを決める。
+  - attach / rebind / sync interval / observer / settings change の orchestration。
+  - `cue-controller` / `sync-interval-orchestrator` / UI module の呼び出し順制御。
+  - lifecycle（起動・再起動・teardown）の入口。
+- host 発見・element 確保・text / visibility 更新・clear / detach は `secondary-subtitle-dom.js`（仮称）の責務とする。
+  - host / container の発見・生成。
+  - secondary subtitle element の lazy 初期化と再利用。
+  - text / class / empty state の更新。
+  - cleanup / detach / clear。
+
+設計上の境界は次の通りとする。
+
+- UI module は global `state` を直接読まない。`getTarget()` や host 参照、描画入力は引数で受け取る。
+- `cue-controller.js` から secondary DOM module を直叩きせず、原則 coordinator (`content.js`) 経由にする。
+- overlay / panel / popup と secondary subtitle DOM は UI surface を分離する。
+  - overlay は `UiSubtitleView` の current 表現。
+  - panel は `PanelBlock[]` の履歴表現。
+  - popup は語彙 UI。
+  - secondary subtitle DOM は「現在の secondary text と visible state」だけを受け取り、単独の playback surface 上テキストとして描画する。
+
+Round 11 の最初の物理切り出しは `getSecondarySubtitleElements`、`ensureSecondarySubtitleElement`、`renderSecondarySubtitle` を最小単位とし、これらを `secondary-subtitle-dom.js` に集約して `content.js` からはシンプルな DOM API として呼ぶ構造にする。
+
+---
+
+## 4.9 initial cue recovery design（attach / rebind / large seek）
+
+initial cue recovery は attach 直後・rebind 直後・large seek 直後の 3 断面で扱い、各断面で次を観測する。
+
+- `track found`
+- lane mode
+- `activeCuesLength`
+- `currentCue`
+- `currentCueText`
+- overlap の有無
+- panel / overlay / secondary DOM への signal delivery
+- Apple 標準字幕 UI の visible 状態（干渉評価の濃淡は断面ごとに変える）
+
+共通化する API は次の 3 つに限定する。
+
+```js
+function buildSubtitleLaneSnapshot({ lane, track, currentTime }) {
+  return {
+    lane,
+    mode: track?.mode ?? "",
+    cuesLength: getTrackCuesLength(track),
+    activeCuesLength: getTrackActiveCuesLength(track),
+    currentCue: getCurrentCue(track, currentTime),
+    currentCueText: getCurrentCueText(track, currentTime),
+  };
+}
+
+function evaluateSubtitleLaneReadability({ lane, snapshot, sequenceHealth }) {
+  const currentCueTextLength = cleanCueText(snapshot.currentCueText).length;
+  const hasCueOverlapAtCurrentTime = Boolean(snapshot.currentCue);
+
+  const readableNow =
+    snapshot.activeCuesLength > 0 ||
+    hasCueOverlapAtCurrentTime ||
+    currentCueTextLength > 0;
+
+  return {
+    lane,
+    readableNow,
+    currentCueTextLength,
+    hasCueOverlapAtCurrentTime,
+    unreadableReason: readableNow ? "" : "no_active_cue_no_text",
+    sequenceHealth,
+  };
+}
+
+function resolveTrackModePolicy({
+  lane,
+  reason,
+  snapshot,
+  readableStatus,
+  allowShowing,
+  debugForceShowing,
+}) {
+  if (lane === "primary") {
+    return {
+      requestedMode: "showing",
+      policy: "primary-default",
+      rationale: "primary_track_visible",
+    };
+  }
+
+  return resolveSecondaryTrackModePolicy({
+    reason,
+    snapshot,
+    readableStatus,
+    allowShowing,
+    debugForceShowing,
+  });
+}
+```
+
+recovery trigger の閾値や UI completion 条件、seek window 境界、Apple UI 干渉評価の濃淡は断面ごとに分けて保持し、lane common API の範囲外とする。
+
+initial cue recovery は「最初の readable snapshot と panel / overlay / secondary DOM への initial render / signal delivery完了まで」をフェーズとして定義し、それ以降は periodic sync /長期 recovery policy へ戻す。
+
+- attach 直後  
+  - primary / secondary laneに対し、一度 `track found` + readable snapshot を取得し、panel / overlay / secondary DOM の initial render / signal deliveryが成功した時点までを initial とする。
+- rebind 直後  
+  - rebind の結果、対象 lane に対して readable snapshot が一度成立し、overlay / panel / secondary DOM に対し current view / text の再描画が完了した時点までを initial とする。
+- large seek 直後  
+  - seek window内で、primary lane に対して readable snapshot が成立し、secondary laneに対しても readability-promote を含む recovery で readable snapshot を一度成立させ、overlay / panel / secondary DOM に対して current view / text が正常に描画された時点までを initial とする。
+
+large seek 直後は representative case の主戦場であるため、same-track unreadable snapshot が成立した secondary lane に対して readability-promote を優先適用し、Apple 標準字幕 UI との干渉評価もこの断面で集中的に行う。attach / rebind 断面では干渉評価は軽確認に留め、mode policy適用時の最低限の consistency check に限る。
+
+---
+
 ## 5. Known Issue の切り分けラベル
 
 ### 5.1 用語
 
 large seek 後の secondary 不調を読むため、この文書では現象を次の 3 語で表現する。
 
-- `track found`
-  - resolver が対象言語・kind の TextTrack を選定できている状態
-- `cue unreadable`
-  - currentTime に対して、その track から読める cue が得られていない状態
-- `signal missing`
-  - primary / secondary いずれかの字幕が panel / overlay / popup へ signal として流れていない状態
+- `track found`  
+  resolver が対象言語・kind の TextTrack を選定できている状態
+- `cue unreadable`  
+  currentTime に対して、その track から読める cue が得られていない状態
+- `signal missing`  
+  primary / secondary いずれかの字幕が panel / overlay / popup へ signal として流れていない状態
 
 Known Issue の記録では、`track not found` に短絡せず、この 3 語を組み合わせて現象を読む。
 
@@ -327,6 +452,8 @@ large seek 後に「メインは出るがサブが出ない」既知問題につ
 
 Known Issue を記録する際は、必ずどちらの系統かを明示する。  
 Round 8 の representative case で観測されたような、「`track found`（resolver）かつ `cue unreadable`（runtime 観測）であり、`secondary recovery trigger` が継続している」系統の現象は、A. Section 4 到達系の中でも secondary signal lane（resolver / binding / cue-readable）の設計課題として扱う。Section 4（orchestration lane）単体の条件変更ではなく、cue-readable 層および secondary subtitle DOM / initial cue recovery 側で対処すべき Known Issue として整理する。
+
+Round 10 の時点では、代表的な large seek ケース（A 系統）に対して `default hidden + conditional readability-promote` を適用することで、`track found` / `cue unreadable` / `signal missing` のうち、cue unreadable に起因する secondary missing の一部を解消している。一方で、secondary DOM / overlay / fallback に起因する signal missing や、B 系統（Section 4 未到達系）の Known Issue は残存しており、後続ラウンドで扱う。
 
 ### 5.3 secondary sync logging / naming 方針
 
@@ -347,7 +474,7 @@ secondary sync / recovery に関するログの message prefix は `secondary-sy
 
 ### 6.2 ラウンド運用上の注意
 
-- Round 1 / Round 2 / Round 3 / Round 4 / Round 5 / Round 6 / Round 7 / Round 8 を混ぜない
+- Round 1 / Round 2 / Round 3 / Round 4 / Round 5 / Round 6 / Round 7 / Round 8 / Round 9 / Round 10 を混ぜない
 - **区画整理 / 物理移送 / private 化 / observability 追加 / rollback 判断** を常に別論点として扱う
 - Round 2 は physical move-only、Round 3 は state カプセル化 only として扱い、挙動変更を混ぜない
 - Round 4 は責務境界整理と試行的 physical split を含むが、rollback 済みの部分完了ラウンドとして扱う
@@ -355,7 +482,8 @@ secondary sync / recovery に関するログの message prefix は `secondary-sy
 - Round 6 は Section 4 の physical split 完了ラウンドとして扱い、既存 Known Issue の解消とは分けて扱う
 - Round 7 は secondary recovery の observability 強化ラウンドとして扱い、挙動変更とは分けて扱う
 - Round 8 は secondary signal lane（resolver / binding / cue-readable）の観測と、small change による probe を行うラウンドとして扱う
-- Round 9 以降は、cue-readable 後段（secondary subtitle DOM / initial cue recovery / overlay / fallback）について、必要に応じて複数ファイルにまたがる構造変更や責務移送も許容し、small change に限定しない
+- Round 9 は secondary cue-readable 層の mode / readable に focus し、debug policy（debug-force-showing）を用いた probe を行うラウンドとして扱う
+- Round 10 は mode 方針（default hidden + readability-promote）と secondary subtitle DOM / initial cue recovery 設計を docs レベルで整理するラウンドとして扱う
 
 ### 6.3 設計変更とログ追加の分離
 
