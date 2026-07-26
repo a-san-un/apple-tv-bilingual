@@ -612,6 +612,15 @@
         "",
     };
 
+    if (DEBUGSECONDARYSUBS) {
+      logContent("secondary-dom ensure-start", {
+        existingElementCount: getSecondarySubtitleElements().length,
+        hasDialogEl: Boolean(state.dialogEl),
+        hasPanelShadowRoot: Boolean(state.panelShadowRoot),
+        requestedSecondaryLang: effectiveSettings.secondaryLang || "",
+      });
+    }
+
     if (!isLanguageSelectionReady(effectiveSettings)) {
       return null;
     }
@@ -626,7 +635,7 @@
         allExisting[i].remove();
       }
 
-      if (DEBUG_SECONDARY_SUBS) {
+      if (DEBUGSECONDARYSUBS) {
         logContent(
           "secondary duplicate elements cleaned",
           getSecondaryRenderLogPayload(
@@ -645,6 +654,14 @@
     }
 
     const panelHost = getOrCreatePanelHost();
+
+    if (DEBUGSECONDARYSUBS) {
+      logContent("secondary-dom host-resolved", {
+        hasPanelHost: Boolean(panelHost),
+        existingElementCount: getSecondarySubtitleElements().length,
+      });
+    }
+
     if (!panelHost) return null;
 
     const ensuredAfterPanel = document.querySelector(
@@ -656,13 +673,21 @@
 
     findSecondarySubtitlePanel(panelHost);
 
+    if (DEBUGSECONDARYSUBS) {
+      logContent("secondary-dom create-element", {
+        hasPanelHost: Boolean(panelHost),
+        panelHasShadowRoot: Boolean(panelHost?.shadowRoot),
+        existingElementCount: getSecondarySubtitleElements().length,
+      });
+    }
+
     const el = document.createElement("div");
     el.setAttribute("data-secondary-subtitle", "");
     el.className = "dual-subtitles-secondary";
     el.slot = "secondary-subtitle-slot";
     panelHost.appendChild(el);
 
-    if (DEBUG_SECONDARY_SUBS) {
+    if (DEBUGSECONDARYSUBS) {
       logContent("secondary element ensured");
     }
 
@@ -673,12 +698,24 @@
   // secondary subtitle の描画は、要素確保 → cue text 解決 → idle clear 判定 →
   // text / language 反映、の順で行う。
   function renderSecondarySubtitle(text, track) {
+    if (DEBUGSECONDARYSUBS) {
+      logContent("secondary-dom render-entry", {
+        textLength: String(text || "").length,
+        trackLanguage: track?.language || "",
+        trackMode: track?.mode || "",
+        activeCuesLength: getTrackActiveCuesLength(track),
+        existingElementCount: countSecondarySubtitleElements(),
+        lastSecondaryTextLength: String(lastSecondaryText || "").length,
+        lastSecondarySignalAt,
+      });
+    }
+
     let el = ensureSecondarySubtitleElement();
     if (!el) return;
 
     const elementCountBefore = countSecondarySubtitleElements();
     if (elementCountBefore > 1) {
-      if (DEBUG_SECONDARY_SUBS) {
+      if (DEBUGSECONDARYSUBS) {
         logContent(
           "secondary duplicate elements cleaned",
           getSecondaryRenderLogPayload(text, track, elementCountBefore),
@@ -688,7 +725,7 @@
     }
 
     if (!el) {
-      if (DEBUG_SECONDARY_SUBS) {
+      if (DEBUGSECONDARYSUBS) {
         logContent("secondary element missing, recreating");
       }
       el = ensureSecondarySubtitleElement();
@@ -701,7 +738,7 @@
     let resolvedText = text || "";
     if (!resolvedText && activeCuesLength > 0) {
       resolvedText = getCurrentCueText(track) || "";
-      if (DEBUG_SECONDARY_SUBS) {
+      if (DEBUGSECONDARYSUBS) {
         logContent(
           "secondary cue text resolved",
           getSecondaryRenderLogPayload(resolvedText, track, elementCount),
@@ -717,17 +754,18 @@
       lastSecondarySignalAt = now;
     }
 
+    const willRetainPreviousText =
+      !finalText &&
+      !!lastSecondaryText &&
+      lastSecondarySignalAt > 0 &&
+      now - lastSecondarySignalAt <= SECONDARYSUBTITLEIDLECLEARMS;
+
     if (finalText) {
       lastSecondaryText = finalText;
       lastSecondaryTextAt = now;
-    } else if (
-      !finalText &&
-      lastSecondaryText &&
-      lastSecondarySignalAt > 0 &&
-      now - lastSecondarySignalAt <= SECONDARY_SUBTITLE_IDLE_CLEAR_MS
-    ) {
+    } else if (willRetainPreviousText) {
       finalText = lastSecondaryText;
-      if (DEBUG_SECONDARY_SUBS) {
+      if (DEBUGSECONDARYSUBS) {
         logContent(
           "secondary subtitle retained until next cue or idle clear",
           getSecondaryRenderLogPayload(finalText, track, elementCount),
@@ -736,9 +774,9 @@
     } else if (
       !finalText &&
       lastSecondarySignalAt > 0 &&
-      now - lastSecondarySignalAt > SECONDARY_SUBTITLE_IDLE_CLEAR_MS
+      now - lastSecondarySignalAt > SECONDARYSUBTITLEIDLECLEARMS
     ) {
-      if (el.textContent && DEBUG_SECONDARY_SUBS) {
+      if (el.textContent && DEBUGSECONDARYSUBS) {
         logContent(
           "secondary subtitle cleared after idle timeout",
           getSecondaryRenderLogPayload("", track, elementCount),
@@ -749,7 +787,18 @@
       lastSecondarySignalAt = 0;
     }
 
-    if (DEBUG_SECONDARY_SUBS) {
+    if (DEBUGSECONDARYSUBS) {
+      logContent("secondary-dom render-final", {
+        resolvedTextLength: String(resolvedText || "").length,
+        finalTextLength: String(finalText || "").length,
+        activeCuesLength,
+        elementCount,
+        willClear: !finalText,
+        willRetainPreviousText,
+      });
+    }
+
+    if (DEBUGSECONDARYSUBS) {
       logContent(
         "secondary render called",
         getSecondaryRenderLogPayload(finalText, track, elementCount),
@@ -758,6 +807,17 @@
 
     el.textContent = finalText;
     el.dataset.language = track?.language || "";
+    if (DEBUGSECONDARYSUBS) {
+      logContent("secondary-dom render-applied", {
+        appliedTextLength: String(el.textContent || "").length,
+        appliedLanguage: el.dataset.language || "",
+        isConnected: Boolean(el.isConnected),
+        elementTagName: el.tagName || "",
+        elementClassName: el.className || "",
+        elementDataSecondarySubtitle:
+          el.getAttribute("data-secondary-subtitle"),
+      });
+    }
 
     logSubtitlePanelState("after-renderSecondarySubtitle");
   }

@@ -153,17 +153,18 @@
         isMissing: false,
       });
 
-      // runtime 上「primary は進んでいるのに secondary だけ空」の missing 条件を定義する。
       const secondaryRuntimeMissing =
         derived?.primaryHealthy === true &&
         currentCue?.secondaryTextLength === 0 &&
         runtime?.secondaryTrackFound === true &&
         runtime?.secondaryActiveCues === 0;
 
-      // runtime 上 secondary cue が復活した状態を recovered とみなす。
       const secondaryRecovered =
         runtime?.secondaryTrackFound === true &&
-        runtime?.secondaryActiveCues > 0;
+        (
+          runtime?.secondaryActiveCues > 0 ||
+          currentCue?.secondaryTextLength > 0
+        );
 
       const secondaryLane = updateLaneState(laneStates.secondary, {
         now,
@@ -195,8 +196,6 @@
         };
       }
 
-      // 待機窓超過後は、derived の recovery hint が未確定でも、
-      // runtime 上の missing 継続を優先して recovery を進める。
       const shouldRecoverSecondary =
         secondaryLane.missingDurationMs >= SECONDARY_RECOVERY_WINDOW_MS &&
         (derived?.shouldRecoverSecondary === true || secondaryLane.isMissing);
@@ -227,7 +226,6 @@
         };
       }
 
-      // consecutive miss が続く場合は force-rebind 側へ進める。
       const shouldForceSecondaryRebind =
         derived?.shouldForceSecondaryRebind === true ||
         secondaryLane.missCount >= SECONDARY_FORCE_REBIND_MISS_COUNT;
@@ -260,6 +258,19 @@
       secondaryTrackBound = null;
     }
 
+    // secondary bind 時に適用する track.mode を決める。
+    // Patch 3: hidden で cue が読めない可能性を切るため、
+    // debug 時だけ showing を試せるようにする。
+    function resolveSecondaryTrackModeForBind(track) {
+      if (!track) return "hidden";
+
+      if (DEBUG_SECONDARY_SUBS) {
+        return "showing";
+      }
+
+      return "hidden";
+    }
+
     // secondary cue change を受けて secondary 表示と primary 側更新を進める。
     function onCueChange(track) {
       if (track && DEBUG_SECONDARY_SUBS) {
@@ -270,7 +281,26 @@
       }
 
       if (track) {
-        renderSecondarySubtitle(getCurrentCueText(track), track);
+        const currentTime = getCurrentTime();
+        const cueText = getCurrentCueText(track, currentTime);
+        const overlapCue = getCurrentCue(track, currentTime);
+
+        if (DEBUG_SECONDARY_SUBS) {
+          logContent("secondary-sync render-entry", {
+            reason: "onCueChange",
+            currentTime,
+            trackLanguage: track?.language || "",
+            trackKind: track?.kind || "",
+            trackMode: track?.mode || "",
+            cueTextLength: cueText?.length ?? 0,
+            overlapCueExists: Boolean(overlapCue),
+            overlapCueStartTime: overlapCue?.startTime ?? null,
+            overlapCueEndTime: overlapCue?.endTime ?? null,
+            willRenderEmpty: !cueText,
+          });
+        }
+
+        renderSecondarySubtitle(cueText, track);
       }
 
       onPrimaryCueChange();
@@ -283,11 +313,31 @@
       const previousBoundTrack = secondaryTrackBound;
       unbindSecondarySubtitleTrack();
 
+      const previousMode = track?.mode || "";
+      const requestedMode = resolveSecondaryTrackModeForBind(track);
+
       try {
-        if (track.mode === "disabled") {
-          track.mode = "hidden";
-        }
-      } catch (_) {}
+        track.mode = requestedMode;
+      } catch (error) {
+        logContent("secondary-sync mode-apply failed", {
+          trackLanguage: track?.language || "",
+          trackKind: track?.kind || "",
+          requestedMode,
+          previousMode,
+          message: String(error?.message || error || ""),
+        });
+      }
+
+      logContent("secondary-sync mode-applied", {
+        trackLanguage: track?.language || "",
+        trackKind: track?.kind || "",
+        requestedMode,
+        appliedMode: track?.mode || "",
+        cuesLength: getTrackCuesLength(track),
+        activeCuesLength: getTrackActiveCuesLength(track),
+        sameAsPreviousBound: previousBoundTrack === track,
+        currentTime: getCurrentTime(),
+      });
 
       if (DEBUG_SECONDARY_SUBS) {
         logContent("secondary track bind", {
@@ -302,78 +352,111 @@
       }
 
       const handler = () => {
-        logContent("secondary-sync cuechange-fired", {
-          reason: "secondaryTrackEvent",
-          currentTime: getCurrentTime(),
-          ...getSecondaryTrackObservation(track, "track"),
-        });
+        if (DEBUG_SECONDARY_SUBS) {
+          logContent("secondary-sync cuechange-fired", {
+            reason: "secondaryTrackEvent",
+            currentTime: getCurrentTime(),
+            ...getSecondaryTrackObservation(track, "track"),
+          });
 
-        logContent("secondary cuechange raw", {
-          currentTime: getCurrentTime(),
-          trackLanguage: track?.language || "",
-          trackKind: track?.kind || "",
-          trackMode: track?.mode || "",
-          activeCuesLength: (() => {
-            try {
-              return track?.activeCues?.length ?? 0;
-            } catch (_) {
-              return -1;
-            }
-          })(),
-          cuesLength: (() => {
-            try {
-              return track?.cues?.length ?? 0;
-            } catch (_) {
-              return -1;
-            }
-          })(),
-          currentCueTextLength: getCurrentCueText(track)?.length ?? 0,
-        });
+          logContent("secondary cuechange raw", {
+            currentTime: getCurrentTime(),
+            trackLanguage: track?.language || "",
+            trackKind: track?.kind || "",
+            trackMode: track?.mode || "",
+            activeCuesLength: (() => {
+              try {
+                return track?.activeCues?.length ?? 0;
+              } catch (_) {
+                return -1;
+              }
+            })(),
+            cuesLength: (() => {
+              try {
+                return track?.cues?.length ?? 0;
+              } catch (_) {
+                return -1;
+              }
+            })(),
+            currentCueTextLength: getCurrentCueText(track)?.length ?? 0,
+          });
+        }
+
+        const currentTime = getCurrentTime();
+        const overlapCue = getCurrentCue(track, currentTime);
+        const overlapCueText = cleanCueText(overlapCue);
+        const currentCueText = getCurrentCueText(track, currentTime);
+
+        if (DEBUG_SECONDARY_SUBS) {
+          logContent("secondary-sync cue-readable-snapshot", {
+            reason: "secondaryTrackEvent",
+            currentTime,
+            trackLanguage: track?.language || "",
+            trackKind: track?.kind || "",
+            trackMode: track?.mode || "",
+            activeCuesLength: (() => {
+              try {
+                return track?.activeCues?.length ?? 0;
+              } catch (_) {
+                return -1;
+              }
+            })(),
+            cuesLength: (() => {
+              try {
+                return track?.cues?.length ?? 0;
+              } catch (_) {
+                return -1;
+              }
+            })(),
+            overlapCueExists: Boolean(overlapCue),
+            overlapCueStartTime: overlapCue?.startTime ?? null,
+            overlapCueEndTime: overlapCue?.endTime ?? null,
+            overlapCueTextLength: overlapCueText.length,
+            currentCueTextLength: currentCueText?.length ?? 0,
+            cueReadableByActiveCues: (() => {
+              try {
+                return (track?.activeCues?.length ?? 0) > 0;
+              } catch (_) {
+                return false;
+              }
+            })(),
+            cueReadableByOverlap: Boolean(overlapCue),
+            cueReadableByText: Boolean(currentCueText),
+          });
+        }
 
         onCueChange(track);
       };
-      track.addEventListener("cuechange", handler);
+
+      try {
+        track.addEventListener("cuechange", handler);
+      } catch (error) {
+        logContent("secondary track bind failed", {
+          trackLanguage: track?.language || "",
+          trackKind: track?.kind || "",
+          trackMode: track?.mode || "",
+          message: String(error?.message || error || ""),
+        });
+        return;
+      }
 
       secondaryTrackCleanup = () => {
-        track.removeEventListener("cuechange", handler);
+        try {
+          track.removeEventListener("cuechange", handler);
+        } catch (_) {}
       };
 
       secondaryTrackBound = track;
 
-      logContent("secondary-sync binding-applied", {
-        reason: "bindSecondarySubtitleTrack",
-        currentTime: getCurrentTime(),
-        sameAsPreviousBound: previousBoundTrack === track,
-        ...getSecondaryTrackObservation(track, "boundTrack"),
+      logContent("secondary-sync bind-result", {
+        trackLanguage: track?.language || "",
+        trackKind: track?.kind || "",
+        trackMode: track?.mode || "",
+        cuesLength: getTrackCuesLength(track),
+        activeCuesLength: getTrackActiveCuesLength(track),
+        boundTrackExists: Boolean(secondaryTrackBound),
+        hasCleanup: typeof secondaryTrackCleanup === "function",
       });
-
-      logContent("secondary-sync binding-after-attach", {
-        reason: "bindSecondarySubtitleTrack",
-        currentTime: getCurrentTime(),
-        sameAsPreviousBound: previousBoundTrack === track,
-        boundTrackLanguage: track?.language || "",
-        boundTrackMode: track?.mode || "",
-        boundTrackCuesLength: (() => {
-          try {
-            return track?.cues?.length ?? 0;
-          } catch (_) {
-            return -1;
-          }
-        })(),
-        boundTrackActiveCuesLength: (() => {
-          try {
-            return track?.activeCues?.length ?? 0;
-          } catch (_) {
-            return -1;
-          }
-        })(),
-        boundTrackCurrentCueTextLength: getCurrentCueText(track)?.length ?? 0,
-        boundTrackHasCueOverlapAtCurrentTime: Boolean(
-          getCurrentCue(track, getCurrentTime()),
-        ),
-      });
-
-      onCueChange(track);
     }
 
     // secondary track の再解決と再同期を行い、必要なら nearby rebuild まで進める。
@@ -385,12 +468,8 @@
     ) {
       if (!video) return;
 
-      // 表示更新を抑止するかどうかを受け取る。
       const suppressRender = options.suppressRender === true;
-
-      // bind 済み track をいったん外して再取得するかを受け取る。
       const forceRebind = options.forceRebind === true;
-
       const previousBoundTrack = secondaryTrackBound;
 
       if (DEBUG_SECONDARY_SUBS) {
@@ -406,6 +485,7 @@
 
       const track = resolveSecondarySubtitleTrack(video, requestedLang);
       const sameTrackRef = Boolean(track && previousBoundTrack === track);
+      const currentTime = getCurrentTime();
       const resolvedTrackActiveCuesLength = (() => {
         try {
           return track?.activeCues?.length ?? 0;
@@ -420,13 +500,15 @@
           return -1;
         }
       })();
+      const resolvedTrackCurrentCue = getCurrentCue(track, currentTime);
+      const resolvedTrackCurrentCueText = cleanCueText(resolvedTrackCurrentCue);
 
       logContent("secondary-sync resolver-selected", {
         reason: "syncSecondarySubtitleTrack",
         requestedLang: requestedLang || "",
         forceRebind,
         suppressRender,
-        currentTime: getCurrentTime(),
+        currentTime,
         boundTrackExistsBefore: Boolean(previousBoundTrack),
         sameTrackRef,
         previousBoundTrackLanguage: previousBoundTrack?.language || "",
@@ -449,16 +531,15 @@
         resolvedTrackMode: track?.mode || "",
         resolvedTrackCuesLength,
         resolvedTrackActiveCuesLength,
-        currentTime: getCurrentTime(),
+        resolvedTrackCurrentCueTextLength: resolvedTrackCurrentCueText.length,
+        resolvedTrackHasCueOverlapAtCurrentTime: Boolean(resolvedTrackCurrentCue),
+        currentTime,
       });
 
       if (!track) {
         unbindSecondarySubtitleTrack();
         if (!suppressRender) {
-          (renderSecondarySubtitleOverride || renderSecondarySubtitle)(
-            "",
-            null,
-          );
+          (renderSecondarySubtitleOverride || renderSecondarySubtitle)("", null);
         }
         return;
       }
@@ -466,19 +547,23 @@
       const shouldRebindBecauseUnreadable =
         sameTrackRef &&
         resolvedTrackCuesLength > 0 &&
-        resolvedTrackActiveCuesLength === 0;
+        resolvedTrackActiveCuesLength === 0 &&
+        !resolvedTrackCurrentCue &&
+        !resolvedTrackCurrentCueText;
 
       if (shouldRebindBecauseUnreadable) {
         logContent("secondary-sync rebind-required", {
           reason: "sameTrackButUnreadableAtCurrentTime",
           requestedLang: requestedLang || "",
-          currentTime: getCurrentTime(),
+          currentTime,
           sameTrackRef,
           forceRebind,
           resolvedTrackLanguage: track?.language || "",
           resolvedTrackMode: track?.mode || "",
           resolvedTrackCuesLength,
           resolvedTrackActiveCuesLength,
+          resolvedTrackCurrentCueTextLength: resolvedTrackCurrentCueText.length,
+          resolvedTrackHasCueOverlapAtCurrentTime: Boolean(resolvedTrackCurrentCue),
         });
       }
 

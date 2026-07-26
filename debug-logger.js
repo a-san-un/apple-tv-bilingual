@@ -24,6 +24,24 @@
 
   let onLogUpdated = () => {};
 
+  // storage.local の read-modify-write 競合を避けるため、
+  // ログ追記は常に 1 本の promise queue で直列化する。
+  let logWriteQueue = Promise.resolve();
+
+  function enqueueLogWrite(task) {
+    logWriteQueue = logWriteQueue
+      .then(() => task())
+      .catch((error) => {
+        const message =
+          error && typeof error.message === "string"
+            ? error.message
+            : String(error);
+        if (message.includes("Extension context invalidated")) return;
+        console.warn("[ATV-Bilingual] debug log queue failed:", error);
+      });
+    return logWriteQueue;
+  }
+
   // ログ更新時に呼ぶ callback を登録する。
   function setOnLogUpdated(fn) {
     onLogUpdated = typeof fn === "function" ? fn : () => {};
@@ -145,28 +163,34 @@
   }
 
   // storage.local にログを追記し、更新 callback を通知する。
+  // read-modify-write 競合を避けるため queue 化して順番に保存する。
   async function appendDebugLog(line) {
-    try {
-      if (!globalThis.chrome?.runtime?.id) return;
+    return enqueueLogWrite(async () => {
+      try {
+        if (!globalThis.chrome?.runtime?.id) return;
 
-      const normalizedLine = ensureLogShape(line);
-      if (!normalizedLine) return;
+        const normalizedLine = ensureLogShape(line);
+        if (!normalizedLine) return;
 
-      const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
-        await chrome.storage.local.get(DEBUG_LOGS_KEY);
+        const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
+          await chrome.storage.local.get(DEBUG_LOGS_KEY);
 
-      debugLogs.push(normalizedLine);
-      if (debugLogs.length > RETAINED_DEBUG_LOGS_LIMIT) {
-        debugLogs.splice(0, debugLogs.length - RETAINED_DEBUG_LOGS_LIMIT);
+        debugLogs.push(normalizedLine);
+        if (debugLogs.length > RETAINED_DEBUG_LOGS_LIMIT) {
+          debugLogs.splice(0, debugLogs.length - RETAINED_DEBUG_LOGS_LIMIT);
+        }
+
+        await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
+        onLogUpdated();
+      } catch (error) {
+        const message =
+          error && typeof error.message === "string"
+            ? error.message
+            : String(error);
+        if (message.includes("Extension context invalidated")) return;
+        console.warn("[ATV-Bilingual] appendDebugLog failed:", error);
       }
-      await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
-      onLogUpdated();
-    } catch (error) {
-      const message =
-        error && typeof error.message === "string" ? error.message : String(error);
-      if (message.includes("Extension context invalidated")) return;
-      console.warn("[ATV-Bilingual] appendDebugLog failed:", error);
-    }
+    });
   }
 
   // content スコープの標準ログ導線を提供する。

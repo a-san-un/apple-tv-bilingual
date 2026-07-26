@@ -1,0 +1,489 @@
+=== sync-interval-orchestrator 270-440 ===
+   270	        secondaryActiveCues,
+   271	        primaryActiveCues,
+   272	        secondaryCueText,
+   273	        primaryCueText,
+   274	        currentPrimaryText,
+   275	        hasFreshCurrentPrimary,
+   276	        mergedSubtitleHealth,
+   277	      }) {
+   278	        if (recoveryDecision.action !== "terminated") return;
+   279	
+   280	        logContent?.(
+   281	          "secondary recovery terminated",
+   282	          buildSecondarySyncLogPayload({
+   283	            effectiveSecondaryLanguage,
+   284	            secondaryActiveCues,
+   285	            primaryActiveCues,
+   286	            secondaryCueText,
+   287	            primaryCueText,
+   288	            currentPrimaryText,
+   289	            hasFreshCurrentPrimary,
+   290	            mergedSubtitleHealth,
+   291	            extra: {
+   292	              reason: "sync_interval",
+   293	              missCount: recoveryDecision.secondaryLane.missCount,
+   294	            },
+   295	          }),
+   296	        );
+   297	      }
+   298	
+   299	      function runSecondaryResolverProbeIfNeeded({
+   300	        effectiveSecondaryLanguage,
+   301	        secondaryCueText,
+   302	      }) {
+   303	        if (!debugPanelProbe) return;
+   304	
+   305	        const secondaryCandidates =
+   306	          resolverDeps?.getSecondarySubtitleTrackCandidates?.(
+   307	            state.video,
+   308	            effectiveSecondaryLanguage,
+   309	          ) ?? [];
+   310	        const resolvedSecondaryTrack =
+   311	          resolverDeps?.resolveSecondarySubtitleTrack?.(
+   312	            state.video,
+   313	            effectiveSecondaryLanguage,
+   314	          ) ?? null;
+   315	
+   316	        logContent?.("secondary resolver probe", {
+   317	          reason: "sync_interval",
+   318	          effectiveSecondaryLanguage,
+   319	          currentSecondaryTrackLanguage: state.secondaryTrack?.language || "",
+   320	          currentSecondaryTrackKind: state.secondaryTrack?.kind || "",
+   321	          currentSecondaryTrackMode: state.secondaryTrack?.mode || "",
+   322	          currentSecondaryCuesLength:
+   323	            resolverDeps?.getTrackCuesLength?.(state.secondaryTrack) ?? 0,
+   324	          currentSecondaryActiveCuesLength:
+   325	            getTrackActiveCuesLength?.(state.secondaryTrack) ?? 0,
+   326	          currentSecondaryCueTextLength: secondaryCueText.length,
+   327	          resolvedSecondaryTrackLanguage: resolvedSecondaryTrack?.language || "",
+   328	          resolvedSecondaryTrackKind: resolvedSecondaryTrack?.kind || "",
+   329	          resolvedSecondaryTrackMode: resolvedSecondaryTrack?.mode || "",
+   330	          resolvedSecondaryCuesLength:
+   331	            resolverDeps?.getTrackCuesLength?.(resolvedSecondaryTrack) ?? 0,
+   332	          resolvedSecondaryActiveCuesLength:
+   333	            getTrackActiveCuesLength?.(resolvedSecondaryTrack) ?? 0,
+   334	          resolvedSecondaryCueTextLength:
+   335	            normalizeSubtitleText?.(
+   336	              getCurrentCueText?.(resolvedSecondaryTrack),
+   337	            )?.length ?? 0,
+   338	          secondaryCandidates,
+   339	        });
+   340	      }
+   341	
+   342	      function triggerSecondaryRecovery({
+   343	        recoveryDecision,
+   344	        effectiveSecondaryLanguage,
+   345	        secondaryActiveCues,
+   346	        primaryActiveCues,
+   347	        secondaryCueText,
+   348	        primaryCueText,
+   349	        currentPrimaryText,
+   350	        hasFreshCurrentPrimary,
+   351	        mergedSubtitleHealth,
+   352	      }) {
+   353	        if (
+   354	          recoveryDecision.action !== "recover" &&
+   355	          recoveryDecision.action !== "force-rebind"
+   356	        ) {
+   357	          return;
+   358	        }
+   359	
+   360	        const secondaryTrackFoundBefore = Boolean(state.secondaryTrack);
+   361	        const secondaryActiveCuesLengthBefore =
+   362	          getTrackActiveCuesLength?.(state.secondaryTrack) ?? 0;
+   363	
+   364	        runSecondaryResolverProbeIfNeeded({
+   365	          effectiveSecondaryLanguage,
+   366	          secondaryCueText,
+   367	        });
+   368	
+   369	        logContent?.("secondary recovery trigger started", {
+   370	          effectiveSecondaryLanguage,
+   371	          secondaryTrackFoundBefore,
+   372	          secondaryActiveCuesLengthBefore,
+   373	          renderInvoked: false,
+   374	        });
+   375	
+   376	        logContent?.(
+   377	          "secondary recovery trigger",
+   378	          buildSecondarySyncLogPayload({
+   379	            effectiveSecondaryLanguage,
+   380	            secondaryActiveCues,
+   381	            primaryActiveCues,
+   382	            secondaryCueText,
+   383	            primaryCueText,
+   384	            currentPrimaryText,
+   385	            hasFreshCurrentPrimary,
+   386	            mergedSubtitleHealth,
+   387	            extra: {
+   388	              reason: "sync_interval",
+   389	              missCount: recoveryDecision.secondaryLane.missCount,
+   390	              forceRebind: recoveryDecision.action === "force-rebind",
+   391	              terminated: recoveryDecision.secondaryLane.terminated,
+   392	              missLimitReached: recoveryDecision.action === "terminated",
+   393	            },
+   394	          }),
+   395	        );
+   396	
+   397	        syncSecondarySubtitleTrack?.({
+   398	          reason: recoveryDecision.reason,
+   399	          forceRebind: recoveryDecision.action === "force-rebind",
+   400	        });
+   401	
+   402	        const secondaryTrackFoundAfter = Boolean(state.secondaryTrack);
+   403	        const secondaryActiveCuesLengthAfter =
+   404	          getTrackActiveCuesLength?.(state.secondaryTrack) ?? 0;
+   405	
+   406	        logContent?.("secondary recovery trigger finished", {
+   407	          effectiveSecondaryLanguage,
+   408	          secondaryTrackFoundBefore,
+   409	          secondaryTrackFoundAfter,
+   410	          secondaryActiveCuesLengthBefore,
+   411	          secondaryActiveCuesLengthAfter,
+   412	          renderInvoked: true,
+   413	        });
+   414	      }
+   415	
+   416	      function runSecondaryRecoveryPass(effectiveSecondaryLanguage) {
+   417	        const previousSecondaryTrack = state.secondaryTrack;
+   418	        syncSecondarySubtitleTrackBinding?.(
+   419	          state.video,
+   420	          effectiveSecondaryLanguage,
+   421	          renderSecondarySubtitle,
+   422	          { suppressRender: true },
+   423	        );
+   424	        state.secondaryTrack = cueController?.getBoundSecondaryTrack?.() ?? null;
+   425	
+   426	        const now = Date.now();
+   427	        const millisSinceLargeSeek =
+   428	          state.lastLargeSeekAt > 0 ? now - state.lastLargeSeekAt : null;
+   429	
+   430	        logContent?.("secondary recovery pass started", {
+   431	          effectiveSecondaryLanguage,
+   432	          currentTime: Number(state.video?.currentTime ?? 0),
+   433	          lastLargeSeekAt: state.lastLargeSeekAt ?? null,
+   434	          millisSinceLargeSeek,
+   435	          hasVideo: Boolean(state.video),
+   436	          textTrackCount: state.video?.textTracks?.length ?? 0,
+   437	          hasPrimaryTrackObject: Boolean(state.primaryTrack),
+   438	          hasSecondaryTrackObject: Boolean(state.secondaryTrack),
+   439	        });
+   440	
+
+=== settings-runtime key ranges ===
+   130	    function loadSettingsFromSync() {
+   131	      loadSettingsSnapshot("initial_load")
+   132	        .then((snapshot) => {
+   133	          state.requestedContentSettings = {
+   134	            ...(snapshot.storedSettings || {}),
+   135	          };
+   136	          state.requestedSecondaryLang = snapshot.requestedSecondaryLang || "";
+   137	
+   138	          const hasCompleteRequestedSettings = isLanguageSelectionReady(
+   139	            state.requestedContentSettings,
+   140	          );
+   141	
+   142	          state.contentSettings = hasCompleteRequestedSettings
+   143	            ? { ...snapshot.effectiveSettings }
+   144	            : { ...DEFAULT_SETTINGS };
+   145	
+   146	          if (hasCompleteRequestedSettings) {
+   147	            const effectiveSecondaryLanguage =
+   148	              state.requestedSecondaryLang || state.contentSettings.secondaryLang;
+   149	            if (state.video && effectiveSecondaryLanguage) {
+   150	              cueController.syncSecondarySubtitleTrack(
+   151	                state.video,
+   152	                effectiveSecondaryLanguage,
+   153	                renderSecondarySubtitle,
+   154	              );
+   155	              state.secondaryTrack = cueController.getBoundSecondaryTrack();
+   156	            }
+   157	          } else {
+   158	            clearSecondaryTrackState();
+   159	          }
+   160	
+   161	          logContentSettings("Loaded settings from sync", {
+   162	            ...state.contentSettings,
+   163	            requestedSecondaryLang: state.requestedSecondaryLang,
+   164	            hasCompleteRequestedSettings,
+   165	          });
+   166	
+   167	          if (!hasCompleteRequestedSettings) {
+   168	            logContentSettings("initial load routed to language setup notice", {
+   169	              requestedSettings: { ...state.requestedContentSettings },
+   170	              requestedSecondaryLang: state.requestedSecondaryLang,
+   280	            resolvedSecondaryLanguage,
+   281	          },
+   282	        });
+   283	
+   284	        state.contentSettings = {
+   285	          ...state.contentSettings,
+   286	          ...next,
+   287	        };
+   288	
+   289	        state.panelVisible = state.contentSettings.showSidebar !== false;
+   290	
+   291	        if (state.video && resolvedSecondaryLanguage) {
+   292	          cueController.syncSecondarySubtitleTrack(
+   293	            state.video,
+   294	            resolvedSecondaryLanguage,
+   295	            renderSecondarySubtitle,
+   296	          );
+   297	          state.secondaryTrack = cueController.getBoundSecondaryTrack();
+   298	        }
+   299	
+   300	        restartBilingual(next, "SETTINGS_CHANGED", {
+   301	          keepPanelVisible: next.showSidebar !== false,
+   302	        });
+   303	
+   304	        const appliedRequestedSecondaryLang = state.requestedSecondaryLang;
+   305	        const appliedResolvedSecondaryLanguage = resolvedSecondaryLanguage;
+
+=== content key ranges ===
+  3300	      }
+  3301	    }
+  3302	
+  3303	    // [attach: secondary] secondary resolver / binder は sync helper 側へ委譲する。
+  3304	    if (secondaryLang) {
+  3305	      syncSecondarySubtitleTrackBinding(
+  3306	        video,
+  3307	        secondaryLang,
+  3308	        renderSecondarySubtitle,
+  3309	      );
+  3310	    } else {
+  3311	      cueController.unbindSecondarySubtitleTrack();
+  3312	      renderSecondarySubtitle("", null);
+  3313	    }
+  3314	
+  3315	    state.secondaryTrack = cueController.getBoundSecondaryTrack();
+  3316	
+  3317	    return {
+  3318	      reason,
+  3319	      trackCount: tracks.length,
+  3320	      primaryTrackFound: Boolean(state.primaryTrack),
+  3321	      secondaryTrackFound: Boolean(state.secondaryTrack),
+  3322	      primaryListenerBound,
+  3323	      secondaryListenerBound: Boolean(secondaryTrackBound),
+  3324	      primaryTrack: state.primaryTrack
+  3325	        ? {
+  3326	            language: state.primaryTrack.language || "",
+  3327	            label: state.primaryTrack.label || "",
+  3328	            kind: state.primaryTrack.kind || "",
+  3329	            mode: state.primaryTrack.mode || "",
+  3330	          }
+  3331	        : null,
+  3332	      secondaryTrack: state.secondaryTrack
+  3333	        ? {
+  3334	            language: state.secondaryTrack.language || "",
+  3335	            label: state.secondaryTrack.label || "",
+  3336	            kind: state.secondaryTrack.kind || "",
+  3337	            mode: state.secondaryTrack.mode || "",
+  3338	          }
+  3339	        : null,
+  3340	    };
+  3341	  }
+  3342	
+  3343	  // [binder/cue: recovery] cue availability / recovery gate
+  3344	
+  3345	  // [binder/cue: recovery] 現在の primary / secondary track から初回 cue を回収できるか判定する。
+  3346	  function hasRecoverableInitialCue() {
+  3347	    const currentTime = state.video?.currentTime ?? 0;
+  3348	    const tracks = [
+  3349	      state.primaryTrack,
+  3350	      state.secondaryTrack,
+  3351	      secondaryTrackBound,
+  3352	    ];
+  3353	
+  3354	    for (let i = 0; i < tracks.length; i++) {
+  3355	      const track = tracks[i];
+  3356	      if (!canReadCueFromTrack(track)) continue;
+  3357	      if (getTrackActiveCuesLength(track) > 0) return true;
+  3358	      if (getCurrentCueText(track, currentTime)) return true;
+  3359	    }
+  3360	
+  3361	    return false;
+  3362	  }
+  3363	
+  3364	  function clearInternalSubtitleState(reason = "unknown") {
+  3365	    lastSecondaryText = "";
+  3366	    lastSecondaryTextAt = 0;
+  3367	    lastSecondarySignalAt = 0;
+  3368	    state.lastPrimaryText = "";
+  3369	    state.lastPrimarySnapshotAt = 0;
+  3370	
+  3371	    const panelHost = getTarget().querySelector("#atv-panel-host");
+  3372	    const secondaryEl = panelHost?.querySelector("[data-secondary-subtitle]");
+  3373	    if (secondaryEl) {
+  3374	      secondaryEl.textContent = "";
+  3375	      secondaryEl.innerHTML = "";
+  3376	    }
+  3377	
+  3378	    logContent("internal subtitle state cleared", {
+  3379	      reason,
+  3380	      contentKey: state.currentContentKey,
+  3381	      hasPanelHost: Boolean(panelHost),
+  3382	      hasSecondaryElement: Boolean(secondaryEl),
+  3383	    });
+  3384	  }
+  3385	
+  3386	  // -----------------------------------------------------------------------------
+  3387	  // Subtitle Pipeline: Flow Coordinator
+  3388	  // 再初期化フロー本体。状態クリアから track 再解決、listener 再接続、
+  3389	  // panel 反映までの手順を束ねるが、判定本体や retry policy 自体は持たない。
+  3390	  // 個別の resolver / binder / render 詳細は下位 helper へ委譲する。
+  3391	  // -----------------------------------------------------------------------------
+  3392	
+  3393	  // [binder/cue: recovery] attach / recovery の再初期化入口。
+  3394	  // track 再選択・listener 再接続・panel 反映を最小差分でまとめて行う。
+  3395	  // clearInternalSubtitleState / selectPrimaryAndSecondaryTracks は
+  3396	  // coordinator 自身の責務ではなく、将来分離可能な implementation detail として扱う。
+  3397	  function runInitialCueRecoveryRender(reason = "unknown") {
+  3398	    if (!hasRecoverableInitialCue()) return false;
+  3399	
+  3400	    panelUi.applyPanelState(`initial_recovery:${reason}`);
+  3401	    logContent("initial cue recovery render", {
+  3402	      reason,
+  3403	      primaryActiveCues: getTrackActiveCuesLength(state.primaryTrack),
+  3404	      secondaryActiveCues: getTrackActiveCuesLength(state.secondaryTrack),
+  3405	    });
+  3406	    return true;
+  3407	  }
+  3408	
+  3409	  function tryCompleteInitialCueRecovery(reason, completeRecovery) {
+  3410	    if (!runInitialCueRecoveryRender(reason)) return false;
+  3528	        : null;
+  3529	    const uiView =
+  3530	      subtitleViewResolver &&
+  3531	      typeof subtitleViewResolver.resolveUiSubtitleView === "function"
+  3532	        ? subtitleViewResolver.resolveUiSubtitleView(
+  3533	            overlaySequence?.blocks,
+  3534	            overlaySequence?.currentIndex,
+  3535	            overlaySequence?.meta,
+  3536	          )
+  3537	        : null;
+  3538	
+  3539	    const resolvedSecondaryText =
+  3540	      Array.isArray(uiView?.subLines) && uiView.subLines.length > 0
+  3541	        ? uiView.subLines.join("\n")
+  3542	        : getCurrentCueText(secondaryBoundTrack);
+  3543	
+  3544	    if (secondaryBoundTrack) {
+  3545	      renderSecondarySubtitle(resolvedSecondaryText, secondaryBoundTrack);
+  3546	    }
+  3547	  }
+  3548	
+  3549	  // [startup path: initial bilingual start]
+  3550	  // 設定完了時の通常起動入口。
+  3551	  // 未設定時は notice 表示と panel close のみを行い、通常の track attach / UI build は進めない。
+  3552	  // track 選択・panelVisible 復元・UI 構築をこの経路でまとめて行う。
+  3553	  async function startBilingual(options = {}) {
+  3554	    logContent("startBilingual trace", {
+  3555	      panelVisible: state.panelVisible,
+  3556	      keepPanelVisible:
+  3557	        typeof options.keepPanelVisible === "boolean"
+  3558	          ? options.keepPanelVisible
+  3559	          : null,
+  3560	    });
+  3561	    console.trace("startBilingual trace");
+  3562	    if (!state.video) return;
+  3563	
+  3564	    const requestedSettings = state.requestedContentSettings || {};
+  3565	    if (!isLanguageSelectionReady(requestedSettings)) {
+  3566	      state.panelVisible = false;
+  3567	      destroyUiHosts();
+  3568	      applyLayout(false);
+  3569	      showLanguageSetupNotice();
+  3570	      logContentSettings(
+  3571	        "startBilingual skipped: language selection incomplete",
+  3572	        {
+  3573	          primaryLang: requestedSettings.primaryLang || "",
+  3574	          secondaryLang: requestedSettings.secondaryLang || "",
+  3575	        },
+  3576	      );
+  3577	      return;
+  3578	    }
+  3579	
+  3580	    hideLanguageSetupNotice();
+  3581	
+  3582	    if (!isPlaybackPageReady()) {
+  3583	      logContent("startBilingual skipped: playback not ready", {
+  3584	        ...getPlaybackContextLogPayload(),
+  3585	      });
+  3586	      return;
+  3587	    }
+  3588	
+  3589	    syncHistoryContextWithPlayback("startBilingual");
+  3590	
+  3591	    bindTracks();
+  3592	
+  3593	    logContentSubtitle("Selected tracks detail", {
+  3594	      requestedPrimaryLang: state.contentSettings.primaryLang,
+  3595	      requestedSecondaryLang: state.contentSettings.secondaryLang,
+  3596	      primaryTrack: state.primaryTrack
+  3597	        ? {
+  3598	            language: state.primaryTrack.language,
+  3599	            label: state.primaryTrack.label,
+  3600	            kind: state.primaryTrack.kind,
+  3601	            mode: state.primaryTrack.mode,
+  3602	            cues: state.primaryTrack.cues ? state.primaryTrack.cues.length : 0,
+  3603	            activeCues: state.primaryTrack.activeCues
+  3604	              ? state.primaryTrack.activeCues.length
+  3605	              : 0,
+  3606	          }
+  3607	        : null,
+  3608	      secondaryTrack: state.secondaryTrack
+  3609	        ? {
+  3610	            language: state.secondaryTrack.language,
+  3611	            label: state.secondaryTrack.label,
+  3612	            kind: state.secondaryTrack.kind,
+  3613	            mode: state.secondaryTrack.mode,
+  3614	            cues: state.secondaryTrack.cues
+  3615	              ? state.secondaryTrack.cues.length
+  3616	              : 0,
+  3617	            activeCues: state.secondaryTrack.activeCues
+  3618	              ? state.secondaryTrack.activeCues.length
+  3619	              : 0,
+  3620	          }
+  3621	        : null,
+  3622	    });
+  3623	
+  3624	    const sidebarEnabledSetting = state.contentSettings.showSidebar !== false;
+  3625	
+  3626	    if (typeof options.keepPanelVisible === "boolean") {
+  3627	      state.panelVisible = options.keepPanelVisible;
+  3628	    } else {
+  3629	      state.panelVisible = sidebarEnabledSetting;
+  3630	    }
+  3631	
+  3632	    logContent("startBilingual panelVisible applied", {
+  3633	      panelVisible: state.panelVisible,
+  3634	      keepPanelVisible:
+  3635	        typeof options.keepPanelVisible === "boolean"
+  3636	          ? options.keepPanelVisible
+  3637	          : null,
+  3638	      showSidebarSetting: state.contentSettings.showSidebar,
+  3639	    });
+  3640	    console.trace("startBilingual panelVisible applied");
+  3641	
+  3642	    buildUi();
+  3643	    ensureSecondarySubtitleElement();
+  3644	    if (state.panelVisible) panelUi.showRightPanel();
+  3645	    else panelUi.hideRightPanel();
+  3646	
+  3647	    if (state.secondaryTrack) {
+  3648	      renderSecondarySubtitle(
+  3649	        getCurrentCueText(state.secondaryTrack),
+  3650	        state.secondaryTrack,
+  3651	      );
+  3652	    }
+  3653	
+  3654	    panelUi.applyPanelState("startBilingual_ready");
+  3655	    scheduleInitialCueRecovery();
+  3656	    scheduleControlSettlingBurst("startBilingual");
+  3657	
+  3658	    logContentSubtitle("startBilingual ready", {
+  3659	      injectedInto: state.dialogEl ? "dialog.playback-view" : "document.body",
+  3660	      contentKey: state.currentContentKey,
+
+=== testlog secondary render ===
