@@ -20,7 +20,7 @@
     preferredAiProvider: "auto",
   };
 
-  const DEBUG_SECONDARY_SUBS = true;
+  const DEBUG_SECONDARY_SUBS = false;
   // Optional probe logs for #19 regressions. Keep false in normal operation.
   const DEBUG_PANEL_PROBE = true;
   const LOG_CATEGORIES = Object.freeze({
