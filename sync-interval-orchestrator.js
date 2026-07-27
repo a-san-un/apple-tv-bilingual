@@ -321,67 +321,6 @@
         };
       }
 
-      function shouldEscalateSameTrackUnreadableRecovery({
-        recoveryDecision,
-        millisSinceLargeSeek,
-        mergedSubtitleHealth,
-        resolverObservation,
-      }) {
-        if (!initialCueRecovery?.dispatch) return false;
-        if (recoveryDecision?.action !== "force-rebind") return false;
-
-        const missCount = recoveryDecision.secondaryLane?.missCount ?? 0;
-        if (missCount < SAME_TRACK_UNREADABLE_RECOVERY_MISS_COUNT) return false;
-
-        const withinSeekWindow =
-          Number.isFinite(millisSinceLargeSeek) &&
-          millisSinceLargeSeek <= SAME_TRACK_UNREADABLE_SEEK_WINDOW_MS;
-
-        if (!withinSeekWindow) return false;
-        if (!resolverObservation?.sameTrackUnreadableNow) return false;
-        if (!mergedSubtitleHealth?.derived?.primaryHealthy) return false;
-
-        return true;
-      }
-
-      function dispatchEscalatedSecondaryRecovery({
-        recoveryDecision,
-        effectiveSecondaryLanguage,
-        millisSinceLargeSeek,
-        resolverObservation,
-      }) {
-        logContent?.("secondary recovery same-track-unreadable-escalated", {
-          reason: "same_track_unreadable_repeated_miss",
-          effectiveSecondaryLanguage,
-          recoveryAction: recoveryDecision?.action || "",
-          recoveryReason: recoveryDecision?.reason || "",
-          missCount: recoveryDecision?.secondaryLane?.missCount ?? null,
-          millisSinceLargeSeek,
-          resolvedSecondaryTrackLanguage:
-            resolverObservation?.resolvedSecondaryTrackLanguage || "",
-          resolvedSecondaryTrackKind:
-            resolverObservation?.resolvedSecondaryTrackKind || "",
-          resolvedSecondaryTrackMode:
-            resolverObservation?.resolvedSecondaryTrackMode || "",
-          resolvedSecondaryCuesLength:
-            resolverObservation?.resolvedSecondaryCuesLength ?? 0,
-          resolvedSecondaryActiveCuesLength:
-            resolverObservation?.resolvedSecondaryActiveCuesLength ?? 0,
-          resolvedSecondaryCueTextLength:
-            resolverObservation?.resolvedSecondaryCueTextLength ?? 0,
-          resolvedSecondaryHasCueOverlapAtCurrentTime:
-            resolverObservation?.resolvedSecondaryHasCueOverlapAtCurrentTime ??
-            false,
-          sameTrackUnreadableNow:
-            resolverObservation?.sameTrackUnreadableNow ?? false,
-        });
-
-        initialCueRecovery?.dispatch?.("secondary-same-track-unreadable", {
-          video: state.video,
-          requestedSecondaryLang: getRequestedSecondaryLang?.(),
-          cueController,
-        });
-      }
 
       // ---------------------------------------------------------
       // logSecondarySyncContextIfNeeded
@@ -501,8 +440,19 @@
                 mergedSubtitleHealth?.derived?.secondaryHealthy ?? null,
               resolvedSecondaryTrackLanguage:
                 resolverObservation?.resolvedSecondaryTrackLanguage || "",
+              resolvedSecondaryTrackKind:
+                resolverObservation?.resolvedSecondaryTrackKind || "",
+              resolvedSecondaryTrackMode:
+                resolverObservation?.resolvedSecondaryTrackMode || "",
+              resolvedSecondaryCuesLength:
+                resolverObservation?.resolvedSecondaryCuesLength ?? 0,
+              resolvedSecondaryActiveCuesLength:
+                resolverObservation?.resolvedSecondaryActiveCuesLength ?? 0,
               resolvedSecondaryCueTextLength:
                 resolverObservation?.resolvedSecondaryCueTextLength ?? 0,
+              resolvedSecondaryHasCueOverlapAtCurrentTime:
+                resolverObservation?.resolvedSecondaryHasCueOverlapAtCurrentTime ??
+                false,
             },
           }),
         );
@@ -777,28 +727,6 @@
           resolverObservation,
           millisSinceLargeSeek,
         });
-
-        if (
-          shouldEscalateSameTrackUnreadableRecovery({
-            recoveryDecision,
-            millisSinceLargeSeek,
-            mergedSubtitleHealth,
-            resolverObservation,
-          })
-        ) {
-          dispatchEscalatedSecondaryRecovery({
-            recoveryDecision,
-            effectiveSecondaryLanguage,
-            millisSinceLargeSeek,
-            resolverObservation,
-          });
-
-          return {
-            now,
-            hasSecondarySignal,
-            hasPrimarySignal,
-          };
-        }
 
         triggerSecondaryRecovery({
           recoveryDecision,
