@@ -497,373 +497,49 @@
     saveHistoryForContentKey(state.currentContentKey, nextHistory);
   }
 
-
-// =====================================================================
-// Section 3: UI - Secondary Subtitle DOM
-// Role:
-// - secondary subtitle element / panel host の確保
-// - secondary subtitle の描画入口
-// Keep in content.js:
-// - host ensure / render 呼び出し順 / minimal DOM bridge
-// Move to modules:
-// - panel shell / subtitle block / overlay render details
-// =====================================================================
-
-  // secondary subtitle render 時の debug log 用 payload。
-  // DOM 重複や cue 解決結果を短く追える最小情報だけをまとめる。
-  function getSecondaryRenderLogPayload(text, track, elementCount) {
-    return {
-      textPreview: String(text || "").slice(0, 40),
-      trackLanguage: track?.language || "",
-      activeCuesLength: getTrackActiveCuesLength(track),
-      secondaryElementCount: elementCount,
-    };
-  }
-
-  // secondary subtitle 要素は panel host 配下と既存 panel 配下の両方を考慮しつつ、
-  // data 属性 / class のどちらでも拾えるようにしておく。
-  function getSecondarySubtitleElements() {
-    return document.querySelectorAll(
-      "[data-secondary-subtitle], .dual-subtitles-secondary",
-    );
-  }
-
-  function countSecondarySubtitleElements() {
-    return getSecondarySubtitleElements().length;
-  }
-
-  // 既存要素が古い class / data 属性の片方しか持っていない場合でも、
-  // 現行セレクタで再利用できるように normalize する。
-  function normalizeSecondarySubtitleElement(el) {
-    if (!el) return null;
-
-    if (!el.hasAttribute("data-secondary-subtitle")) {
-      el.setAttribute("data-secondary-subtitle", "");
-    }
-    if (!el.classList.contains("dual-subtitles-secondary")) {
-      el.classList.add("dual-subtitles-secondary");
-    }
-
-    return el;
-  }
-
-  // secondary subtitle を差し込む panel host を確保する。
-  // host がまだ無い場合だけ right panel を生成し、再取得して返す。
-  function getOrCreatePanelHost() {
-    let panelHost = getTarget().querySelector("#atv-panel-host");
-    if (!panelHost) {
-      panelUi.createRightPanel();
-      panelHost = getTarget().querySelector("#atv-panel-host");
-    }
-    return panelHost || null;
-  }
-
-  // secondary subtitle panel 本体を通常 DOM / shadowRoot の両方から探し、
-  // 見つかった既存 panel には現行セレクタを補って再利用しやすくする。
-  function findSecondarySubtitlePanel(panelHost) {
-    let panel = document.querySelector("[data-dual-subtitles-panel]");
-    if (!panel) {
-      panel = document.querySelector(".dual-subtitles-panel");
-    }
-    if (!panel && panelHost?.shadowRoot) {
-      panel = panelHost.shadowRoot.querySelector(
-        "[data-dual-subtitles-panel], .dual-subtitles-panel",
-      );
-    }
-
-    if (panel && panelHost?.shadowRoot?.contains(panel)) {
-      panel.setAttribute("data-dual-subtitles-panel", "");
-      panel.classList.add("dual-subtitles-panel");
-    }
-
-    return panel || null;
-  }
-
-  // panel host 直下の secondary subtitle 要素は表示しない。
-  // 実表示は slot / panel shell 側に委ねるため、直下要素は hidden layer として扱う。
-  function ensurePanelSlotLayerStyle() {
-    if (document.getElementById(PANEL_SLOT_LAYER_STYLE_ID)) return;
-
-    const style = document.createElement("style");
-    style.id = PANEL_SLOT_LAYER_STYLE_ID;
-    style.textContent = `
-      #atv-panel-host > .dual-subtitles-secondary,
-      #atv-panel-host > [data-secondary-subtitle] {
-        display: none !important;
-      }
-    `;
-    document.head.appendChild(style);
-  }
-
-  // secondary subtitle 表示先の element を 1 個だけ保証する。
-  // 既存要素が複数あれば先頭だけ残して normalize し、
-  // 何も無ければ panel host / panel shell を確保して新規作成する。
-  function ensureSecondarySubtitleElement() {
-    const requestedSettings = state.requestedContentSettings || {};
+// ---------------------------------------------------------
+// Section 3: Secondary Subtitle DOM（module へ委譲）
+// content.js は module を生成して wiring するだけの coordinator になる。
+// 既存 caller（cue-controller.js / sync-interval-orchestrator.js /
+// panel-ui.js / settings-runtime.js）は同名関数の参照を deps 経由で
+// 受け取るだけなので、ここで同名の shim を維持すれば他ファイルは無修正。
+// ---------------------------------------------------------
+const secondaryDomController = window.ATVB?.createSecondarySubtitleDom?.({
+  getTarget,
+  panelUi,
+  isSecondaryDomReady: () => {
+    const requestedSettings = state.requestedContentSettings;
     const effectiveSettings = {
-      primaryLang:
-        requestedSettings.primaryLang ||
-        state.contentSettings.primaryLang ||
-        "",
+      primaryLang: requestedSettings.primaryLang || state.contentSettings.primaryLang,
       secondaryLang:
         requestedSettings.secondaryLang ||
         state.requestedSecondaryLang ||
-        state.contentSettings.secondaryLang ||
-        "",
+        state.contentSettings.secondaryLang,
     };
+    return isLanguageSelectionReady(effectiveSettings);
+  },
+  getTrackActiveCuesLength,
+  getCurrentCueText,
+  normalizeSubtitleText,
+  logContentSubtitle,
+  isDebugEnabled: () => DEBUGSECONDARYSUBS,
+  idleClearMs: SECONDARYSUBTITLEIDLECLEARMS,
+  panelSlotLayerStyleId: PANELSLOTLAYERSTYLEID,
+}) ?? null;
 
-    if (DEBUG_SECONDARY_SUBS) {
-      logContent("secondary-dom ensure-start", {
-        existingElementCount: getSecondarySubtitleElements().length,
-        hasDialogEl: Boolean(state.dialogEl),
-        hasPanelShadowRoot: Boolean(state.panelShadowRoot),
-        requestedSecondaryLang: effectiveSettings.secondaryLang || "",
-      });
-    }
+// 既存 caller 互換のための shim（関数名・引数の positional 順序を変更しない）
+function ensureSecondarySubtitleElement() {
+  return secondaryDomController?.ensure() ?? null;
+}
 
-    if (!isLanguageSelectionReady(effectiveSettings)) {
-      return null;
-    }
+function renderSecondarySubtitle(text, track, reason) {
+  secondaryDomController?.render(text, track, reason || 'legacy-call');
+}
 
-    ensurePanelSlotLayerStyle();
-
-    const allExisting = getSecondarySubtitleElements();
-    if (allExisting.length > 1) {
-      const keep = normalizeSecondarySubtitleElement(allExisting[0]);
-
-      for (let i = 1; i < allExisting.length; i++) {
-        allExisting[i].remove();
-      }
-
-      if (DEBUG_SECONDARY_SUBS) {
-        logContent(
-          "secondary duplicate elements cleaned",
-          getSecondaryRenderLogPayload(
-            keep.textContent || "",
-            secondaryTrackBound,
-            allExisting.length,
-          ),
-        );
-      }
-
-      return keep;
-    }
-
-    if (allExisting.length === 1) {
-      return normalizeSecondarySubtitleElement(allExisting[0]);
-    }
-
-    const panelHost = getOrCreatePanelHost();
-
-    if (DEBUG_SECONDARY_SUBS) {
-      logContent("secondary-dom host-resolved", {
-        hasPanelHost: Boolean(panelHost),
-        existingElementCount: getSecondarySubtitleElements().length,
-      });
-    }
-
-    if (!panelHost) return null;
-
-    const ensuredAfterPanel = document.querySelector(
-      "[data-secondary-subtitle]",
-    );
-    if (ensuredAfterPanel) {
-      return normalizeSecondarySubtitleElement(ensuredAfterPanel);
-    }
-
-    findSecondarySubtitlePanel(panelHost);
-
-    if (DEBUG_SECONDARY_SUBS) {
-      logContent("secondary-dom create-element", {
-        hasPanelHost: Boolean(panelHost),
-        panelHasShadowRoot: Boolean(panelHost?.shadowRoot),
-        existingElementCount: getSecondarySubtitleElements().length,
-      });
-    }
-
-    const el = document.createElement("div");
-    el.setAttribute("data-secondary-subtitle", "");
-    el.className = "dual-subtitles-secondary";
-    el.slot = "secondary-subtitle-slot";
-    panelHost.appendChild(el);
-
-    if (DEBUG_SECONDARY_SUBS) {
-      logContent("secondary element ensured");
-    }
-
-    return el;
-  }
-
-  // [render: panel shell apply]
-  // secondary subtitle の描画は、要素確保 → cue text 解決 → idle clear 判定 →
-  // text / language 反映、の順で行う。
-  function renderSecondarySubtitle(text, track) {
-    if (DEBUG_SECONDARY_SUBS) {
-      logContent("secondary-dom render-entry", {
-        textLength: String(text || "").length,
-        trackLanguage: track?.language || "",
-        trackMode: track?.mode || "",
-        activeCuesLength: getTrackActiveCuesLength(track),
-        existingElementCount: countSecondarySubtitleElements(),
-        lastSecondaryTextLength: String(lastSecondaryText || "").length,
-        lastSecondarySignalAt,
-      });
-    }
-
-    let el = ensureSecondarySubtitleElement();
-    if (!el) return;
-
-    const elementCountBefore = countSecondarySubtitleElements();
-    if (elementCountBefore > 1) {
-      if (DEBUG_SECONDARY_SUBS) {
-        logContent(
-          "secondary duplicate elements cleaned",
-          getSecondaryRenderLogPayload(text, track, elementCountBefore),
-        );
-      }
-      el = ensureSecondarySubtitleElement();
-    }
-
-    if (!el) {
-      if (DEBUG_SECONDARY_SUBS) {
-        logContent("secondary element missing, recreating");
-      }
-      el = ensureSecondarySubtitleElement();
-    }
-    if (!el) return;
-
-    const elementCount = countSecondarySubtitleElements();
-    const activeCuesLength = getTrackActiveCuesLength(track);
-
-    let resolvedText = text || "";
-    if (!resolvedText && activeCuesLength > 0) {
-      resolvedText = getCurrentCueText(track) || "";
-      if (DEBUG_SECONDARY_SUBS) {
-        logContent(
-          "secondary cue text resolved",
-          getSecondaryRenderLogPayload(resolvedText, track, elementCount),
-        );
-      }
-    }
-
-    resolvedText = normalizeSubtitleText(resolvedText);
-    let finalText = resolvedText;
-    const now = Date.now();
-
-    if (activeCuesLength > 0 || resolvedText) {
-      lastSecondarySignalAt = now;
-    }
-
-    const willRetainPreviousText =
-      !finalText &&
-      !!lastSecondaryText &&
-      lastSecondarySignalAt > 0 &&
-      now - lastSecondarySignalAt <= SECONDARY_SUBTITLE_IDLE_CLEAR_MS;
-
-    if (finalText) {
-      lastSecondaryText = finalText;
-      lastSecondaryTextAt = now;
-    } else if (willRetainPreviousText) {
-      finalText = lastSecondaryText;
-      if (DEBUG_SECONDARY_SUBS) {
-        logContent(
-          "secondary subtitle retained until next cue or idle clear",
-          getSecondaryRenderLogPayload(finalText, track, elementCount),
-        );
-      }
-    } else if (
-      !finalText &&
-      lastSecondarySignalAt > 0 &&
-      now - lastSecondarySignalAt > SECONDARY_SUBTITLE_IDLE_CLEAR_MS
-    ) {
-      if (el.textContent && DEBUG_SECONDARY_SUBS) {
-        logContent(
-          "secondary subtitle cleared after idle timeout",
-          getSecondaryRenderLogPayload("", track, elementCount),
-        );
-      }
-      lastSecondaryText = "";
-      lastSecondaryTextAt = 0;
-      lastSecondarySignalAt = 0;
-    }
-
-    if (DEBUG_SECONDARY_SUBS) {
-      logContent("secondary-dom render-final", {
-        resolvedTextLength: String(resolvedText || "").length,
-        finalTextLength: String(finalText || "").length,
-        activeCuesLength,
-        elementCount,
-        willClear: !finalText,
-        willRetainPreviousText,
-      });
-    }
-
-    if (DEBUG_SECONDARY_SUBS) {
-      logContent(
-        "secondary render called",
-        getSecondaryRenderLogPayload(finalText, track, elementCount),
-      );
-    }
-
-    el.textContent = finalText;
-    el.dataset.language = track?.language || "";
-    if (DEBUG_SECONDARY_SUBS) {
-      logContent("secondary-dom render-applied", {
-        appliedTextLength: String(el.textContent || "").length,
-        appliedLanguage: el.dataset.language || "",
-        isConnected: Boolean(el.isConnected),
-        elementTagName: el.tagName || "",
-        elementClassName: el.className || "",
-        elementDataSecondarySubtitle:
-          el.getAttribute("data-secondary-subtitle"),
-      });
-    }
-
-    logSubtitlePanelState("after-renderSecondarySubtitle");
-  }
-
-  function logSubtitlePanelState(tag) {
-    try {
-      const panelHost = getTarget().querySelector("#atv-panel-host");
-      const secondaryEl = panelHost?.querySelector("[data-secondary-subtitle]");
-      const snapshot = state.lastPanelRenderSnapshot || {};
-      const currentSubtitleBlock =
-        state.currentSubtitleBlock || snapshot.currentSubtitleBlock || null;
-      const payload = {
-        tag,
-        allBlocksCount: snapshot.allBlocksCount ?? 0,
-        historyCount: state.subtitleHistory.length,
-        panelPastCount: Array.isArray(state.panelPastBlocks)
-          ? state.panelPastBlocks.length
-          : 0,
-        hasCurrentBlock: Boolean(currentSubtitleBlock),
-        currentPrimary: currentSubtitleBlock?.primaryText || "",
-        currentSecondary: currentSubtitleBlock?.secondaryText || "",
-        secondaryElText: secondaryEl?.textContent || "",
-      };
-
-      if (tag === "after-renderSecondarySubtitle") {
-        const signature = JSON.stringify({
-          allBlocksCount: payload.allBlocksCount,
-          historyCount: payload.historyCount,
-          panelPastCount: payload.panelPastCount,
-          hasCurrentBlock: payload.hasCurrentBlock,
-          currentPrimary: payload.currentPrimary,
-          currentSecondary: payload.currentSecondary,
-          secondaryElText: payload.secondaryElText,
-        });
-        if (signature === state.lastAfterRenderSecondarySnapshotSignature) {
-          return;
-        }
-        state.lastAfterRenderSecondarySnapshotSignature = signature;
-      }
-    } catch (error) {
-      console.warn("[ATVB] panel state snapshot failed", {
-        tag,
-        error: String(error),
-      });
-    }
-  }
+// initial cue recovery entry（現時点では large-seek 断面のみを対象）
+const initialCueRecovery = window.ATVB?.createInitialCueRecovery?.({
+  logContentSubtitle,
+}) ?? null;
 
 // =====================================================================
 // Section 4: Sync Interval - Periodic Orchestration

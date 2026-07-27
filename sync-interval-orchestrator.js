@@ -1,4 +1,22 @@
-// sync-interval-orchestrator.js
+// =============================================================
+// Apple TV+ Bilingual Subtitles - sync-interval-orchestrator.js
+// version: 1.1.0
+// Issue #32 Round 11: large-seek 直後の initial cue recovery entry を接続
+//
+// Role（責務）
+// - 定期 sync interval（periodic sync）から呼ばれる3つの処理を担当する
+//   1) refreshPlaybackContext : video/dialog の再取得、content key 切替検知
+//   2) detectLargeSeek        : 大きな seek の検出と、検出後の1回限りの
+//                                initial cue recovery（large-seek断面）dispatch
+//   3) runSecondaryRecoveryPass : secondary track の継続的な missing 監視、
+//                                missCount / termination を含む periodic recovery
+//
+// initial cue recovery（Round 11 追加分）との役割分担
+// - detectLargeSeek 内の dispatch は「1回だけ」の即時描画ブリッジ
+// - runSecondaryRecoveryPass は missCount / termination を持つ継続監視
+//   （この2つの責務は混ぜない）
+// =============================================================
+
 (function () {
   "use strict";
 
@@ -30,6 +48,9 @@
         renderSecondarySubtitle,
         resolverDeps,
         panelUi,
+        // Issue #32 Round 11: large-seek 直後の initial cue recovery entry
+        initialCueRecovery,
+        getRequestedSecondaryLang,
       } = services;
 
       void state;
@@ -51,7 +72,14 @@
       void renderSecondarySubtitle;
       void resolverDeps;
       void panelUi;
+      void initialCueRecovery;
+      void getRequestedSecondaryLang;
 
+      // ---------------------------------------------------------
+      // refreshPlaybackContext
+      // video/dialog を再取得し、currentSrc の変化や content key の切替を検知する。
+      // video 自体が変わった場合は reloadSettingsAndReinitialize で再初期化する。
+      // ---------------------------------------------------------
       function refreshPlaybackContext() {
         const found = getVideoAndDialog();
         const nextVideo = found?.video || state.video;
@@ -79,6 +107,8 @@
           });
         }
 
+        // video オブジェクト自体が変わった、または currentSrc が変わった場合は
+        // 再生コンテキストを丸ごと再初期化する（トラック再解決を含む）。
         if (found && (found.video !== state.video || hasCurrentSrcChanged)) {
           state.video = found.video;
           state.dialogEl = found.dialog;
@@ -88,6 +118,8 @@
           return;
         }
 
+        // video は同じだが content key（タイトル等）が切り替わった場合は
+        // history context だけ切り替えて再描画する。
         if (found && state.video) {
           const switched =
             syncHistoryContextWithPlayback("content_key_changed");
@@ -98,6 +130,13 @@
         }
       }
 
+      // ---------------------------------------------------------
+      // detectLargeSeek
+      // 前回観測した currentTime との差分が閾値(3秒)を超えたら large seek とみなす。
+      // 検出後は panel state を再適用し、
+      // Round 11 で追加した initial cue recovery（large-seek 断面）を1回 dispatch する。
+      // missCount/termination はここでは扱わない（それは runSecondaryRecoveryPass 側）。
+      // ---------------------------------------------------------
       function detectLargeSeek() {
         const currentVideoTime = Number(state.video?.currentTime ?? 0);
         const previousObservedTime = Number(state.lastObservedVideoTime);
@@ -117,6 +156,7 @@
           lastLargeSeekAt: state.lastLargeSeekAt ?? 0,
         });
 
+        // 次回の比較用に、今回観測した currentTime を保存する。
         state.lastObservedVideoTime = Number.isFinite(currentVideoTime)
           ? currentVideoTime
           : null;
@@ -135,9 +175,24 @@
           textTrackCount: state.video?.textTracks?.length ?? 0,
         });
 
+        // panel 側の再同期（既存の resync 導線）
         panelUi.applyPanelState("sync_interval_large_seek_resync");
+
+        // Issue #32 Round 11 追加:
+        // large seek 直後、既存の resolve → mode policy → bind → render
+        // （cueController.syncSecondarySubtitleTrack）を1回だけ dispatch する。
+        // attach / rebind 断面は本 module の対象外（content.js 側の既存導線に委ねる）。
+        initialCueRecovery?.dispatch("large-seek", {
+          video: state.video,
+          requestedSecondaryLang: getRequestedSecondaryLang?.(),
+          cueController,
+        });
       }
 
+      // ---------------------------------------------------------
+      // buildSecondarySyncLogPayload
+      // secondary sync 関連ログの共通 payload を組み立てるヘルパー。
+      // ---------------------------------------------------------
       function buildSecondarySyncLogPayload({
         effectiveSecondaryLanguage,
         secondaryActiveCues,
@@ -175,6 +230,11 @@
         };
       }
 
+      // ---------------------------------------------------------
+      // buildSyncIntervalSubtitleSnapshot
+      // 現在の primary/secondary track の cue 状態をまとめて取得するスナップショット。
+      // periodic recovery の判定材料として使う。
+      // ---------------------------------------------------------
       function buildSyncIntervalSubtitleSnapshot(now) {
         const secondaryActiveCues =
           getTrackActiveCuesLength?.(state.secondaryTrack) ?? 0;
@@ -216,6 +276,10 @@
         };
       }
 
+      // ---------------------------------------------------------
+      // logSecondarySyncContextIfNeeded
+      // 前回ログした状態と変化がある場合のみ sync context ログを出す（ログ肥大化防止）。
+      // ---------------------------------------------------------
       function logSecondarySyncContextIfNeeded({
         previousSecondaryTrack,
         effectiveSecondaryLanguage,
@@ -264,6 +328,10 @@
         );
       }
 
+      // ---------------------------------------------------------
+      // logSecondaryRecoveryTermination
+      // recovery が missCount 上限などで terminated になった場合にログを残す。
+      // ---------------------------------------------------------
       function logSecondaryRecoveryTermination({
         recoveryDecision,
         effectiveSecondaryLanguage,
@@ -296,6 +364,11 @@
         );
       }
 
+      // ---------------------------------------------------------
+      // runSecondaryResolverProbeIfNeeded
+      // デバッグ用: 現在の secondary track と resolver が選び直す track を比較するプローブ。
+      // debugPanelProbe が false の場合は何もしない。
+      // ---------------------------------------------------------
       function runSecondaryResolverProbeIfNeeded({
         effectiveSecondaryLanguage,
         secondaryCueText,
@@ -339,6 +412,12 @@
         });
       }
 
+      // ---------------------------------------------------------
+      // triggerSecondaryRecovery
+      // recoveryDecision が recover / force-rebind のときだけ実際に
+      // syncSecondarySubtitleTrack を呼び、前後の状態をログに残す。
+      // これは periodic sync の一部であり、missCount を持つ継続監視の実行部分。
+      // ---------------------------------------------------------
       function triggerSecondaryRecovery({
         recoveryDecision,
         effectiveSecondaryLanguage,
@@ -413,6 +492,13 @@
         });
       }
 
+      // ---------------------------------------------------------
+      // runSecondaryRecoveryPass
+      // periodic sync の本体。secondary track の再バインド確認、
+      // 現在の cue 健全性スナップショット取得、recoveryDecision の評価、
+      // 必要なら triggerSecondaryRecovery を呼ぶ、までの一連の流れ。
+      // missCount / termination の判定は cueController.evaluateSecondaryRecovery に委ねる。
+      // ---------------------------------------------------------
       function runSecondaryRecoveryPass(effectiveSecondaryLanguage) {
         const previousSecondaryTrack = state.secondaryTrack;
         syncSecondarySubtitleTrackBinding?.(
@@ -462,6 +548,8 @@
           mergedSubtitleHealth,
         });
 
+        // cueController 側の lane state（missCount/terminated 等）を使って
+        // idle / recover / force-rebind / terminated のいずれかを決定する。
         const recoveryDecision =
           cueController?.evaluateSecondaryRecovery?.({
             now,
