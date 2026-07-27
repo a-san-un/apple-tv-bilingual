@@ -2836,6 +2836,8 @@ function ensureSyncIntervalOrchestrator() {
         renderSecondarySubtitle,
         resolverDeps,
         panelUi,
+        initialCueRecovery,
+        getRequestedSecondaryLang: () => state.requestedSecondaryLang,
       },
     }) || null;
 
