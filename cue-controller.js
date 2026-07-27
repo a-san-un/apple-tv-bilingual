@@ -897,6 +897,11 @@
         const holdView = {
           currentBlock: holdBlock,
           sourceReason: "nearbyRebuildHold",
+          mainLines: holdBlock?.primaryText ? [holdBlock.primaryText] : [],
+          subLines: holdBlock?.secondaryText ? [holdBlock.secondaryText] : [],
+          isStable: false,
+          shouldKeepVisible: true,
+          isEmpty: !holdBlock?.primaryText && !holdBlock?.secondaryText,
         };
 
         state.nearbyRebuildHoldView = holdView;

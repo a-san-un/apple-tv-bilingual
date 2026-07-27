@@ -238,8 +238,16 @@
 
       const mainLines = Array.isArray(view?.mainLines) ? view.mainLines : [];
       const subLines = Array.isArray(view?.subLines) ? view.subLines : [];
+      const hasAnyLines = mainLines.length > 0 || subLines.length > 0;
 
-      p.innerHTML = mainLines.map((line) => renderOverlayLineHtml(line)).filter(Boolean).join("<br>");
+      if (view?.shouldKeepVisible === true && !hasAnyLines) {
+        return;
+      }
+
+      p.innerHTML = mainLines
+        .map((line) => renderOverlayLineHtml(line))
+        .filter(Boolean)
+        .join("<br>");
       s.innerHTML = subLines
         .map((line) =>
           String(line || "")
