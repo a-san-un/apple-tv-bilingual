@@ -501,15 +501,17 @@
 // =====================================================================
 // Section 3: Secondary Subtitle DOM
 // Role:
-// - secondary subtitle element の管理
-// - secondary text の render / clear
-// Keep in content.js:
-// - secondary subtitle DOM の入口 / caller wiring
+// - secondary subtitle DOM の caller wiring
+// - secondary text render / clear の入口
 // - language/settings 依存の ready 判定
+// Keep in content.js:
+// - buildUi / snapshot render から secondary DOM を呼ぶ入口
+// - startup / recovery 断面での caller orchestration
 // Move to modules:
 // - secondary element ensure / text render / idle clear / cleanup
 // Panel host responsibility:
-// - panel host の生成は panel-ui.js
+// - panel host / panel shell の生成は panel-ui.js
+// - secondary subtitle DOM の ensure / render / clear は secondary-subtitle-dom.js
 // =====================================================================
   const debugSecondarySubs =
     typeof DEBUG_SECONDARY_SUBS !== "undefined"
@@ -540,10 +542,14 @@
       panelSlotLayerStyleId: PANEL_SLOT_LAYER_STYLE_ID,
     }) || null;
 
+  // secondary subtitle DOM を ensure する caller 入口。
+  // panel host 生成は行わず、host 既存前提で secondary DOM 側へ委譲する。
   function ensureSecondarySubtitleElement() {
     return secondaryDomController?.ensure() ?? null;
   }
 
+  // secondary text render の薄い橋渡し。
+  // 実際の text resolve / idle clear は secondary DOM module 側に委譲する。
   function renderSecondarySubtitle(text, track, reason) {
     secondaryDomController?.render(text, track, reason || "legacy-call");
   }
@@ -3359,7 +3365,6 @@ function ensureSyncIntervalOrchestrator() {
     console.trace("startBilingual panelVisible applied");
 
     buildUi();
-    ensureSecondarySubtitleElement();
     if (state.panelVisible) panelUi.showRightPanel();
     else panelUi.hideRightPanel();
 
