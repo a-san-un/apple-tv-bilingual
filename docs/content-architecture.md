@@ -258,6 +258,12 @@ Apple TV+ 再生画面では、次の UI 構成を基本とする。
   2. 固定 debug ログセクション
   3. 字幕一覧のスクロール領域（history / current / future）
 
+補足:
+
+- 右字幕パネルの host / shadow root / shell / header action / debug mount は `panel-ui.js` 側の責務とし、panel shell 内の secondary subtitle 用 DOM の ensure / render / clear は `secondary-subtitle-dom.js` に分離する
+- `content.js` は panel host / shell の起動順と secondary subtitle DOM module 呼び出し順を調整する coordinator として振る舞う
+- 詳細な責務境界や module 単位の役割分担は「9.1.2 secondary subtitle DOM 管理」で定義し、ここでは UI のレイアウトと表示モデルの方針に絞って扱う
+
 ### 5.3 current 行モデル
 
 current 表示は、独立 current ブロックを大きく強調する方式ではなく、**字幕一覧内の current 行 + 左側固定幅マーク欄** を基本モデルとする。
@@ -564,12 +570,6 @@ lane observation 層は、TextTrack の runtime 状態を lane 共通 API で観
 そのうえで、mode policy entry point を `resolveTrackModePolicy({ lane, ... })` のような共通インターフェースへ揃えつつ、dangerous な差分（`default-hidden + readability-promote` による showing 昇格や Apple 標準字幕 UI との干渉評価）は当面 secondary lane 固有の実装に留める。  
 `content.js` はこの lane common API を呼び出す thin coordinator として、truth / lane / UI の三層をつなぐ役割のみに専念する。
 
-[補足]
-この追加に合わせて、`### 9.2 binder / cue logic` の方針 bullets にも
-次の 1 行を足すと文書全体の接続がさらに分かりやすい。
-
-- primary / secondary の runtime cue 観測は lane observation / readability helper を通して集約し、救済 policy と分離して扱う
-
 ### 7.5 lane state
 
 recovery の実行状態は lane state で持つ。
@@ -613,6 +613,11 @@ large seek 時は、secondary recovery を **miss limit 付きの runtime retry*
 - 打ち切り後は `terminated` として primary-only 表示へ切り替える
 - `terminated` は次 block または新しい seek で reset されうる
 
+補足:
+
+- large seek 直後には periodic secondary recovery pass とは別に、initial cue recovery の単発 entry を走らせる
+- `sync-interval-orchestrator.js` の `syncIntervalDetectLargeSeek()` は large seek の検知と initial cue recovery への橋渡しを担当し、`initialCueRecovery.dispatch("large-seek", ...)` を通じて attach / rebind / large-seek 直後の current bridge を起動する
+
 ### 7.7 現行採用パラメータ
 
 現行運用値は次のとおり。
@@ -650,6 +655,11 @@ large seek 直後は、secondary sync 後に **近傍 truth rebuild** と **shor
 - hold は truth source ではなく、large seek 直後の UI 空白を避けるための一時 view である
 - hold / guard は latest-only とし、新しい nearby rebuild が来たら古い保護は上書きする
 - hold は次の `onPrimaryCueChange()` で 1 回だけ使い、その後は通常の truth 解決に戻す
+
+補足:
+
+- large seek 直後の bridge と short-lived hold は別責務として扱い、bridge の起動は sync interval orchestration / initial cue recovery entry で、hold の適用は cue-controller 側で行う
+- これにより、large seek 直後の入口制御と UI 側の一時保護を分離しつつ、truth 本体 (`SubtitleBlockSequence`) を直接書き換えない方針を維持する
 
 ### 7.10 通常再生時の hold 制御
 
@@ -772,26 +782,30 @@ secondary subtitle の DOM 管理は、UI shell / render 側の中でも独立�
 
 対象:
 
-- `getSecondarySubtitleElements`
-- `getSecondaryRenderLogPayload`
-- `ensureSecondarySubtitleElement`
-- `renderSecondarySubtitle`
+- `secondary-subtitle-dom.js`
+- `getElements()`
+- `ensure()`
+- `render(text, track, reason?)`
+- `clear(reason?)`
+- `cleanup()`
 
 責務:
 
-- 既存 host / layer / text node の探索
-- data 属性 / class 両対応のセレクタ吸収
-- secondary host / hidden layer / slot の確保
-- idle clear を含む secondary 表示の反映
+- 既存の secondary subtitle DOM 要素群の探索
+- secondary subtitle 用 host / text node の ensure
+- textContent / dataset / class の更新
+- idle clear と duplicate cleanup
+- secondary subtitle の最終描画状態の保持
+- デバッグログ出力のための payload 構築
 
 方針:
 
-- `ensureSecondarySubtitleElement()` を中核にして、探索・正規化・host 確保・描画を 1 セクションとして保つ
-- `ensureSecondarySubtitleElement()` は必要になった時に host / shell を確保する lazy initialization の入口として扱う
-- `renderSecondarySubtitle()` は truth 決定や recovery 判定を持たず、受け取った入力を描画する責務に留める
-- secondary subtitle DOM は Apple TV+ の right panel / slot 構造への依存を吸収する infrastructure 層として扱う
-- 古いセレクタや data 属性差分の吸収は `getSecondarySubtitleElements()` を入口に集約する
-- 将来 `secondaryDom.js` 相当に切り出す場合も、このグループを分割単位として扱う
+- secondary subtitle DOM の探索・確保・描画・idle clear は `secondary-subtitle-dom.js` の責務とする
+- panel host / panel shell の生成責務は持たず、panel host が存在している前提で DOM 管理を行う
+- panel host の生成は `panel-ui.js` 側が担当し、caller (`content.js`) が panel host を先に保証したうえで secondary subtitle DOM module を呼ぶ
+- `ensure()` は必要になった時点で secondary subtitle DOM を lazy に確保する入口とし、panel host そのものを作るための入口にはしない
+- `render()` は truth 決定や recovery 判定を持たず、受け取った入力テキストを正規化して描画する責務に限定する
+- Apple TV+ の right panel / slot 構造への依存吸収は secondary subtitle DOM module 側で行い、panel shell と描画 DOM の責務を混ぜない
 
 ### 9.2 binder / cue logic
 
@@ -819,6 +833,8 @@ secondary subtitle の DOM 管理は、UI shell / render 側の中でも独立�
 - `content.js` は controller 呼び出し、戻り値受け取り、必要最小限の wiring に留める
 - current / history / recovery の truth 判定は可能な限り resolver / controller 側へ寄せる
 - 同じ recovery 条件を `content.js` と controller 側の両方で持たない
+- secondary subtitle の live 描画は `renderSecondarySubtitle` 相当の callback を通じて cue handling 系から利用し、DOM 生成責務は `secondary-subtitle-dom.js` に委ねる
+- primary / secondary の runtime cue 観測は lane observation / readability helper を通して集約し、救済 policy と分離して扱う
 
 #### 9.2.1 sync interval orchestration
 
@@ -844,10 +860,9 @@ sync interval 系は runtime recovery をつなぐ orchestrator 層として 1 �
 方針:
 
 - `ensureSecondaryTrackSyncInterval()` は orchestrator として処理順だけを担当する
-- recovery 材料の採取は `buildSyncIntervalSubtitleSnapshot()` に集約する
-- `buildSyncIntervalSubtitleSnapshot()` が作る snapshot は、recovery 判定層へ渡す入力境界として扱う
-- secondary recovery 本体は `syncIntervalRunSecondaryRecoveryPass()` にまとめる
-- `syncIntervalRunSecondaryRecoveryPass()` は単なる helper 群ではなく、sync interval 内の secondary recovery を束ねる sub-orchestrator として扱う
+- recovery 材料の採取は `buildSyncIntervalSubtitleSnapshot()` に集約し、secondary recovery 判定層への入力境界として扱う
+- `syncIntervalRunSecondaryRecoveryPass()` は定期的な secondary recovery pass を束ねる sub-orchestrator とし、missCount / terminated を持つ継続 retry をここで管理する
+- `syncIntervalDetectLargeSeek()` は large seek の検知だけでなく、必要に応じて initial cue recovery へ bridge する入口とし、attach / rebind / large-seek 時の単発 recovery entry を `initialCueRecovery.dispatch("large-seek", ...)` の形で起動する
 - 判定そのものは `cue-controller.js` / recovery helper 側へ寄せ、`content.js` には復帰フローの配線だけを残す
 
 ### 9.3 playback context
@@ -990,11 +1005,16 @@ runtime-observers.js は、Apple TV+ 再生画面における DOM の構造変�
 
 構成方針:
 
-- UI shell / render 系は 1 セクションに寄せ、secondary subtitle DOM 管理をその内部グループとして保つ
+- UI shell / render 系は 1 セクションに寄せ、secondary subtitle DOM 関連は専用 module への bridge として位置づける
 - sync interval orchestration は binder / cue logic 配下の独立セクションとして保ち、定期実行の順序制御だけを `content.js` に残す
 - playback context 系 helper は再生対象文脈の bridge としてまとまりを維持し、truth / history / UI 表示本体とは混ぜない
 - reinitialize / retry / result bridge、playback controls layout、runtime observers、bootstrap / cleanup は observer / layout / bootstrap 配下の見出しで区画整理する
 - 実装詳細を増やさず、`content.js` には module 間の初期化・イベント配送・多重実行防止ガードのような上位配線を残す
+
+追加到達点:
+
+- secondary subtitle DOM の本体実装は `secondary-subtitle-dom.js` に移し、`content.js` 側には module の DI / bridge / caller 順序制御のみを残す
+- `buildUi()` などの上位初期化導線では、まず `panel-ui.js` による panel host / shell を先に確保し、その後で secondary subtitle DOM module の `ensure()` を呼ぶ構成とする
 
 運用ルール:
 
@@ -1036,6 +1056,7 @@ runtime-observers.js は、Apple TV+ 再生画面における DOM の構造変�
 - content key / history context の詳細実装
 - 大きな DOM グループの個別生成・正規化ロジック
 - runtime missing / force-rebind / miss limit / terminated などの recovery 条件そのもの
+- secondary subtitle 専用 DOM の探索・ensure・render・clear・cleanup
 
 ### 10.3 例外の扱い
 
@@ -1127,6 +1148,9 @@ runtime-observers.js は、Apple TV+ 再生画面における DOM の構造変�
 - `runtime-observers.js`
 - `debug-logger.js`
 - `debug-panel.js`
+- `secondary-subtitle-dom.js`
+- `sync-interval-orchestrator.js`
+- `initial-cue-recovery.js`
 
 ### 13.1 各モジュールの位置づけ
 
@@ -1150,10 +1174,18 @@ runtime-observers.js は、Apple TV+ 再生画面における DOM の構造変�
   - controls の位置・幅・translate 管理
 - `runtime-observers.js`
   - 再接続・再評価・再配置 trigger
-- `panel-renderer.js` / `panel-ui.js`
-  - panel shell と表示反映
+- `panel-ui.js`
+  - panel host / shadow root / shell / header action / panel visibility / debug mount
+- `panel-renderer.js`
+  - panel list / current snapshot / panel state の描画反映
 - `overlay-controller.js`
   - overlay 表示制御
+- `secondary-subtitle-dom.js`
+  - secondary subtitle DOM の探索・ensure・render・clear・cleanup
+- `sync-interval-orchestrator.js`
+  - sync interval 内の runtime snapshot 採取、playback context refresh、large seek detection、secondary recovery pass、initial cue recovery への bridge
+- `initial-cue-recovery.js`
+  - attach / rebind / large-seek 直後の初回 subtitle bridge と initial cue recovery entry
 
 ---
 
@@ -1187,5 +1219,8 @@ runtime-observers.js は、Apple TV+ 再生画面における DOM の構造変�
 - `playbackContext.js` を subtitle truth とは別の「再生対象文脈」として扱う
 - playback controls layout を subtitle sync 本体と切り分ける
 - Apple TV+ 側で active cues が復帰しないケースを Known Issue として切り分ける
+- secondary subtitle DOM を `content.js` から `secondary-subtitle-dom.js` へ分離し、panel shell (`panel-ui.js`) と描画 DOM の責務境界を明確化した
+- panel host 生成は `panel-ui.js`、secondary subtitle DOM の ensure / render / clear は `secondary-subtitle-dom.js`、その接続順序と bridge は `content.js` が担う
+- large seek 直後の initial cue recovery entry を `sync-interval-orchestrator.js` に接続し、sync interval orchestration と cue-controller / initial-cue-recovery の役割分担を明示した
 
 この文書の役割は、今後の調整を「どの値を少し変えるか」ではなく、**どの層が何を担うべきか** の観点でぶれずに進めることである。
