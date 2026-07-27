@@ -105,6 +105,7 @@
     initialCueRecoveryCleanup: [],
   };
 
+  let panelUi = null;
 // =====================================================================
 // Section 1: Logger & Debug Bridge
 // Role:
@@ -497,49 +498,55 @@
     saveHistoryForContentKey(state.currentContentKey, nextHistory);
   }
 
-// ---------------------------------------------------------
-// Section 3: Secondary Subtitle DOM（module へ委譲）
-// content.js は module を生成して wiring するだけの coordinator になる。
-// 既存 caller（cue-controller.js / sync-interval-orchestrator.js /
-// panel-ui.js / settings-runtime.js）は同名関数の参照を deps 経由で
-// 受け取るだけなので、ここで同名の shim を維持すれば他ファイルは無修正。
-// ---------------------------------------------------------
-const secondaryDomController = window.ATVB?.createSecondarySubtitleDom?.({
-  getTarget,
-  panelUi,
-  isSecondaryDomReady: () => {
-    const requestedSettings = state.requestedContentSettings;
-    const effectiveSettings = {
-      primaryLang: requestedSettings.primaryLang || state.contentSettings.primaryLang,
-      secondaryLang:
-        requestedSettings.secondaryLang ||
-        state.requestedSecondaryLang ||
-        state.contentSettings.secondaryLang,
-    };
-    return isLanguageSelectionReady(effectiveSettings);
-  },
-  getTrackActiveCuesLength,
-  getCurrentCueText,
-  normalizeSubtitleText,
-  logContentSubtitle,
-  isDebugEnabled: () => DEBUGSECONDARYSUBS,
-  idleClearMs: SECONDARYSUBTITLEIDLECLEARMS,
-  panelSlotLayerStyleId: PANELSLOTLAYERSTYLEID,
-}) ?? null;
+// =====================================================================
+// Section 3: Secondary Subtitle DOM
+// Role:
+// - secondary subtitle element の管理
+// - secondary text の render / clear
+// Keep in content.js:
+// - secondary subtitle DOM の入口 / caller wiring
+// - language/settings 依存の ready 判定
+// Move to modules:
+// - secondary element ensure / text render / idle clear / cleanup
+// Panel host responsibility:
+// - panel host の生成は panel-ui.js
+// =====================================================================
+  const debugSecondarySubs =
+    typeof DEBUG_SECONDARY_SUBS !== "undefined"
+      ? DEBUG_SECONDARY_SUBS
+      : false;
 
-// 既存 caller 互換のための shim（関数名・引数の positional 順序を変更しない）
-function ensureSecondarySubtitleElement() {
-  return secondaryDomController?.ensure() ?? null;
-}
+  const secondaryDomController =
+    window.ATVB?.createSecondarySubtitleDom?.({
+      getTarget,
+      isSecondaryDomReady: () => {
+        const requestedSettings = state.requestedContentSettings || {};
+        const effectiveSettings = {
+          primaryLang:
+            requestedSettings.primaryLang || state.contentSettings.primaryLang,
+          secondaryLang:
+            requestedSettings.secondaryLang ||
+            state.requestedSecondaryLang ||
+            state.contentSettings.secondaryLang,
+        };
+        return isLanguageSelectionReady(effectiveSettings);
+      },
+      getTrackActiveCuesLength: (...args) => getTrackActiveCuesLength(...args),
+      getCurrentCueText: (...args) => getCurrentCueText(...args),
+      normalizeSubtitleText: (...args) => normalizeSubtitleText(...args),
+      logContentSubtitle: (...args) => logContentSubtitle(...args),
+      isDebugEnabled: () => debugSecondarySubs,
+      idleClearMs: SECONDARY_SUBTITLE_IDLE_CLEAR_MS,
+      panelSlotLayerStyleId: PANEL_SLOT_LAYER_STYLE_ID,
+    }) || null;
 
-function renderSecondarySubtitle(text, track, reason) {
-  secondaryDomController?.render(text, track, reason || 'legacy-call');
-}
+  function ensureSecondarySubtitleElement() {
+    return secondaryDomController?.ensure() ?? null;
+  }
 
-// initial cue recovery entry（現時点では large-seek 断面のみを対象）
-const initialCueRecovery = window.ATVB?.createInitialCueRecovery?.({
-  logContentSubtitle,
-}) ?? null;
+  function renderSecondarySubtitle(text, track, reason) {
+    secondaryDomController?.render(text, track, reason || "legacy-call");
+  }
 
 // =====================================================================
 // Section 4: Sync Interval - Periodic Orchestration
@@ -1172,19 +1179,37 @@ const initialCueRecovery = window.ATVB?.createInitialCueRecovery?.({
 
   const { getTrackActiveCuesLength } = resolverDeps;
 
-  (async function loadEJDict() {
+  async function loadEJDict() {
+    const url = chrome.runtime.getURL("dict/ejdict.json");
+
+    logContentApi("EJDict load start", { url });
+
     try {
-      const url = chrome.runtime.getURL("dict/ejdict.json");
-      const res = await fetch(url);
-      state.ejdictMap = await res.json();
+      const res = await fetch(url, { cache: "no-cache" });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} ${res.statusText}`.trim());
+      }
+
+      const data = await res.json();
+      state.ejdictMap = data && typeof data === "object" ? data : null;
+
       logContentApi("EJDict loaded", {
-        entries: Object.keys(state.ejdictMap).length,
+        url,
+        entries: state.ejdictMap ? Object.keys(state.ejdictMap).length : 0,
       });
     } catch (e) {
-      logContentError("EJDict load failed", { error: e.message });
-      console.warn("[ATV-Bilingual] EJDict load failed:", e.message);
+      state.ejdictMap = null;
+
+      logContentError("EJDict load failed", {
+        url,
+        error: e?.message ?? String(e),
+      });
+
+      console.warn("[ATV-Bilingual] EJDict load failed:", e?.message ?? String(e));
     }
-  })();
+  }
+
+  loadEJDict();
 
   function ejdictLookup(word) {
     if (!state.ejdictMap) return null;
@@ -2730,7 +2755,7 @@ const initialCueRecovery = window.ATVB?.createInitialCueRecovery?.({
     renderPanel,
   });
 
-  const panelUi = createPanelUi({
+  panelUi = createPanelUi({
     state,
     getTarget,
     ensureSecondarySubtitleElement,
@@ -2804,6 +2829,25 @@ const initialCueRecovery = window.ATVB?.createInitialCueRecovery?.({
         logContentError,
       })
     : null;
+
+  const initialCueRecovery = window.ATVB?.createInitialCueRecovery?.({
+    state,
+    cueController,
+    services: {
+      logContent,
+      panelUi,
+      getTrackActiveCuesLength,
+      getCurrentCueText,
+      renderSecondarySubtitle,
+      clearInitialCueRecovery,
+      hasRecoverableInitialCue,
+      tryCompleteInitialCueRecovery,
+      bindInitialCueRecoveryListeners,
+      scheduleInitialCueRecoveryRetries,
+      getRequestedSecondaryLang: () =>
+        state.requestedSecondaryLang || state.contentSettings.secondaryLang,
+    },
+  }) ?? null;
 
 let syncIntervalOrchestrator = null;
 

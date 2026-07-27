@@ -75,6 +75,9 @@
       void initialCueRecovery;
       void getRequestedSecondaryLang;
 
+      const SAME_TRACK_UNREADABLE_RECOVERY_MISS_COUNT = 3;
+      const SAME_TRACK_UNREADABLE_SEEK_WINDOW_MS = 30000;
+
       // ---------------------------------------------------------
       // refreshPlaybackContext
       // video/dialog を再取得し、currentSrc の変化や content key の切替を検知する。
@@ -156,7 +159,6 @@
           lastLargeSeekAt: state.lastLargeSeekAt ?? 0,
         });
 
-        // 次回の比較用に、今回観測した currentTime を保存する。
         state.lastObservedVideoTime = Number.isFinite(currentVideoTime)
           ? currentVideoTime
           : null;
@@ -175,13 +177,10 @@
           textTrackCount: state.video?.textTracks?.length ?? 0,
         });
 
-        // panel 側の再同期（既存の resync 導線）
+        cueController?.resetSecondaryRecoveryLane?.("large-seek");
+
         panelUi.applyPanelState("sync_interval_large_seek_resync");
 
-        // Issue #32 Round 11 追加:
-        // large seek 直後、既存の resolve → mode policy → bind → render
-        // （cueController.syncSecondarySubtitleTrack）を1回だけ dispatch する。
-        // attach / rebind 断面は本 module の対象外（content.js 側の既存導線に委ねる）。
         initialCueRecovery?.dispatch("large-seek", {
           video: state.video,
           requestedSecondaryLang: getRequestedSecondaryLang?.(),
@@ -230,12 +229,55 @@
         };
       }
 
+      function buildResolverObservation(effectiveSecondaryLanguage) {
+        const resolvedSecondaryTrack =
+          resolverDeps?.resolveSecondarySubtitleTrack?.(
+            state.video,
+            effectiveSecondaryLanguage,
+          ) ?? null;
+        const currentTime = Number(state.video?.currentTime ?? NaN);
+        const resolvedSecondaryCuesLength =
+          resolverDeps?.getTrackCuesLength?.(resolvedSecondaryTrack) ?? 0;
+        const resolvedSecondaryActiveCuesLength =
+          getTrackActiveCuesLength?.(resolvedSecondaryTrack) ?? 0;
+        const resolvedSecondaryCueTextLength =
+          resolverDeps?.getCurrentCueTextLength?.(
+            resolvedSecondaryTrack,
+            currentTime,
+          ) ?? 0;
+        const resolvedSecondaryHasCueOverlapAtCurrentTime =
+          resolverDeps?.hasCueOverlapAtTime?.(
+            resolvedSecondaryTrack,
+            currentTime,
+          ) ?? false;
+        const sameTrackUnreadableNow =
+          Boolean(resolvedSecondaryTrack) &&
+          resolvedSecondaryCuesLength > 0 &&
+          resolvedSecondaryActiveCuesLength === 0 &&
+          !resolvedSecondaryHasCueOverlapAtCurrentTime &&
+          resolvedSecondaryCueTextLength === 0;
+
+        return {
+          resolvedSecondaryTrack,
+          currentTime,
+          resolvedSecondaryTrackLanguage:
+            resolvedSecondaryTrack?.language || "",
+          resolvedSecondaryTrackKind: resolvedSecondaryTrack?.kind || "",
+          resolvedSecondaryTrackMode: resolvedSecondaryTrack?.mode || "",
+          resolvedSecondaryCuesLength,
+          resolvedSecondaryActiveCuesLength,
+          resolvedSecondaryCueTextLength,
+          resolvedSecondaryHasCueOverlapAtCurrentTime,
+          sameTrackUnreadableNow,
+        };
+      }
+
       // ---------------------------------------------------------
       // buildSyncIntervalSubtitleSnapshot
       // 現在の primary/secondary track の cue 状態をまとめて取得するスナップショット。
       // periodic recovery の判定材料として使う。
       // ---------------------------------------------------------
-      function buildSyncIntervalSubtitleSnapshot(now) {
+      function buildSyncIntervalSubtitleSnapshot(now, effectiveSecondaryLanguage) {
         const secondaryActiveCues =
           getTrackActiveCuesLength?.(state.secondaryTrack) ?? 0;
         const primaryActiveCues =
@@ -261,6 +303,8 @@
         const hasSecondarySignal =
           secondaryActiveCues > 0 || Boolean(secondaryCueText);
         const hasPrimarySignal = hasPrimaryLiveSignal || hasFreshCurrentPrimary;
+        const resolverObservation =
+          buildResolverObservation(effectiveSecondaryLanguage);
 
         return {
           secondaryActiveCues,
@@ -273,7 +317,70 @@
           hasSecondarySignal,
           hasPrimarySignal,
           mergedSubtitleHealth: getMergedSubtitleHealthSnapshot?.() ?? null,
+          resolverObservation,
         };
+      }
+
+      function shouldEscalateSameTrackUnreadableRecovery({
+        recoveryDecision,
+        millisSinceLargeSeek,
+        mergedSubtitleHealth,
+        resolverObservation,
+      }) {
+        if (!initialCueRecovery?.dispatch) return false;
+        if (recoveryDecision?.action !== "force-rebind") return false;
+
+        const missCount = recoveryDecision.secondaryLane?.missCount ?? 0;
+        if (missCount < SAME_TRACK_UNREADABLE_RECOVERY_MISS_COUNT) return false;
+
+        const withinSeekWindow =
+          Number.isFinite(millisSinceLargeSeek) &&
+          millisSinceLargeSeek <= SAME_TRACK_UNREADABLE_SEEK_WINDOW_MS;
+
+        if (!withinSeekWindow) return false;
+        if (!resolverObservation?.sameTrackUnreadableNow) return false;
+        if (!mergedSubtitleHealth?.derived?.primaryHealthy) return false;
+
+        return true;
+      }
+
+      function dispatchEscalatedSecondaryRecovery({
+        recoveryDecision,
+        effectiveSecondaryLanguage,
+        millisSinceLargeSeek,
+        resolverObservation,
+      }) {
+        logContent?.("secondary recovery escalated", {
+          reason: "same_track_unreadable_repeated_miss",
+          effectiveSecondaryLanguage,
+          recoveryAction: recoveryDecision?.action || "",
+          recoveryReason: recoveryDecision?.reason || "",
+          missCount: recoveryDecision?.secondaryLane?.missCount ?? null,
+          millisSinceLargeSeek,
+          resolvedSecondaryTrackLanguage:
+            resolverObservation?.resolvedSecondaryTrackLanguage || "",
+          resolvedSecondaryTrackKind:
+            resolverObservation?.resolvedSecondaryTrackKind || "",
+          resolvedSecondaryTrackMode:
+            resolverObservation?.resolvedSecondaryTrackMode || "",
+          resolvedSecondaryCuesLength:
+            resolverObservation?.resolvedSecondaryCuesLength ?? 0,
+          resolvedSecondaryActiveCuesLength:
+            resolverObservation?.resolvedSecondaryActiveCuesLength ?? 0,
+          resolvedSecondaryCueTextLength:
+            resolverObservation?.resolvedSecondaryCueTextLength ?? 0,
+          resolvedSecondaryHasCueOverlapAtCurrentTime:
+            resolverObservation?.resolvedSecondaryHasCueOverlapAtCurrentTime ??
+            false,
+          sameTrackUnreadableNow:
+            resolverObservation?.sameTrackUnreadableNow ?? false,
+        });
+
+        initialCueRecovery?.dispatch?.("secondary-same-track-unreadable", {
+          video: state.video,
+          requestedSecondaryLang: getRequestedSecondaryLang?.(),
+          cueController,
+        });
       }
 
       // ---------------------------------------------------------
@@ -290,6 +397,7 @@
         currentPrimaryText,
         hasFreshCurrentPrimary,
         mergedSubtitleHealth,
+        resolverObservation,
       }) {
         const syncContextSummary = JSON.stringify({
           trackCount: state.video?.textTracks?.length ?? 0,
@@ -301,6 +409,12 @@
           primaryCueTextLength: primaryCueText.length,
           currentPrimaryTextLength: currentPrimaryText.length,
           hasFreshCurrentPrimary,
+          sameTrackUnreadableNow:
+            resolverObservation?.sameTrackUnreadableNow ?? false,
+          resolvedSecondaryTrackLanguage:
+            resolverObservation?.resolvedSecondaryTrackLanguage || "",
+          resolvedSecondaryCueTextLength:
+            resolverObservation?.resolvedSecondaryCueTextLength ?? 0,
         });
 
         const shouldLogSyncContext =
@@ -323,6 +437,23 @@
             mergedSubtitleHealth,
             extra: {
               reason: "sync_interval",
+              sameTrackUnreadableNow:
+                resolverObservation?.sameTrackUnreadableNow ?? false,
+              resolvedSecondaryTrackLanguage:
+                resolverObservation?.resolvedSecondaryTrackLanguage || "",
+              resolvedSecondaryTrackKind:
+                resolverObservation?.resolvedSecondaryTrackKind || "",
+              resolvedSecondaryTrackMode:
+                resolverObservation?.resolvedSecondaryTrackMode || "",
+              resolvedSecondaryCuesLength:
+                resolverObservation?.resolvedSecondaryCuesLength ?? 0,
+              resolvedSecondaryActiveCuesLength:
+                resolverObservation?.resolvedSecondaryActiveCuesLength ?? 0,
+              resolvedSecondaryCueTextLength:
+                resolverObservation?.resolvedSecondaryCueTextLength ?? 0,
+              resolvedSecondaryHasCueOverlapAtCurrentTime:
+                resolverObservation?.resolvedSecondaryHasCueOverlapAtCurrentTime ??
+                false,
             },
           }),
         );
@@ -342,6 +473,7 @@
         currentPrimaryText,
         hasFreshCurrentPrimary,
         mergedSubtitleHealth,
+        resolverObservation,
       }) {
         if (recoveryDecision.action !== "terminated") return;
 
@@ -359,6 +491,12 @@
             extra: {
               reason: "sync_interval",
               missCount: recoveryDecision.secondaryLane.missCount,
+              sameTrackUnreadableNow:
+                resolverObservation?.sameTrackUnreadableNow ?? false,
+              resolvedSecondaryTrackLanguage:
+                resolverObservation?.resolvedSecondaryTrackLanguage || "",
+              resolvedSecondaryCueTextLength:
+                resolverObservation?.resolvedSecondaryCueTextLength ?? 0,
             },
           }),
         );
@@ -372,6 +510,7 @@
       function runSecondaryResolverProbeIfNeeded({
         effectiveSecondaryLanguage,
         secondaryCueText,
+        resolverObservation,
       }) {
         if (!debugPanelProbe) return;
 
@@ -381,10 +520,7 @@
             effectiveSecondaryLanguage,
           ) ?? [];
         const resolvedSecondaryTrack =
-          resolverDeps?.resolveSecondarySubtitleTrack?.(
-            state.video,
-            effectiveSecondaryLanguage,
-          ) ?? null;
+          resolverObservation?.resolvedSecondaryTrack ?? null;
 
         logContent?.("secondary resolver probe", {
           reason: "sync_interval",
@@ -397,17 +533,24 @@
           currentSecondaryActiveCuesLength:
             getTrackActiveCuesLength?.(state.secondaryTrack) ?? 0,
           currentSecondaryCueTextLength: secondaryCueText.length,
-          resolvedSecondaryTrackLanguage: resolvedSecondaryTrack?.language || "",
-          resolvedSecondaryTrackKind: resolvedSecondaryTrack?.kind || "",
-          resolvedSecondaryTrackMode: resolvedSecondaryTrack?.mode || "",
+          resolvedSecondaryTrackLanguage:
+            resolverObservation?.resolvedSecondaryTrackLanguage || "",
+          resolvedSecondaryTrackKind:
+            resolverObservation?.resolvedSecondaryTrackKind || "",
+          resolvedSecondaryTrackMode:
+            resolverObservation?.resolvedSecondaryTrackMode || "",
           resolvedSecondaryCuesLength:
-            resolverDeps?.getTrackCuesLength?.(resolvedSecondaryTrack) ?? 0,
+            resolverObservation?.resolvedSecondaryCuesLength ?? 0,
           resolvedSecondaryActiveCuesLength:
-            getTrackActiveCuesLength?.(resolvedSecondaryTrack) ?? 0,
+            resolverObservation?.resolvedSecondaryActiveCuesLength ?? 0,
           resolvedSecondaryCueTextLength:
-            normalizeSubtitleText?.(
-              getCurrentCueText?.(resolvedSecondaryTrack),
-            )?.length ?? 0,
+            resolverObservation?.resolvedSecondaryCueTextLength ?? 0,
+          resolvedSecondaryHasCueOverlapAtCurrentTime:
+            resolverObservation?.resolvedSecondaryHasCueOverlapAtCurrentTime ??
+            false,
+          sameTrackUnreadableNow:
+            resolverObservation?.sameTrackUnreadableNow ?? false,
+          resolvedSecondaryTrackExists: Boolean(resolvedSecondaryTrack),
           secondaryCandidates,
         });
       }
@@ -428,6 +571,7 @@
         currentPrimaryText,
         hasFreshCurrentPrimary,
         mergedSubtitleHealth,
+        resolverObservation,
       }) {
         if (
           recoveryDecision.action !== "recover" &&
@@ -443,6 +587,7 @@
         runSecondaryResolverProbeIfNeeded({
           effectiveSecondaryLanguage,
           secondaryCueText,
+          resolverObservation,
         });
 
         logContent?.("secondary recovery trigger started", {
@@ -450,6 +595,8 @@
           secondaryTrackFoundBefore,
           secondaryActiveCuesLengthBefore,
           renderInvoked: false,
+          sameTrackUnreadableNow:
+            resolverObservation?.sameTrackUnreadableNow ?? false,
         });
 
         logContent?.(
@@ -469,6 +616,12 @@
               forceRebind: recoveryDecision.action === "force-rebind",
               terminated: recoveryDecision.secondaryLane.terminated,
               missLimitReached: recoveryDecision.action === "terminated",
+              sameTrackUnreadableNow:
+                resolverObservation?.sameTrackUnreadableNow ?? false,
+              resolvedSecondaryTrackLanguage:
+                resolverObservation?.resolvedSecondaryTrackLanguage || "",
+              resolvedSecondaryCueTextLength:
+                resolverObservation?.resolvedSecondaryCueTextLength ?? 0,
             },
           }),
         );
@@ -489,6 +642,8 @@
           secondaryActiveCuesLengthBefore,
           secondaryActiveCuesLengthAfter,
           renderInvoked: true,
+          sameTrackUnreadableNow:
+            resolverObservation?.sameTrackUnreadableNow ?? false,
         });
       }
 
@@ -534,7 +689,8 @@
           hasSecondarySignal,
           hasPrimarySignal,
           mergedSubtitleHealth,
-        } = buildSyncIntervalSubtitleSnapshot(now);
+          resolverObservation,
+        } = buildSyncIntervalSubtitleSnapshot(now, effectiveSecondaryLanguage);
 
         logSecondarySyncContextIfNeeded({
           previousSecondaryTrack,
@@ -546,6 +702,7 @@
           currentPrimaryText,
           hasFreshCurrentPrimary,
           mergedSubtitleHealth,
+          resolverObservation,
         });
 
         // cueController 側の lane state（missCount/terminated 等）を使って
@@ -592,6 +749,12 @@
             millisSinceLargeSeek,
             action: recoveryDecision.action,
             missCount: recoveryDecision.secondaryLane?.missCount ?? null,
+            sameTrackUnreadableNow:
+              resolverObservation?.sameTrackUnreadableNow ?? false,
+            resolvedSecondaryTrackLanguage:
+              resolverObservation?.resolvedSecondaryTrackLanguage || "",
+            resolvedSecondaryCueTextLength:
+              resolverObservation?.resolvedSecondaryCueTextLength ?? 0,
           });
         }
 
@@ -605,7 +768,31 @@
           currentPrimaryText,
           hasFreshCurrentPrimary,
           mergedSubtitleHealth,
+          resolverObservation,
         });
+
+        if (
+          shouldEscalateSameTrackUnreadableRecovery({
+            recoveryDecision,
+            millisSinceLargeSeek,
+            mergedSubtitleHealth,
+            resolverObservation,
+          })
+        ) {
+          dispatchEscalatedSecondaryRecovery({
+            recoveryDecision,
+            effectiveSecondaryLanguage,
+            millisSinceLargeSeek,
+            resolverObservation,
+          });
+
+          return {
+            now,
+            hasSecondarySignal,
+            hasPrimarySignal,
+            escalated: true,
+          };
+        }
 
         triggerSecondaryRecovery({
           recoveryDecision,
@@ -617,12 +804,14 @@
           currentPrimaryText,
           hasFreshCurrentPrimary,
           mergedSubtitleHealth,
+          resolverObservation,
         });
 
         return {
           now,
           hasSecondarySignal,
           hasPrimarySignal,
+          escalated: false,
         };
       }
 

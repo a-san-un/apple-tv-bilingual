@@ -46,11 +46,11 @@
     }
   ],
   "web_accessible_resources": [
-    {
-      "resources": ["resources/ejdict.json", "panel.css"],
-      "matches": ["https://tv.apple.com/*"]
-    }
-  ],
+  {
+    "resources": ["dict/ejdict.json", "panel.css"],
+    "matches": ["https://tv.apple.com/*"]
+  }
+],
   "action": {
     "default_popup": "popup.html",
     "default_title": "ATV Bilingual"

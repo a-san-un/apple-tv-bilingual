@@ -26,24 +26,14 @@
 
   function createSecondarySubtitleDom(deps) {
     const {
-      // DOM ターゲット取得（content.js の getTarget をそのまま渡す）
       getTarget,
-      // panel-ui.js の createRightPanel（未生成時に呼ぶ）
-      panelUi,
-      // secondary subtitle DOM を作ってよいかの guard
-      // （言語設定が確定しているか等。content.js 側でラップして渡す）
       isSecondaryDomReady = () => true,
-      // track 情報取得系（content.js の既存ヘルパーをそのまま注入）
       getTrackActiveCuesLength,
       getCurrentCueText,
       normalizeSubtitleText,
-      // ログ出力（logContentSubtitle を推奨）
       logContentSubtitle = () => {},
-      // 詳細デバッグログの on/off（DEBUGSECONDARYSUBS）
       isDebugEnabled = () => false,
-      // idle 状態で前回テキストを保持し続ける猶予（ms）
       idleClearMs = 3200,
-      // 重複防止用スタイル注入 id
       panelSlotLayerStyleId = 'atv-panel-slot-layer-style',
     } = deps || {};
 
@@ -91,12 +81,10 @@
     }
 
     function getOrCreatePanelHost() {
-      const target = getTarget();
-      let panelHost = target.querySelector('atv-panel-host');
-      if (!panelHost) {
-        panelUi.createRightPanel();
-        panelHost = target.querySelector('atv-panel-host');
-      }
+      const target = getTarget?.();
+      if (!target) return null;
+
+      const panelHost = target.querySelector('#atv-panel-host');
       return panelHost || null;
     }
 
@@ -123,8 +111,8 @@
       const style = document.createElement('style');
       style.id = panelSlotLayerStyleId;
       style.textContent = `
-        atv-panel-host .dual-subtitles-secondary,
-        atv-panel-host [data-secondary-subtitle] {
+        #atv-panel-host .dual-subtitles-secondary,
+        #atv-panel-host [data-secondary-subtitle] {
           display: none !important;
         }
       `;
@@ -141,7 +129,6 @@
 
       const allExisting = getSecondarySubtitleElements();
 
-      // 重複ノードが複数ある場合は先頭だけ残して掃除する
       if (allExisting.length > 1) {
         const keep = normalizeSecondarySubtitleElement(allExisting[0]);
         for (let i = 1; i < allExisting.length; i++) {
@@ -161,10 +148,14 @@
       }
 
       const panelHost = getOrCreatePanelHost();
-      if (!panelHost) return null;
+      if (!panelHost) {
+        if (isDebugEnabled()) {
+          logContentSubtitle('secondary element ensure skipped: panel host missing', {});
+        }
+        return null;
+      }
 
-      // createRightPanel 側で既に ensure されている可能性を再確認
-      const ensuredAfterPanel = document.querySelector('[data-secondary-subtitle]');
+      const ensuredAfterPanel = panelHost.querySelector('[data-secondary-subtitle]');
       if (ensuredAfterPanel) {
         return normalizeSecondarySubtitleElement(ensuredAfterPanel);
       }

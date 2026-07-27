@@ -97,6 +97,32 @@
       laneState.lastDecision = "idle";
     }
 
+    function resetSecondaryRecoveryLane(reason = "manual-reset") {
+      const before = {
+        missCount: laneStates.secondary?.missCount ?? null,
+        terminated: laneStates.secondary?.terminated ?? null,
+        missingSince: laneStates.secondary?.missingSince ?? null,
+        missingDurationMs: laneStates.secondary?.missingDurationMs ?? null,
+        lastDecision: laneStates.secondary?.lastDecision ?? null,
+      };
+
+      resetLaneState(laneStates.secondary);
+
+      logContent?.("secondary recovery lane reset", {
+        reason,
+        before,
+        after: {
+          missCount: laneStates.secondary?.missCount ?? null,
+          terminated: laneStates.secondary?.terminated ?? null,
+          missingSince: laneStates.secondary?.missingSince ?? null,
+          missingDurationMs: laneStates.secondary?.missingDurationMs ?? null,
+          lastDecision: laneStates.secondary?.lastDecision ?? null,
+        },
+      });
+
+      return laneStates.secondary;
+    }
+
     // 現在の観測結果で lane state を更新する。
     function updateLaneState(laneState, { now, healthy, isMissing }) {
       laneState.healthy = healthy === true;
@@ -1220,6 +1246,7 @@
       onPrimaryCueChange,
       getMergedSubtitleHealth: () => lastMergedSubtitleHealth,
       getLaneStates: () => laneStates,
+      resetSecondaryRecoveryLane,
       evaluateSecondaryRecovery,
     };
   }

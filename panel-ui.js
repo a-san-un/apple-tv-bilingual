@@ -123,12 +123,13 @@
     }
 
     function createRightPanel() {
-      const target = getTarget();
+      const target = getTarget?.();
+      if (!target) return null;
+
       let existingHost = target.querySelector("#atv-panel-host");
       if (existingHost) {
         state.panelShadowRoot = existingHost.shadowRoot || state.panelShadowRoot;
-        ensureSecondarySubtitleElement();
-        return;
+        return existingHost;
       }
 
       const host = document.createElement("div");
@@ -149,7 +150,10 @@
       state.panelShadowRoot = host.attachShadow({ mode: "open" });
       state.panelShadowRoot.innerHTML = buildPanelShellHTML();
       wirePanelHeaderActions();
+
       ensureSecondarySubtitleElement();
+
+      return host;
     }
 
     function createDebugPanel() {

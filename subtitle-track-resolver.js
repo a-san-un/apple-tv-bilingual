@@ -120,6 +120,27 @@
     return false;
   }
 
+  function getCurrentCueTextLength(track, now) {
+    if (!track || !Number.isFinite(now)) return 0;
+
+    try {
+      const cues = track?.cues;
+      if (!cues || cues.length === 0) return 0;
+
+      for (let i = 0; i < cues.length; i++) {
+        const cue = cues[i];
+        if (!cue) continue;
+        if (cue.startTime <= now && now <= cue.endTime) {
+          return String(cue.text || "").trim().length;
+        }
+      }
+    } catch {
+      return 0;
+    }
+
+    return 0;
+  }
+
   function scoreSubtitleTrack(track, index) {
     const cuesLength = getTrackCuesLength(track);
     const activeCuesLength = getTrackActiveCuesLength(track);
@@ -161,9 +182,8 @@
     }
 
     const overlapCandidate = Number.isFinite(currentTime)
-      ? candidates.find(({ track }) =>
-          hasCueOverlapAtTime(track, currentTime),
-        ) || null
+      ? candidates.find(({ track }) => hasCueOverlapAtTime(track, currentTime)) ||
+        null
       : null;
 
     if (overlapCandidate) {
@@ -192,6 +212,7 @@
       mode: track?.mode || "",
       cuesLength: getTrackCuesLength(track),
       activeCuesLength: getTrackActiveCuesLength(track),
+      currentCueTextLength: getCurrentCueTextLength(track, currentTime),
       matchesRequestedLanguage: matchesRequestedLanguage(track, requestedLang),
       forcedLike: isForcedLikeTrack(track),
       hasCueOverlapAtCurrentTime: hasCueOverlapAtTime(track, currentTime),
@@ -222,6 +243,22 @@
       }
     } catch (_) {}
 
+    const cuesLength = getTrackCuesLength(selectedTrack);
+    const activeCuesLength = getTrackActiveCuesLength(selectedTrack);
+    const hasCueOverlapAtCurrentTime = hasCueOverlapAtTime(
+      selectedTrack,
+      currentTime,
+    );
+    const currentCueTextLength = getCurrentCueTextLength(
+      selectedTrack,
+      currentTime,
+    );
+    const sameTrackUnreadableNow =
+      cuesLength > 0 &&
+      activeCuesLength === 0 &&
+      !hasCueOverlapAtCurrentTime &&
+      currentCueTextLength === 0;
+
     window.ATVB?.logger?.debug?.("secondary resolver selected track", {
       requestedLang,
       currentTime,
@@ -229,12 +266,11 @@
       label: normalizeTrackLabel(selectedTrack?.label),
       kind: selectedTrack?.kind ?? "",
       mode: selectedTrack?.mode ?? "",
-      cuesLength: getTrackCuesLength(selectedTrack),
-      activeCuesLength: getTrackActiveCuesLength(selectedTrack),
-      hasCueOverlapAtCurrentTime: hasCueOverlapAtTime(
-        selectedTrack,
-        currentTime,
-      ),
+      cuesLength,
+      activeCuesLength,
+      hasCueOverlapAtCurrentTime,
+      currentCueTextLength,
+      sameTrackUnreadableNow,
     });
 
     return selectedTrack;
@@ -249,6 +285,7 @@
     getTrackCuesLength,
     getTrackActiveCuesLength,
     hasCueOverlapAtTime,
+    getCurrentCueTextLength,
     scoreSubtitleTrack,
     pickBestSubtitleTrack,
     getSecondarySubtitleTrackCandidates,
