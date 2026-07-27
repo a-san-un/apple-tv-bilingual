@@ -350,7 +350,7 @@
         millisSinceLargeSeek,
         resolverObservation,
       }) {
-        logContent?.("secondary recovery escalated", {
+        logContent?.("secondary recovery same-track-unreadable-escalated", {
           reason: "same_track_unreadable_repeated_miss",
           effectiveSecondaryLanguage,
           recoveryAction: recoveryDecision?.action || "",
@@ -474,6 +474,7 @@
         hasFreshCurrentPrimary,
         mergedSubtitleHealth,
         resolverObservation,
+        millisSinceLargeSeek,
       }) {
         if (recoveryDecision.action !== "terminated") return;
 
@@ -491,8 +492,13 @@
             extra: {
               reason: "sync_interval",
               missCount: recoveryDecision.secondaryLane.missCount,
+              millisSinceLargeSeek,
               sameTrackUnreadableNow:
                 resolverObservation?.sameTrackUnreadableNow ?? false,
+              primaryHealthy:
+                mergedSubtitleHealth?.derived?.primaryHealthy ?? null,
+              secondaryHealthy:
+                mergedSubtitleHealth?.derived?.secondaryHealthy ?? null,
               resolvedSecondaryTrackLanguage:
                 resolverObservation?.resolvedSecondaryTrackLanguage || "",
               resolvedSecondaryCueTextLength:
@@ -769,6 +775,7 @@
           hasFreshCurrentPrimary,
           mergedSubtitleHealth,
           resolverObservation,
+          millisSinceLargeSeek,
         });
 
         if (
@@ -790,7 +797,6 @@
             now,
             hasSecondarySignal,
             hasPrimarySignal,
-            escalated: true,
           };
         }
 
@@ -811,7 +817,6 @@
           now,
           hasSecondarySignal,
           hasPrimarySignal,
-          escalated: false,
         };
       }
 
