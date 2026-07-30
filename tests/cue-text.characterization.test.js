@@ -1,6 +1,10 @@
 // tests/cue-text.characterization.test.js
 import { describe, test, expect } from "vitest";
-import { findCueAt, getCurrentCue } from "../modules/cue-text.js";
+import {
+  findCueAt,
+  getCurrentCue,
+  getCurrentCueText,
+} from "../modules/cue-text.js";
 
 describe("findCueAt (characterization)", () => {
   test("returns nearest active cue when activeCues exist", () => {
@@ -12,12 +16,12 @@ describe("findCueAt (characterization)", () => {
     expect(result).toBe(cue2);
   });
 
-  test("falls back to cues[] with loose overlap window", () => {
+  test("falls back to cues with loose overlap window", () => {
     const cue1 = { startTime: 10, endTime: 12, text: "A" };
     const cue2 = { startTime: 12.2, endTime: 14, text: "B" };
     const track = { activeCues: [], cues: [cue1, cue2] };
 
-    const result = findCueAt(track, 13.0);
+    const result = findCueAt(track, 12.1);
     expect(result).toBe(cue2);
   });
 
@@ -42,11 +46,24 @@ describe("getCurrentCue (characterization)", () => {
     const cue2 = { startTime: 12.2, endTime: 14, text: "B" };
     const track = { activeCues: [], cues: [cue1, cue2] };
 
-    const result = getCurrentCue(track, 13.0);
+    const result = getCurrentCue(track, 12.1);
     expect(result).toBe(cue2);
   });
 
   test("returns null when track is missing", () => {
     expect(getCurrentCue(null, 5)).toBeNull();
+  });
+});
+
+describe("getCurrentCueText (characterization)", () => {
+  test("cleans text through injected cleaner", () => {
+    const cue = { startTime: 0, endTime: 2, text: "<i>Hello</i>" };
+    const track = { activeCues: [cue], cues: [cue] };
+
+    const result = getCurrentCueText(track, 1, {
+      cleanCueTextFn: (value) => value?.text?.replace(/<[^>]+>/g, "") ?? "",
+    });
+
+    expect(result).toBe("Hello");
   });
 });
