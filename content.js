@@ -1060,6 +1060,34 @@ function forwardContentLog(...args) {
     };
   }
 
+  function getSubtitleBlocks() {
+    return state.subtitleBlocks;
+  }
+
+  function getCurrentSubtitleBlock() {
+    return state.currentSubtitleBlock;
+  }
+
+  function getSubtitleHistory() {
+    return state.subtitleHistory;
+  }
+
+  function setSubtitleHistory(next, reason = "unknown") {
+    state.subtitleHistory = next;
+  }
+
+  function getSubtitleCurrentIndex() {
+    return state.subtitleCurrentIndex;
+  }
+
+  function getSubtitleBlockMeta() {
+    return state.subtitleBlockMeta;
+  }
+
+  function getPanelPastBlocks() {
+    return state.panelPastBlocks;
+  }
+
   /* subtitle block sequence から current block を取り出す。 */
   function getCurrentSubtitleBlockFromSequence(sequenceResult = null) {
     const blocks = Array.isArray(sequenceResult?.blocks)
