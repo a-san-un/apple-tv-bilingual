@@ -1511,6 +1511,27 @@
     el.style[propertyName] = next;
   }
 
+  function applyManagedSizing(el, entries) {
+    if (!el) return;
+
+    entries.forEach(({ attrName, propertyName, value }) => {
+      if (!el.hasAttribute(attrName)) {
+        el.setAttribute(attrName, el.style[propertyName] || "");
+      }
+      setStyleIfChanged(el, propertyName, value);
+    });
+  }
+
+  function clearManagedSizing(el, entries) {
+    if (!el) return;
+
+    entries.forEach(({ attrName, propertyName }) => {
+      if (!el.hasAttribute(attrName)) return;
+      setStyleIfChanged(el, propertyName, el.getAttribute(attrName) || "");
+      el.removeAttribute(attrName);
+    });
+  }
+
   function applyManagedFooterSizing(footer, widthPx, leftPx = 0) {
     if (!footer) return;
 
