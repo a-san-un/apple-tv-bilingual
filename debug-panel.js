@@ -11,10 +11,44 @@
 
   let activeEntry = null;
 
+  function readUiFilters(root) {
+    if (!root) return {};
+
+    const source =
+      root.getElementById("debugFilterSource")?.value?.trim() || "";
+    const category =
+      root.getElementById("debugFilterCategory")?.value?.trim() || "";
+    const text = root.getElementById("debugFilterText")?.value?.trim() || "";
+
+    const filter = {};
+    if (source) filter.scopes = [source];
+    if (category) filter.categories = [category];
+    if (text) filter.text = text;
+    return filter;
+  }
+
+  function mergeDebugFilters(baseFilter = {}, uiFilter = {}) {
+    const merged = { ...baseFilter };
+
+    if (Array.isArray(uiFilter.scopes)) {
+      merged.scopes = uiFilter.scopes;
+    }
+    if (Array.isArray(uiFilter.categories)) {
+      merged.categories = uiFilter.categories;
+    }
+    if (typeof uiFilter.text === "string") {
+      merged.text = uiFilter.text;
+    }
+
+    return merged;
+  }
+
   async function readLogText(entry) {
     if (!entry || typeof entry.deps.getLogText !== "function") return "";
-    const filter =
+    const baseFilter =
       typeof entry.deps.getFilter === "function" ? entry.deps.getFilter() : {};
+    const uiFilter = readUiFilters(entry.root);
+    const filter = mergeDebugFilters(baseFilter, uiFilter);
     return (await entry.deps.getLogText(filter)) || "";
   }
 
@@ -56,6 +90,15 @@
     root
       .getElementById("debugClearBtn")
       ?.removeEventListener("click", handlers.onClear);
+    root
+      .getElementById("debugFilterSource")
+      ?.removeEventListener("change", handlers.onFilterChange);
+    root
+      .getElementById("debugFilterCategory")
+      ?.removeEventListener("change", handlers.onFilterChange);
+    root
+      .getElementById("debugFilterText")
+      ?.removeEventListener("input", handlers.onFilterInput);
 
     const section = root.getElementById("debug-section");
     if (section) delete section.dataset.bound;
@@ -139,6 +182,12 @@
           }
         }
       },
+      onFilterChange: async () => {
+        await update();
+      },
+      onFilterInput: async () => {
+        await update();
+      },
     };
 
     activeEntry = {
@@ -163,6 +212,15 @@
     root
       .getElementById("debugClearBtn")
       ?.addEventListener("click", handlers.onClear);
+    root
+      .getElementById("debugFilterSource")
+      ?.addEventListener("change", handlers.onFilterChange);
+    root
+      .getElementById("debugFilterCategory")
+      ?.addEventListener("change", handlers.onFilterChange);
+    root
+      .getElementById("debugFilterText")
+      ?.addEventListener("input", handlers.onFilterInput);
 
     section.dataset.bound = "1";
     update();

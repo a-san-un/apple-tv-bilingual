@@ -99,6 +99,48 @@
     }
   }
 
+  function hasCueOverlapAtTime(track, now) {
+    if (!Number.isFinite(now)) return false;
+
+    try {
+      const cues = track?.cues;
+      if (!cues || cues.length === 0) return false;
+
+      for (let i = 0; i < cues.length; i++) {
+        const cue = cues[i];
+        if (!cue) continue;
+        if (cue.startTime <= now && now <= cue.endTime) {
+          return true;
+        }
+      }
+    } catch {
+      return false;
+    }
+
+    return false;
+  }
+
+  function getCurrentCueTextLength(track, now) {
+    if (!track || !Number.isFinite(now)) return 0;
+
+    try {
+      const cues = track?.cues;
+      if (!cues || cues.length === 0) return 0;
+
+      for (let i = 0; i < cues.length; i++) {
+        const cue = cues[i];
+        if (!cue) continue;
+        if (cue.startTime <= now && now <= cue.endTime) {
+          return String(cue.text || "").trim().length;
+        }
+      }
+    } catch {
+      return 0;
+    }
+
+    return 0;
+  }
+
   function scoreSubtitleTrack(track, index) {
     const cuesLength = getTrackCuesLength(track);
     const activeCuesLength = getTrackActiveCuesLength(track);
@@ -123,7 +165,7 @@
     return score;
   }
 
-  function pickBestSubtitleTrack(textTracks, requestedLang) {
+  function pickBestSubtitleTrack(textTracks, requestedLang, currentTime = null) {
     const tracks = Array.from(textTracks || []);
     const candidates = tracks
       .map((track, index) => ({ track, index }))
@@ -139,6 +181,15 @@
       return null;
     }
 
+    const overlapCandidate = Number.isFinite(currentTime)
+      ? candidates.find(({ track }) => hasCueOverlapAtTime(track, currentTime)) ||
+        null
+      : null;
+
+    if (overlapCandidate) {
+      return overlapCandidate.track;
+    }
+
     candidates.sort((a, b) => {
       return (
         scoreSubtitleTrack(b.track, b.index) -
@@ -149,28 +200,78 @@
     return candidates[0].track;
   }
 
+  function getSecondarySubtitleTrackCandidates(video, requestedLang) {
+    const tracks = Array.from(video?.textTracks || []);
+    const currentTime = Number(video?.currentTime ?? NaN);
+
+    return tracks.map((track, index) => ({
+      index,
+      language: track?.language || "",
+      label: normalizeTrackLabel(track?.label),
+      kind: track?.kind || "",
+      mode: track?.mode || "",
+      cuesLength: getTrackCuesLength(track),
+      activeCuesLength: getTrackActiveCuesLength(track),
+      currentCueTextLength: getCurrentCueTextLength(track, currentTime),
+      matchesRequestedLanguage: matchesRequestedLanguage(track, requestedLang),
+      forcedLike: isForcedLikeTrack(track),
+      hasCueOverlapAtCurrentTime: hasCueOverlapAtTime(track, currentTime),
+      score: scoreSubtitleTrack(track, index),
+    }));
+  }
+
   function resolveSecondarySubtitleTrack(video, requestedLang) {
     if (!video || !video.textTracks) return null;
 
+    const currentTime = Number(video.currentTime ?? NaN);
     const selectedTrack = pickBestSubtitleTrack(
       video.textTracks,
       requestedLang,
+      currentTime,
     );
 
     if (!selectedTrack) {
       return null;
     }
 
-    // Keep hidden so native subtitle UI is not forced onscreen,
-    // but activeCues / cuechange still work.
-    if (selectedTrack.mode === "disabled") {
-      selectedTrack.mode = "hidden";
-    } else if (
-      selectedTrack.mode !== "hidden" &&
-      selectedTrack.mode !== "showing"
-    ) {
-      selectedTrack.mode = "hidden";
-    }
+    // secondary 用 track は「読める状態」を優先する。
+    // disabled だけは hidden に持ち上げるが、
+    // hidden / showing はトラック側の自然な状態を尊重する。
+    try {
+      if (selectedTrack.mode === "disabled") {
+        selectedTrack.mode = "hidden";
+      }
+    } catch (_) {}
+
+    const cuesLength = getTrackCuesLength(selectedTrack);
+    const activeCuesLength = getTrackActiveCuesLength(selectedTrack);
+    const hasCueOverlapAtCurrentTime = hasCueOverlapAtTime(
+      selectedTrack,
+      currentTime,
+    );
+    const currentCueTextLength = getCurrentCueTextLength(
+      selectedTrack,
+      currentTime,
+    );
+    const sameTrackUnreadableNow =
+      cuesLength > 0 &&
+      activeCuesLength === 0 &&
+      !hasCueOverlapAtCurrentTime &&
+      currentCueTextLength === 0;
+
+    window.ATVB?.logger?.debug?.("secondary resolver selected track", {
+      requestedLang,
+      currentTime,
+      language: selectedTrack?.language ?? "",
+      label: normalizeTrackLabel(selectedTrack?.label),
+      kind: selectedTrack?.kind ?? "",
+      mode: selectedTrack?.mode ?? "",
+      cuesLength,
+      activeCuesLength,
+      hasCueOverlapAtCurrentTime,
+      currentCueTextLength,
+      sameTrackUnreadableNow,
+    });
 
     return selectedTrack;
   }
@@ -183,8 +284,11 @@
     getUniqueTracks,
     getTrackCuesLength,
     getTrackActiveCuesLength,
+    hasCueOverlapAtTime,
+    getCurrentCueTextLength,
     scoreSubtitleTrack,
     pickBestSubtitleTrack,
+    getSecondarySubtitleTrackCandidates,
     resolveSecondarySubtitleTrack,
   };
 })();

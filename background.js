@@ -96,6 +96,9 @@ function getAppleTvContentScriptAssets() {
     "vtt-normalizer.js",
     "debug-logger.js",
     "subtitle-track-resolver.js",
+    "runtime-observers.js",
+    "playback-controls-layout.js",
+    "settings-runtime.js",
     "content.js",
   ];
   const defaultCssFiles = ["overlay.css"];

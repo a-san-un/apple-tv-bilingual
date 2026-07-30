@@ -1,0 +1,14 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`cleanCueText (characterization) > keeps current behavior for { text: '' } 1`] = `""`;
+
+exports[`cleanCueText (characterization) > keeps current behavior for { text: '<i>italic</i>' } 1`] = `"italic"`;
+
+exports[`cleanCueText (characterization) > keeps current behavior for { text: 'Line1\\nLine2' } 1`] = `
+"Line1
+Line2"
+`;
+
+exports[`cleanCueText (characterization) > keeps current behavior for { text: 'hello' } 1`] = `"hello"`;
+
+exports[`cleanCueText (characterization) > keeps current behavior for null 1`] = `""`;

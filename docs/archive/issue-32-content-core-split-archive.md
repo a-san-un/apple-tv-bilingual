@@ -1,0 +1,1210 @@
+# Issue #32 Content Core Split
+
+
+## 1. この文書の役割
+
+
+### 1.1 目的
+
+
+この文書は、Issue #32 における `content.js` の責務整理と段階分割を、**実装運用の観点**で管理するための文書である。
+
+
+主目的は次の 4 点である。
+
+
+- subtitle sync / recovery 改善を、`content.js` への追記ではなく controller / resolver 側への責務移送として進める
+- `content.js` を thin coordinator に近づけるため、分割対象とラウンド順を明確にする
+- 各ラウンドで何を触るかを固定し、構造整理・物理移送・private 化を混ぜないようにする
+- Round 1 の section regroup を基準面として確定し、Round 2 以降の physical split を安全に進められるようにする
+
+
+### 1.2 扱うもの
+
+
+この文書で扱うものは次のとおり。
+
+
+- Issue #32 における `content.js` コア分割の目的
+- 現在位置と進行中の主線
+- `content.js` の 7 セクション設計
+- 分割対象の優先順位
+- ラウンド単位の作業スコープ
+- 実装時に見るべきログと切り分け観点
+
+
+### 1.3 扱わないもの
+
+
+この文書では次を正本として扱わない。
+
+
+- subtitle sync / recovery の truth / health / lane state の詳細設計
+- panel / overlay / popup の UI 詳細仕様
+- phase 全体の進捗一覧や他 issue を含めた親ロードマップ
+- AI セッションテンプレ全文
+- セッションごとの実況メモや一時ログ
+- セッション運用の一般ルール（詳細は `docs/ai-session-templates.md` を参照）
+
+
+### 1.4 他ドキュメントとの分担
+
+
+文書の分担は次のように整理する。
+
+
+- `docs/content-architecture.md`
+  - content 層全体の設計正本
+- `docs/issue-32-content-core-split.md`
+  - Issue #32 の分割実装運用正本
+- `docs/ai-session-templates.md`
+  - AI セッション運用テンプレ
+- `docs/README.md`
+  - docs 全体の入口と参照案内
+- `docs/archive/`
+  - 過去ラウンドや完了済み調査ログの保管先
+
+
+---
+
+
+## 2. 背景
+
+
+### 2.1 Issue #32 の主題
+
+
+Issue #32 は、subtitle sync / recovery の改善そのものに加えて、`content.js` を巨大な実装本体の置き場から外し、controller / resolver / helper / layout module 側へ責務を段階的に移すための issue である。
+
+
+そのため、この issue の主題は単なる不具合修正ではなく、次の 2 層を同時に持つ。
+
+
+- subtitle sync / recovery の truth / runtime / UI 境界整理
+- `content.js` のコア責務分割と thin coordinator 化
+
+
+### 2.2 現在の問題群
+
+
+現在の `content.js` 周辺には、次のような問題がある。
+
+
+- subtitle sync / recovery の改善を `content.js` 側の追記で吸収しやすい
+- large seek 後の secondary missing / recovery / force-rebind まわりの責務が追いにくい
+- observer / bootstrap / retry / reinitialize が同じ後半領域に密集しやすい
+- UI shell / DOM 管理 / layout bridge / recovery trigger が近接しており、修正時の影響範囲が読みにくい
+- 実装ラウンドごとのスコープが曖昧だと、構造整理と仕様変更が混ざりやすい
+
+
+### 2.3 今回の狙い
+
+
+今回の狙いは、巨大ファイルを一気に割ることではない。  
+あくまで **責務のまとまりごとに、小さなラウンドで安全に外へ出す** ことである。
+
+### 2.4 Apple TV+ 字幕トラック前提と用語
+
+Apple TV+ の再生ページでは、同一言語・kind の TextTrack が複数存在しうる（multi-track 前提）ことを Issue #32 の分割でも前提とする。  
+代表的には、`language: "ja"`, `kind: "subtitles"` の track が 2 本以上存在し、それぞれ `label` や `mode` が異なるケースがある。
+
+subtitle sync / recovery の挙動を読む際、この文書では現象を次の 3 語で表現する。
+
+- `track found`  
+  - subtitle-track-resolver が対象言語・kind の TextTrack を選定できている状態。  
+  - 代表的には、secondary lane で `resolvedTrackLanguage: "ja"` / `resolvedTrackKind: "subtitles"` が観測されるケース。
+
+- `cue unreadable`  
+  - currentTime に対して、その track から読める cue が得られていない状態。  
+  - 代表的には、`cuesLength > 0` でありながら `activeCuesLength: 0` / `hasCueOverlapAtCurrentTime: false` が続くケース。
+
+- `signal missing`  
+  - primary/secondary いずれかの字幕が panel / overlay / popup へ signal として流れていない状態。  
+  - 代表的には、`hasPrimarySignal: true` / `hasSecondarySignal: false` のように、2 字幕の signal が非対称になっているケース。
+
+large seek 後に「メインは出るがサブが出ない」既知問題についても、
+以後の docs とログではこの 3 語の組み合わせとして読み、
+`track not found` に短絡しないようにする。
+
+---
+
+
+## 3. 現在位置
+
+
+### 3.1 すでに完了したこと
+
+
+Issue #32 の流れの中で、すでに次の到達点がある。
+
+
+- `SubtitleBlockSequence` を truth source として扱う方向が固まっている
+- current / panel / overlay / history の境界整理方針が固まっている
+- secondary recovery は runtime first / merged assists で扱う方針が固まっている
+- `cue-controller.js` 側に lane state / recovery 判定を寄せる方向が固まっている
+- `playbackContext.js` が最初の実ファイル分割単位として導入済みである
+- `reinitialize-coordinator.js` が導入され、reinitialize / retry / settings-result bridge が 1 塊として `content.js` から外出し済みである
+- playback controls layout は `playback-controls-layout.js` を正本とする構成へ整理済みである
+- `content.js` 側に secondary recovery 判定結果と sync 実行結果を観測するログが入っている
+- Round 1 の section regroup が完了している
+- Round 2 の runtime observers 実装本体の物理移送が完了している
+- Round 3 の observer state カプセル化が完了している
+- Round 5 の module loading strategy 整理が完了している
+- Round 6 の sync interval orchestration physical split が完了している
+- Round 6 follow-up として、large seek 後 secondary missing の観測ログ追加が完了している
+- Round 6 follow-up の観測結果として、large seek 後 secondary missing の再現系の中に、Section 4 の large seek / secondary recovery 経路へ到達していないケースが存在することを確認している
+- seek 閾値調整ラウンドの観測結果として、同じ large seek 後 secondary missing の再現系の中に、Section 4 へ到達したうえで recovery が成立していないケースが存在することも確認している
+
+### 3.2 Round 1 後の現在地
+
+
+Round 1 では、`content.js` に対して **ordering-only の section regroup** を行った。  
+これはロジック変更ではなく、7 セクションコメントの挿入と関数ブロックの物理並べ替えに限定した整理である。
+
+
+Round 1 完了時点の前提は次のとおり。
+
+
+- `content.js` を 7 セクションで読む構成を採用済み
+- Section 1〜7 のコメントを `state` 定義後に挿入済み
+- 関数ブロックは、Round 1 の section regroup 方針に沿ってセクション単位に寄せ済み
+- Section 7: Lifecycle 関数群（boot / restart / teardown / bind / initial snapshot）はコメント直下へ集約済み
+- `createRuntimeObservers(...)` / `createSettingsRuntime(...)` / `createReinitializeCoordinator(...)` などの top-level wiring は、依存順優先で後段に残置済み
+- Section 6: Observer は、Round 1 では **空セクションのまま許容**と判断済み
+
+
+### 3.3 Round 2 / 3 後の現在地
+
+
+Round 2 では、Section 6: Observer - Runtime Monitoring の実装詳細を `runtime-observers.js` に物理移送した。  
+これにより、observer callback / resize handler / orientation handler / waitForVideo / layout observer attach-detach の実装本体は `runtime-observers.js` 側を正本として読む構成になった。
+
+
+Round 3 では、Round 2 で module 側へ寄せた runtime observers 実装について、observer 内部だけで使う state を `content.js` から隠す cleanup を行った。  
+具体的には、`playbackControlsMutationObserver`、`playbackControlsResizeObserver`、`playbackControlsResizeTargets`、`playbackControlsResizeHandler`、`playbackControlsOrientationHandler`、`waitTimer` を `runtime-observers.js` 内の private state に寄せ、`content.js` 側 state から削除した。
+
+
+### 3.4 Round 4 後の現在地
+
+
+Round 4 では、Section 4: Sync Interval - Periodic Orchestration の実装塊を `sync-interval-orchestrator.js` へ物理移送する試行を行った。  
+対象は `syncIntervalRunSecondaryRecoveryPass()` と、その周辺 helper 群である。
+
+
+ただし、この試行では `content.js` に static `import` を追加する形を採ったため、`content_scripts` 直注入で動く現行構成とは噛み合わなかった。  
+その結果、import 方式はいったん rollback し、Section 4 の helper 群と `syncIntervalRunSecondaryRecoveryPass()` は `content.js` に戻して動作復旧を優先した。
+
+
+現在の Round 4 の実結果は次のとおりである。
+
+
+- `sync-interval-orchestrator.js` への物理分割は**試行したが保留**
+- `content.js` 側には `function syncIntervalRunSecondaryRecoveryPass(...)` が復帰済み
+- `createSyncIntervalOrchestrator` / `syncIntervalOrchestrator` 参照は `content.js` から除去済み
+- `node --check content.js` は通過
+- テストでも `Uncaught ReferenceError: syncIntervalRunSecondaryRecoveryPass is not defined` は解消
+- rollback 後の `content.js` 行数は **3892 lines** である
+
+
+### 3.5 Round 6 後の現在地
+
+
+Round 6 では、Round 5 で確定した loading strategy に従い、
+Section 4: Sync Interval - Periodic Orchestration の physical split を実施した。
+
+
+このラウンドでは、`sync-interval-orchestrator.js` を content script の先行注入 module として追加し、
+`window.ATVB.createSyncIntervalOrchestrator(...)` を公開したうえで、
+`content.js` 側から `window.ATVB?.createSyncIntervalOrchestrator?.({...}) ?? null` により
+orchestrator を生成する構成へ移行した。
+
+
+Round 6 で物理移送した対象は次のとおり。
+
+
+- `syncIntervalRefreshPlaybackContext`
+- `syncIntervalDetectLargeSeek`
+- `buildSecondarySyncLogPayload`
+- `buildSyncIntervalSubtitleSnapshot`
+- `logSecondarySyncContextIfNeeded`
+- `logSecondaryRecoveryTermination`
+- `runSecondaryResolverProbeIfNeeded`
+- `triggerSecondaryRecovery`
+- `syncIntervalRunSecondaryRecoveryPass`
+
+
+Round 6 完了後の Section 4 の読み方は次のとおり。
+
+
+- `sync-interval-orchestrator.js` が Section 4 実装本体の正本である
+- `content.js` 側の `ensureSecondaryTrackSyncInterval()` は scheduling / orchestration order / primary recovery 判定を持つ thin coordinator として読む
+- orchestrator 不在時は interval callback 冒頭で早期 return する
+- primary recovery 判定（`shouldAttemptPrimaryRecovery` / `reinitializeSubtitlePipeline("sync_interval_primary_recovery")`）は引き続き `content.js` に残す
+
+
+実装確認として、`node --check content.js` / `node --check sync-interval-orchestrator.js` は通過した。  
+また手動テストでは、通常再生ではエラーなく動作し、large seek 後は既存 Known Issue どおり secondary が復帰せず primary のみ表示されることを確認した。  
+これは Section 4 の physical split による新規 regress ではなく、既存挙動の維持として扱う。
+
+その後の follow-up として、large seek 後 secondary missing Known Issue の切り分けを進めるため、
+Section 4 実装本体である `sync-interval-orchestrator.js` に観測ログを追加した。
+
+### 3.6 Round 7 後の現在地
+
+- Round 7 では、`secondary recovery terminated` の到達条件を緩和しつつ、`triggerSecondaryRecovery()` 前後と `resolveSecondarySubtitleTrack()` の最終選定結果を観測するログを追加した。
+- representative case では、`secondary recovery trigger finished` 後も `secondaryTrackFoundAfter: true` かつ `secondaryActiveCuesLengthAfter: 0` が継続し、recovery 実行自体は走っているのに secondary 字幕が復帰しないことを確認した。
+- そのため、現在の主因候補は「Section 4 の termination 条件が早すぎること」単体ではなく、secondary resolver / binding 境界、つまり「選ばれた track が currentTime に重なる cue を本当に供給できているか」の側へ移っている。
+- すでに `content.js` では Section 4 が orchestration lane、secondary track sync は cue controller / resolver lane として分離可能な形が見え始めているため、Issue 32 の split でもこの境界を明示的に扱う必要がある。
+- 現時点では「track が見つからない」よりも、「track は見つかっているが active cue が 0 のまま」であり、用語上もこの状態を primary/secondary の signal 非対称として整理したほうが、以後のログ読解と docs 更新が安定する。
+
+---
+
+
+## 4. content.js セクション設計
+
+
+### 4.1 セクション一覧
+
+
+Round 1 の正本では、`content.js` を次の 7 セクションで読む。
+
+
+1. Logger & Debug Bridge
+2. Playback Context Bridge
+3. UI: Secondary Subtitle DOM
+4. Sync Interval: Periodic Orchestration
+5. Layout: Playback Controls Adjustment
+6. Observer: Runtime Monitoring
+7. Lifecycle: Boot & Teardown
+
+
+### 4.2 各セクションの役割
+
+
+#### Section 1: Logger & Debug Bridge
+
+
+- logger / debug panel への橋渡し
+- contentKey 付き payload への正規化
+- live debug panel 更新通知の入口
+
+
+#### Section 2: Playback Context Bridge
+
+
+- playback DOM / textTrack 状態から context を検出
+- contentKey / history context の切替
+- playback context の入口と content 切替 trigger
+
+
+#### Section 3: UI - Secondary Subtitle DOM
+
+
+- secondary subtitle element / panel host の確保
+- secondary subtitle の描画入口
+- UI shell / panel host / hidden layer の橋渡し
+
+
+#### Section 4: Sync Interval - Periodic Orchestration
+
+- sync interval ごとの playback context refresh
+- large seek detection
+- secondary recovery pass 起動
+- sync interval scheduling / orchestration 順制御 / primary recovery 判定
+- `content.js` 側では thin coordinator を読む
+- `sync-interval-orchestrator.js` 側では Section 4 実装本体の正本を読む
+
+
+#### Section 5: Layout - Playback Controls Adjustment
+
+
+- playback controls の位置・幅・translate 調整
+- layout retry / settling の配線
+- layout apply / retry タイミングの coordinator
+
+
+#### Section 6: Observer - Runtime Monitoring
+
+
+- mutation / resize / raf observers の登録・解除
+- runtime 変化に応じた trigger 配線
+- video change / content key change の監視入口
+- `content.js` 側では observer attach / detach / routing / wiring を読む
+- `runtime-observers.js` 側では observer 実装詳細の正本を読む
+
+
+#### Section 7: Lifecycle - Boot & Teardown
+
+
+- boot / restart / teardown
+- message listener / roots / timer cleanup
+- bindTracks / buildUi / initial snapshot / boot sequence の入口
+
+
+### 4.3 Round 1 / 2 / 3 / 4 / 5 / 6 の読み方
+
+
+Round 1 では、**セクションコメントは責務ラベル**として扱う。  
+そのため、各セクションに必ず top-level wiring や即時実行が物理近接している必要はない。
+
+
+Round 2 では、Section 6 の「実装本体を読む場所」が `content.js` から `runtime-observers.js` に移ったと読む。  
+`content.js` 側の Section 6 は薄い入口として読み、observer callback / handler / helper の実装本体は module 側を正本とする。
+
+
+Round 3 では、Section 6 に関連する internal state のうち observer module の運転都合だけで存在するものを `runtime-observers.js` 内の private state へ寄せたと読む。  
+その結果、`content.js` に残るのは共有意味を持つ state と top-level wiring であり、thin coordinator 化を一段進めた状態として読む。
+
+
+Round 4 では、Section 4 の helper / recovery pass は**責務上は module 候補として分離済み**だが、**現時点の runtime 正本は `content.js` 側にある**と読む。  
+すなわち、Section 4 は「設計整理は進んだが、physical split は未完了」の状態である。
+
+
+Round 5 では、Section 4 の physical split を再開するための loading strategy / 依存注入境界 / 公開 API が確定したと読む。  
+この時点では physical split 本体はまだ実施しておらず、Round 6 で安全に着手するための前提設計が整った段階である。
+
+
+Round 6 では、Section 4 の「実装本体を読む場所」が `content.js` から `sync-interval-orchestrator.js` に移ったと読む。  
+`content.js` 側の Section 4 は scheduling / orchestration order / primary recovery 判定を持つ薄い入口として読み、playback context refresh / large seek detection / secondary recovery pass の実装本体は module 側を正本とする。
+
+
+特に Section 6 / Section 7 では次を守る。
+
+
+- 関数宣言はセクションへ寄せる
+- `const ... = createX(...)` のような wiring は依存順優先
+- `boot();` のような即時実行は wiring 後に置く
+- Section 6 の実装詳細は Round 2 以降 `runtime-observers.js` を正本として読む
+
+
+Section 4 については、Round 4〜6 の結果を踏まえて次も守る。
+
+
+- helper / orchestrator 候補の責務境界整理は先に進めてよい
+- static `import` 導入は現行 content script 構成の正本にはしない
+- content script の physical split は `window.ATVB.createXxx` + 注入順ベースで行う
+- primary recovery 判定は Section 4 の thin coordinator として `content.js` に残してよい
+
+
+---
+
+
+## 5. 分割対象
+
+
+### 5.1 content.js に残すもの
+
+
+最終的に `content.js` に残すものは次の責務である。
+
+
+- Apple TV+ 再生画面への attach / detach
+- lifecycle 管理
+- bootstrap / cleanup の入口
+- observer / timer の起動と停止
+- settings / storage / message bridge の配線
+- controller / resolver / renderer の呼び出し配線
+- large seek 検知のような薄い runtime fact の記録
+- 観測ログの入口
+- module public API を top-level で束ねる wiring
+
+
+### 5.2 content.js から外へ出すもの
+
+
+段階的に外へ出す対象は次のとおり。
+
+
+- subtitle sync / recovery の本体判定
+- health 集約
+- current / history / panel / overlay の truth 解決本体
+- playback context / content key / history context の詳細実装
+- reinitialize / retry / result bridge の内部処理
+- secondary subtitle DOM の探索 / host 確保 / 描画導線
+- sync interval の詳細 orchestration
+- layout 計算や managed style の本体
+- runtime missing / missCount / force-rebind / terminated の条件本体
+- observer callback / resize handler / orientation handler の実装詳細
+- observer module の内部 state
+
+
+### 5.3 現在の主要分割単位
+
+
+現在、Issue #32 で明示的に扱う分割単位は次のとおり。
+
+
+- `playbackContext`
+- playback controls layout
+- reinitialize / retry / result bridge
+- secondary subtitle DOM 管理
+- sync interval orchestration
+- runtime observers
+- initial cue recovery
+
+
+このうち、`playbackContext` / playback controls layout / reinitialize coordinator / runtime observers は導入済みまたは分割実施済みの例として扱う。  
+sync interval orchestration は Round 6 で physical split 完了済みであり、残る主候補は secondary subtitle DOM 管理と initial cue recovery である。
+
+### 5.4 Secondary sync の 3 層 API 境界
+
+Issue #32 の split 設計では、secondary 字幕側の sync / recovery を少なくとも次の 3 層に分けて扱う。
+
+1. resolver 層  
+   - candidate track の列挙と最適 track の選定を担当する。  
+   - 代表的な実装は `subtitle-track-resolver.js` であり、`resolveSecondarySubtitleTrack(...)` の戻り値として「どの TextTrack を secondary とみなすか」を返す。  
+   - multi-track 前提で、同一言語・kind の TextTrack が複数ある場合でも、resolver は「どの track を採用したか」と「そのときの diagnostics（language / label / kind / mode / cuesLength / activeCuesLength / hasCueOverlapAtCurrentTime など）」を返す責務を持つ。
+
+2. binding 層  
+   - resolver 層で選ばれた TextTrack に対して bind / unbind / listener 更新を行う。  
+   - 代表的な実装は `syncSecondarySubtitleTrackBinding(...)` や cue controller 側の binding helpers であり、`secondaryTrack` を state に反映しつつ、`mode` / `oncuechange` などの listener を適切に張る。  
+   - split 後の `content.js` からは「secondary track を誰が bind しているか」を直接は見ず、binding 層の public API を通じて履歴や missCount を読む。
+
+3. cue-readable 層  
+   - 現在時刻で、その track から読める cue が存在するかどうかを判定する。  
+   - 代表的な実装は `getTrackActiveCuesLength(...)` / `hasCueOverlapAtTime(...)` / `getCurrentCue()` / `getCurrentCueText(...)` などであり、`activeCuesLength` や `hasCueOverlapAtCurrentTime` を基準に `cue readable` かどうかを判断する。  
+   - multi-track 前提のもとでは「どの track が chosen か」と「chosen track が currentTime に対して readable か」を切り分けて扱う。
+
+Section 4: Sync Interval - Periodic Orchestration は、これら 3 層のうち
+「いつ secondary recovery を走らせるか」を担当する orchestration lane として扱う。  
+具体的には、`detectLargeSeek()` / `evaluateSecondaryRecovery()` / `triggerSecondaryRecovery()` を通じて、
+
+- `track found` だが `cue unreadable` の状態が続いているか
+- `signal missing`（primary は出るが secondary signal が 0）の状態が続いているか
+
+を判定し、必要なタイミングで resolver / binding / cue-readable 層へ recovery を促す。
+
+Issue #32 の split では、
+
+- resolver 層（`subtitle-track-resolver.js`）
+- binding / cue listener 層（secondary track binding と cue controller）
+- cue-readable 層（現在時刻で読める cue の存在判定）
+
+を secondary signal lane の API 境界として扱い、
+Section 4 はこれらを呼び出す orchestration laneとして薄く保つ。
+
+以後の docs とログでは、secondary 不調の現象を
+
+- `track found` なのか
+- `cue unreadable` なのか
+- `signal missing` なのか
+
+のいずれで起きているかを、この 3 層のどこで発生しているかに紐づけて記録する。
+
+---
+
+
+## 6. 実装ラウンド
+
+
+### 6.1 Round 1: section regroup（完了）
+
+
+Round 1 の目的は、`content.js` を 7 セクションで読める物理配置へ揃えることだった。  
+このラウンドでは **ordering-only** を徹底し、ロジック変更は行わない。
+
+
+Round 1 で行ったことは次のとおり。
+
+
+- 7 セクションコメントの挿入
+- 関数ブロックのセクション単位並べ替え
+- Section 4 / 5 / 7 の関数群集約
+- Section 6 は空許容とする設計判断の明文化
+- `boot();` は wiring 後へ残す運用ルールの確定
+
+
+### 6.2 Round 2: runtime observers 物理移送（完了）
+
+
+Round 2 では、Section 6 相当の observer 実装詳細を `runtime-observers.js` に寄せた。  
+このラウンドは **physical move-only** を原則とし、observer の意味・条件・挙動は変更しないまま、実装本体の置き場所だけを移した。
+
+
+Round 2 で扱った対象は次のとおり。
+
+
+- MutationObserver callback 本体
+- playback controls resize / orientation handler
+- resize observer target refresh helper
+- `waitForVideo` を含む observer / runtime monitor 実装詳細
+- `startPlaybackControlLayoutObservers()` / `stopPlaybackControlLayoutObservers()` / `refreshPlaybackControlResizeObserverTargets()` の public API 成立
+- `content.js` 側の observer attach / detach / routing / wiring の残置位置整理
+
+
+Round 2 完了後の読み方は次のとおり。
+
+
+- `runtime-observers.js` が observer 実装本体の正本である
+- `content.js` 側は observer attach / detach / routing / top-level wiring の入口を持つ
+- state private 化・rename・再設計は Round 3 へ送る
+
+
+### 6.3 Round 3: state カプセル化（完了）
+
+
+Round 3 の目的は、observer 関連 state を module private に寄せて `content.js` の state を痩せさせることだった。  
+このラウンドでも observer の意味・条件・挙動は変えず、**state カプセル化だけ** に集中した。
+
+
+Round 3 で private 化した対象は次のとおり。
+
+
+- `playbackControlsMutationObserver`
+- `playbackControlsResizeObserver`
+- `playbackControlsResizeTargets`
+- `playbackControlsResizeHandler`
+- `playbackControlsOrientationHandler`
+- `waitTimer`
+
+
+Round 3 で据え置いた共有 state は次のとおり。
+
+
+- `dialogEl`
+- `panelVisible`
+- `playbackControlsRafId`
+
+
+Round 3 の結果は次のとおり。
+
+
+- `runtime-observers.js` に残る `state` 依存は `dialogEl` と `panelVisible` のみになった
+- `content.js` から observer module の内部運転都合だけで存在する state がさらに減った
+- `content.js` の行数は 3899 → 3894 → 3893 と減少した
+- first cleanup はコミット `0db6472`、`waitTimer` private 化を含む完了差分はコミット `51046ce` で反映された
+
+
+### 6.4 Round 4: sync interval orchestration 試行と rollback（部分完了）
+
+
+Round 4 の目的は、Section 4: Sync Interval - Periodic Orchestration のうち、`syncIntervalRunSecondaryRecoveryPass()` と周辺 helper 群を `content.js` から外へ出し、Section 4 の thin coordinator 化を進めることだった。
+
+
+このラウンドでは、次の関数群を `sync-interval-orchestrator.js` へ寄せる試行を行った。
+
+
+- `buildSecondarySyncLogPayload`
+- `buildSyncIntervalSubtitleSnapshot`
+- `logSecondarySyncContextIfNeeded`
+- `logSecondaryRecoveryTermination`
+- `runSecondaryResolverProbeIfNeeded`
+- `triggerSecondaryRecovery`
+- `syncIntervalRunSecondaryRecoveryPass`
+
+
+設計上の切り分け自体は成立したが、実装では `content.js` 先頭に static `import` を追加する構成を採った。  
+しかし現行の Chrome 拡張では、`content_scripts` 直注入で動く `content.js` にそのまま static `import` を置く構成は安全に成立しなかったため、この方式はいったん採用を見送った。
+
+
+Round 4 で実際に起きたことは次のとおり。
+
+
+- `import { createSyncIntervalOrchestrator } from "./sync-interval-orchestrator.js";` を導入した試行を実施
+- import 方式をやめて rollback
+- rollback 後、一部呼び出しだけが残ったことで `syncIntervalRunSecondaryRecoveryPass is not defined` が発生
+- Section 4 の helper 群と `syncIntervalRunSecondaryRecoveryPass()` を `content.js` に復元
+- `rg -n "createSyncIntervalOrchestrator|syncIntervalOrchestrator|function syncIntervalRunSecondaryRecoveryPass" content.js` で復元状態を確認
+- `node --check content.js` 通過
+- テストでもエラーなく動作するところまで復旧
+- rollback 後の `content.js` 行数は **3892** になった
+
+
+Round 4 の判定は次のとおり。
+
+
+- Section 4 の**責務境界整理**: 完了
+- Section 4 の**実験的物理移送**: 試行済み
+- Section 4 の**現行構成での安全な physical split**: 未完了
+- `content.js` の**動作復旧**: 完了
+
+
+したがって Round 4 は、**設計整理は前進したが、physical split は rollback して保留** のラウンドとして扱う。
+
+
+### 6.5 Round 5: sync interval orchestration の module loading strategy 確定（完了）
+
+
+Round 5 の目的は、Round 4 で rollback した Section 4: Sync Interval - Periodic Orchestration の physical split を再開する前に、**content script 向け module loading strategy を先に確定する**ことだった。  
+Section 4 の再分割本体には入らず、あくまで loading strategy と依存注入境界の設計に限定した。
+
+
+#### loading strategy の確定
+
+
+manifest.json の `content_scripts.js` は配列順で静的注入される構成であり、`content.js` は static `import` / `export` を持たない単一 IIFE の通常スクリプトである。  
+既存の `playbackContext.js` / `runtime-observers.js` / `reinitialize-coordinator.js` は、すでに `window.ATVB.createXxx` 形式の factory を `window.ATVB` へ公開し、`content.js` 側は `controller?.method?.(...)` の任意参照 + フォールバックで bridge するパターンをすでに実践している。
+
+
+Round 4 の失敗原因は、分割そのものが不自然だったのではなく、この既存パターンを踏まずに static `import` を直接置いたことにあると判断した。
+
+
+したがって、Round 5 では次を loading strategy として確定する。
+
+
+- **注入順ベースの分割**を採用する
+- `sync-interval-orchestrator.js` は `window.ATVB.createSyncIntervalOrchestrator = ...` を公開する
+- `content.js` 側は `window.ATVB?.createSyncIntervalOrchestrator?.(...)` で controller を生成する
+- controller は `state` 経由ではなく、top-level の local 変数として保持する
+- manifest.json の修正は不要（既存の `content_scripts.js` 配列順で足りる）
+
+
+#### 依存注入の境界確定
+
+
+`createSyncIntervalOrchestrator(...)` へ渡す依存は、次の 3 束 + module 内部 private helpers とする。
+
+
+- `state`: `video` / `secondaryTrack` / `primaryTrack` / `lastVideoSrcKey` / `lastObservedVideoTime` / `lastLargeSeekAt` / `lastSecondarySyncContext` / `lastPrimaryRecoveryAttemptAt` など Section 4 が直接読み書きするフィールド
+- `controllers`: `cueController`（`evaluateSecondaryRecovery` / `getBoundSecondaryTrack` / `getLaneStates` / `getMergedSubtitleHealth`）、`reinitializeCoordinator`（primary recovery 用。ただし primary recovery の判定本体は content.js に残す）
+- `services`: `resolverDeps` / `getVideoAndDialog` / `syncHistoryContextWithPlayback` / `syncSecondarySubtitleTrackBinding` / `renderSecondarySubtitle` / `renderCurrentSnapshot` / `renderPanel` / `applyPanelState`（`panelUi.applyPanelState`）/ `logContent`
+- Section 4 固有 helper 群（`buildSecondarySyncLogPayload` / `buildSyncIntervalSubtitleSnapshot` / `logSecondarySyncContextIfNeeded` / `logSecondaryRecoveryTermination` / `runSecondaryResolverProbeIfNeeded` / `triggerSecondaryRecovery`）は、module 内部の private 実装として完全移送し、`content.js` からは渡さない
+
+
+`loggers` を独立した束として切ることは見送った。`logContent` は単一のブリッジ関数であり、`runtime-observers.js` など既存 module の注入パターンとも揃えるため、`services` に含めるほうが一貫する。
+
+
+#### 公開 API の確定
+
+
+`sync-interval-orchestrator.js` が公開する API は次の 3 本とし、いずれも薄い result object を返す形に揃える。
+
+
+- `refreshPlaybackContext()` → `{ videoChanged, contentKeyChanged, reinitialized }`
+- `detectLargeSeek()` → `{ largeSeekDetected, delta }`
+- `runSecondaryRecoveryPass(effectiveSecondaryLanguage)` → `{ now, hasSecondarySignal, hasPrimarySignal, recoveryAction, recoveryTriggered, terminated }`
+
+
+`runSecondaryRecoveryPass` は現行の `syncIntervalRunSecondaryRecoveryPass()` が既に `{ now, hasSecondarySignal, hasPrimarySignal }` を返しているため、この形を拡張する形で揃える。
+
+
+#### `ensureSecondaryTrackSyncInterval()` 側の呼び出し規約
+
+
+- `syncIntervalOrchestrator` は top-level local 変数として保持する（`state` には入れない）
+- 各呼び出しは `syncIntervalOrchestrator?.method?.(...) ?? {}` の形に統一する
+- primary recovery の判定ロジック（`shouldAttemptPrimaryRecovery` の算出、`reinitializeCoordinator?.reinitializeSubtitlePipeline` の呼び出し）は、Section 4 の主題（secondary recovery pass）とは別責務のため、`content.js` 側に残す
+
+
+#### Round 5 の判定
+
+
+- module loading strategy の確定: 完了
+- 依存注入境界の確定: 完了
+- 公開 API 3 本の署名・戻り値確定: 完了
+- fallback 方針の確定: 完了
+- Section 4 の物理移送本体の前提整理: 完了
+
+
+したがって Round 5 は、**Section 4 再分割の前提設計が完了したラウンド**として扱う。
+
+
+### 6.6 Round 6: sync interval orchestration physical split（完了）
+
+
+Round 6 の目的は、Round 5 で確定した content script 向け module loading strategy に従って、Section 4: Sync Interval - Periodic Orchestration の physical split を完了することだった。
+
+
+このラウンドでは、`sync-interval-orchestrator.js` を追加し、`window.ATVB.createSyncIntervalOrchestrator = ...` を公開した。  
+`content.js` 側では `window.ATVB?.createSyncIntervalOrchestrator?.({...}) ?? null` で orchestrator を生成し、`ensureSecondaryTrackSyncInterval()` から `refreshPlaybackContext()` / `detectLargeSeek()` / `runSecondaryRecoveryPass()` を呼ぶ形へ移行した。
+
+
+Round 6 で実施したことは次のとおり。
+
+
+- `syncIntervalRefreshPlaybackContext()` を `refreshPlaybackContext()` として module 側へ移送
+- `syncIntervalDetectLargeSeek()` を `detectLargeSeek()` として module 側へ移送
+- secondary recovery pass とその周辺 helper 群を module 内 private 実装として移送
+- `content.js` の `ensureSecondaryTrackSyncInterval()` を thin coordinator 化
+- orchestrator 不在時は interval callback 冒頭で早期 return する fallback を実装
+- primary recovery 判定は `content.js` 側に残置
+- `debugPanelProbe` / `reloadSettingsAndReinitialize` を service 経由で注入
+
+
+Round 6 の確認結果は次のとおり。
+
+
+- `node --check content.js` 通過
+- `node --check sync-interval-orchestrator.js` 通過
+- `content.js` から secondary recovery pass 一式が削除されていることを確認
+- 手動テストで通常再生は問題なし
+- large seek 後は、既存 Known Issue どおり secondary 欠落が継続し、primary のみ表示されることを確認
+
+
+Round 6 の判定は次のとおり。
+
+
+- Section 4 の physical split: 完了
+- Section 4 の thin coordinator 化: 完了
+- fallback 方針の実装: 完了
+- primary recovery の content.js 残置: 完了
+- large seek 後の secondary 復帰バグ: 未解消（既存 Known Issue のまま）
+
+### 6.7 Round 6 follow-up: large seek 後 secondary missing の観測ログ追加（完了）
+
+
+Round 6 で Section 4: Sync Interval - Periodic Orchestration の physical split は完了したが、
+large seek 後に secondary subtitle が復帰しない既存 Known Issue 自体は未解消のまま残っていた。
+
+
+この follow-up では、挙動修正を先に入れるのではなく、
+`sync-interval-orchestrator.js` に最小限の観測ログを追加し、
+既知問題の発生位置を時系列で切り分けられるようにした。
+
+
+今回の追加対象は次の 4 点である。
+
+
+- `detectLargeSeek()` の large seek 観測ログ
+- `runSecondaryRecoveryPass(effectiveSecondaryLanguage)` 入口の recovery pass 開始ログ
+- `cueController.evaluateSecondaryRecovery(...)` 呼び出し直後の decision ログ
+- `triggerSecondaryRecovery(...)` 前後の trigger 開始 / 終了ログ
+
+
+ログは通常再生中の毎 tick ノイズを避けるため、
+large seek 文脈と secondary recovery 文脈に限定した。
+
+
+今回のラウンドでは、次は行っていない。
+
+
+- primary recovery 判定ロジックの変更
+- recovery 条件の緩和
+- binding の強制再同期
+- secondary subtitle DOM / panel / overlay の責務変更
+- UI 挙動修正
+
+
+したがってこの追記は、Section 4 の挙動変更ではなく、
+既存 Known Issue の切り分け材料を増やすための **observability 強化** として扱う。
+
+
+確認結果として、`node --check sync-interval-orchestrator.js` は通過した。
+実装コミットは `57763d8`（`chore: large seek 後 secondary missing の観測ログを追加する (Issue #32)`）である。
+
+
+手動再現では、large seek 後に「メインは出るがサブが戻らない」既知バグ自体は再現した。  
+ただしこのとき、追加した Section 4 観測ログ
+（`large seek detected` / `secondary recovery pass started` /
+`secondary recovery action evaluated` / `secondary recovery trigger`）
+は 1 行も出なかった。
+
+
+一方で、同じ再現ケースでは
+`initial cue recovery render` と `current subtitle block updated` のみ確認された。  
+このことから、今回の再現経路では initial cue recovery 側は動いている一方、
+Section 4 の `detectLargeSeek()` / `runSecondaryRecoveryPass()` /
+`triggerSecondaryRecovery()` には到達していない可能性が高い。
+
+
+したがって、Round 6 follow-up の結論は次のとおりである。
+
+
+- Section 4 の observability 強化自体は完了した
+- large seek 後 secondary missing の再現系の中に、
+  **Section 4 の large seek / secondary recovery 経路へ入っていないケース** がある
+- 次段では Section 4 の recovery 条件修正へ直行するのではなく、
+  `detectLargeSeek()` の前提条件
+  （呼び出しタイミング / `lastObservedVideoTime` の持ち方 / 当時の `delta > 6` 閾値）
+  を先に見直す必要がある
+- 併せて、initial cue recovery 側を別系統の観測対象として扱うかどうかも設計側で再整理する
+
+---
+
+
+## 7. 現在の次アクション
+
+
+### 7.1 最優先候補
+
+- 最優先で潰す対象は、`primary は出ているが secondary が復帰せず、2字幕が揃わない状態` とする。
+- 直近の representative case では、`mergedPrimaryHealthy: true` と `mergedShouldRecoverSecondary: true` のまま recovery が発火しても、`secondaryTrackFoundAfter: true` かつ `secondaryActiveCuesLengthAfter: 0` が続いたため、Section 4 の trigger 条件よりも secondary resolver / binding 境界の優先度が上がった。
+- したがって、次の first candidate は `sync-interval-orchestrator` 単体の再調整ではなく、`resolveSecondarySubtitleTrack()` → `syncSecondarySubtitleTrackBinding()` → cue readable 判定、の一直線を追うことに置く。
+- Issue 32 の split 観点でも、Section 4 は「いつ recovery を走らせるか」、resolver / cue controller 側は「どの track を bind し、その track から cue を読めるか」を担当する、と責務境界を固定する。
+
+
+### 7.2 次スレ TODO
+
+1. `subtitle-track-resolver.js`
+   - `resolver-selected` の観測を維持しつつ、最終採用 track の cue 範囲と currentTime overlap を見分けられる最小ログを残す。
+   - 見る順番は `language / label / kind / mode / cuesLength / activeCuesLength / hasCueOverlapAtCurrentTime` を優先し、必要なら first/last cue 境界を補助的に出す。
+
+2. secondary binding 境界
+   - `syncSecondarySubtitleTrackBinding()` の直後に、bind 後 track 参照・mode・`activeCues.length`・render 実行有無を確認する。
+   - ここで `track は同一参照だが active cue を返せない` のか、`再 bind 後に別 track へ差し替わる` のかを切り分ける。
+
+3. cue listener / readable 判定
+   - `cuechange` listener が発火しているか、`getCurrentCue()` / `getCurrentCueText()` が currentTime 近傍で fallback 読みできるかを確認する。
+   - これにより「resolver の選定問題」なのか「bind 後の cue 読み取り問題」なのかを分離する。
+
+4. docs / naming 整理
+   - 以後の docs とログコメントでは、現象名を `secondary recovery 不発` ではなく `primary は出るが secondary が signal 化しないケース` に寄せる。
+   - `Section 4 到達 = orchestrator の問題` と短絡せず、resolver / binding 境界まで含めて記録する。
+
+### 7.3 detectLargeSeek() 設計メモ
+
+Round 6 follow-up の観測では、large seek 後 secondary missing の既知問題は再現した一方で、
+Section 4 の観測ログ
+（`detectLargeSeek()` / `runSecondaryRecoveryPass(...)` /
+`cueController.evaluateSecondaryRecovery(...)` / `triggerSecondaryRecovery(...)`）
+は 1 行も出なかった。
+
+この結果から、既知問題の再現系の中に、
+**Section 4 の large seek / secondary recovery 経路へ到達していないケース**
+が存在すると考える。
+
+そのため、Round 6 follow-up の次ラウンドとして、
+Section 4 の recovery 条件を先に修正するのではなく、
+まず `detectLargeSeek()` の前提条件そのものを見直す方針を採った。
+
+この「seek 閾値調整ラウンド」（本スレ）では、
+この方針に従って `sync-interval-orchestrator.js` 側の `detectLargeSeek()` を最小限に変更し、
+large seek 判定閾値と観測ログの両方を更新した。
+
+#### 7.3.1 いまの `detectLargeSeek()` が前提としていること
+
+「seek 閾値調整ラウンド」後の `detectLargeSeek()` は、
+おおむね次の条件で large seek を認識する前提に立っている。
+
+- `previousObservedTime` が有限である
+- `currentVideoTime` が有限である
+- 両者の差分 `delta` が閾値を超えている
+- その閾値として、現時点では `delta > 3` を採用している
+
+`delta` は「前回観測時刻と今回の再生位置の差分（秒）」を意味し、
+通常再生の連続した time 進行と、ユーザー操作による離散的な time jump を分けるための指標として使っている。
+
+もともと docs では `delta > 6` を暫定値として採用していたが、
+この値は「強い根拠で凍結された閾値」ではなく、
+あくまで「通常再生と離散 seek を分ける当面の値」として位置付けていた。
+
+「seek 閾値調整ラウンド」では、この暫定値を 6 秒から 3 秒へ下げ、
+代表的な large seek 再現ケースで Section 4 へ到達しやすくすることを目的とした。
+
+#### 7.3.2 観測ログの更新
+
+`detectLargeSeek()` の前提を実際の再現ケースと突き合わせるため、
+同じ「seek 閾値調整ラウンド」で `sync-interval-orchestrator.js` 側に
+次の観測ログを追加した。
+
+- `sync interval playback context`  
+  - `found.video` / `state.video` の有無と同一性  
+  - `previousVideoSrcKey` / `nextVideoSrcKey`  
+  - `hasCurrentSrcChanged`  
+  - `currentTime` / `state.lastObservedVideoTime`
+
+- `large seek baseline`  
+  - `previousObservedTime`  
+  - `currentVideoTime`  
+  - `delta`  
+  - `previousObservedTimeFinite` / `currentVideoTimeFinite`  
+  - `largeSeekDetected`  
+  - `lastLargeSeekAt`
+
+あわせて、`content.js` 側の sync interval tick でも次をログするようにした。
+
+- `sync interval tick`  
+  - `restarting`  
+  - `hasSyncIntervalOrchestrator`  
+  - `hasVideo`  
+  - `requestedSecondaryLang`  
+  - `currentTime`
+
+この組み合わせにより、
+
+- orchestrator が生成されているか
+- `refreshPlaybackContext()` の結果として playback context がどのように変化したか
+- `detectLargeSeek()` がどの delta で large seek を検知したか / しなかったか
+- その後の secondary recovery pass がどのタイミングで走ったか
+
+を一連のログとして追えるようになった。
+
+#### 7.3.3 seek 閾値調整ラウンドでの代表ケース評価
+
+3 秒閾値適用後、「seek 閾値調整ラウンド」で対象とした
+large seek 後 secondary missing の代表ケースでは、
+次の Section 4 ログが揃っていることを確認した。
+
+- `secondary recovery pass started`
+- `secondary recovery trigger finished`
+- `secondary recovery terminated`
+
+また、この到達系では `mergedShouldRecoverSecondary=true`（recover 判定あり）でありながら、
+secondary subtitle が復帰せず、`hasPrimarySignal: true` / `hasSecondarySignal: false` の状態が続いていることも確認された。
+
+このため、「seek 閾値調整ラウンド」の結論は次のとおりとする。
+
+- 3 秒閾値適用後、今回観測した代表的な再現パターンの範囲では、
+  「large seek 後 secondary missing が Section 4 に一度も入らない」という
+  **Section 4 未到達系** は解消されたと見なす
+- 問題の主座は、Section 4 入口条件ではなく、
+  **Section 4 到達後の recovery 不成立系** へ移ったと整理する
+- 未到達系が別の極端な操作に残っている可能性は否定しないが、
+  少なくとも「seek 閾値調整ラウンド」の対象ケースでは、
+  次に見るべき対象は `mergedShouldRecoverSecondary` / missCount / trigger 周りの
+  recovery 条件側である
+
+#### 7.3.4 次ラウンドで固定したいスコープ
+
+次ラウンド（Round 6 follow-up と「seek 閾値調整ラウンド」に続く
+「recovery 条件見直しラウンド」）では、
+`detectLargeSeek()` 前提確認ラウンドから一歩進み、
+Section 4 到達後の recovery 条件にフォーカスする。
+
+ただし、スコープを広げすぎないために、
+次のように「最小 1 箇所」を選ぶラウンドとして扱う。
+
+- `mergedShouldRecoverSecondary` 判定条件
+- secondary recovery の miss count 進行と termination 条件
+- `triggerSecondaryRecovery(...)` 前後の再評価タイミング
+- track 再取得 / re-bind の抜け（`secondaryTrackFoundAfter` など）
+
+「seek 閾値調整ラウンド」（本スレ）では、
+あくまで `detectLargeSeek()` 閾値と観測ログの更新までを扱い、
+recovery 条件そのものの変更にはまだ入らない。
+
+次ラウンドのゴールは、代表的な Section 4 到達系に対して
+「どの recovery 条件を最小 1 箇所だけ動かすか」を決め、
+その挙動とログを docs / Issue に反映するところまでとする。
+
+### 7.3.5 Secondary sync logging / naming 方針
+
+Issue #32 の分割とログ追加では、secondary 同期系のログ message を次の方針で揃える。
+
+- secondary sync / recovery に関するログの message prefix は、`secondary-sync ...` に統一する。  
+  - 例: `secondary-sync recovery pass started` / `secondary-sync recovery action evaluated` / `secondary-sync recovery trigger started` / `secondary-sync recovery trigger finished` / `secondary-sync recovery terminated` など。  
+  - category は既存の `subtitle` を継続して使い、prefix で意味を切る（新しい category を増やさない）。
+
+- Section 4 の recovery 関連ログは、次のような粒度で出す。  
+  - `secondary-sync recovery pass started`  
+    - `effectiveSecondaryLanguage` / `currentTime` / `hasPrimarySignal` / `hasSecondarySignal` など、pass 入口の snapshot。  
+  - `secondary-sync recovery action evaluated`  
+    - `mergedPrimaryHealthy` / `mergedShouldRecoverSecondary` / `recoveryDecision.action` / `recoveryDecision.reason` など、`evaluateSecondaryRecovery(...)` の結果。  
+  - `secondary-sync recovery trigger started` / `secondary-sync recovery trigger finished`  
+    - trigger 実行前後の `secondaryTrackFoundBefore` / `secondaryTrackFoundAfter` / `secondaryActiveCuesLengthBefore` / `secondaryActiveCuesLengthAfter` など。  
+  - `secondary-sync recovery terminated`  
+    - termination の理由と missCount、`hasSecondarySignal` / `hasPrimarySignal` の最終値。
+
+- `terminated` という語は「recovery ループをこれ以上進めない」ことを表すために使い、  
+  「track が見つからない」ことだけを指す用語にはしない。  
+  representative case では `secondaryTrackFoundAfter: true` のまま `secondaryActiveCuesLengthAfter: 0` が続いているため、`terminated` を resolver failure と短絡しない。
+
+- large seek 文脈のログは `secondary-sync context snapshot` / `secondary-sync large seek baseline` のような prefix を用い、  
+  `refreshPlaybackContext()` と `detectLargeSeek()` の前提が満たされているかを確認する用途に限定する。  
+  通常再生中の毎 tick ノイズを避けるため、large seek / recovery 文脈に絞る。
+
+この logging / naming 方針に揃えることで、
+
+- `track found` なのに `cue unreadable` が続いているケース
+- `hasPrimarySignal: true` / `hasSecondarySignal: false` が続いているケース
+
+を secondary sync 系ログだけで切り分けやすくし、
+Section 4 到達系 / 未到達系の両方について、原因を resolver / binding / cue-readable のどこに置くべきかを docs 上で説明しやすくする。
+
+### 7.4 Round 2 / 3 完了ライン
+
+
+Round 2 / 3 完了時点で、次を「終わった」とみなす。
+
+
+- `runtime-observers.js` が Section 6 実装詳細の正本として成立している
+- `content.js` の Section 6 が observer attach / detach / routing / wiring の薄い入口として読める
+- observer 内部専用 state が `runtime-observers.js` にカプセル化されている
+- observer の意味・条件・挙動は Round 2 / 3 を通して変更していない
+- `node --check` と軽い拡張更新確認でエラーが出ていない
+
+
+### 7.5 Round 4 / 5 完了ライン
+
+
+Round 4 / 5 は、Section 4 の physical split を安全に再開するための前提整理ラウンドとして、次を達成した段階とみなす。
+
+
+- Section 4 の helper / recovery pass 群の責務境界が明文化されている
+- どの関数群を module 候補として扱うかが特定済みである
+- static `import` 前提の実装は現行構成では正本にできないと確認できている
+- rollback 後の `content.js` が再び正常動作している
+- `function syncIntervalRunSecondaryRecoveryPass(...)` が `content.js` に存在する
+- `createSyncIntervalOrchestrator` / `syncIntervalOrchestrator` 参照が `content.js` に存在しない
+- `content script` 向け loading strategy として、`window.ATVB.createXxx` + 注入順ベースの分割を採用すると確定している
+- `createSyncIntervalOrchestrator(...)` に渡す依存注入境界が `state` / `controllers` / `services` / module private helpers で整理済みである
+- `refreshPlaybackContext` / `detectLargeSeek` / `runSecondaryRecoveryPass` の公開 API 3 本が確定している
+- `ensureSecondaryTrackSyncInterval()` 側の呼び出し規約が確定している
+- `node --check content.js` とテスト確認が通っている
+
+
+したがって Round 4 / 5 は、**Section 4 の責務境界整理と loading strategy 整理が完了した状態**として扱う。
+
+
+### 7.6 Round 6 完了ライン
+
+
+Round 6 完了時点で、次を「終わった」とみなす。
+
+
+- `sync-interval-orchestrator.js` が Section 4 実装本体の正本として成立している
+- `content.js` の Section 4 が scheduling / orchestration order / primary recovery 判定の薄い入口として読める
+- `syncIntervalRefreshPlaybackContext` / `syncIntervalDetectLargeSeek` / `syncIntervalRunSecondaryRecoveryPass` と周辺 helper 群が `content.js` から除去されている
+- orchestrator 不在時 fallback が interval callback 冒頭の早期 return として実装されている
+- primary recovery 判定は `content.js` 側に残置されている
+- `node --check content.js` / `node --check sync-interval-orchestrator.js` が通っている
+- 手動テストで通常再生が維持されている
+- large seek 後の secondary 欠落は既存 Known Issue として再現しており、新規 regress は確認されていない
+
+
+---
+
+
+## 8. ログと検証
+
+
+### 8.1 観測ポイント
+
+
+Issue #32 の分割では、ログは次の切り分けに使う。
+
+- recovery 判定が出たか
+- trigger が実行されたか
+- rebind が行われたか
+- track が再取得されたか
+- それでも active cues が戻らないか
+
+large seek 後 secondary missing の Known Issue については、特に次の 4 点を観測する。
+
+- large seek が検知されているか（`detectLargeSeek()`）
+- secondary recovery pass が走っているか（`runSecondaryRecoveryPass(...)` 入口ログ）
+- decision が「recover すべき」と判定しているか（`cueController.evaluateSecondaryRecovery(...)` 直後）
+- trigger 実行後も secondary が戻っていないのか（`triggerSecondaryRecovery(...)` 前後の差分）
+
+この考え方は、recovery ロジック本体と Apple TV+ 側挙動を混同しないために重要である。
+
+Round 2 / 3 の observer 分割でも、ログの見方自体は変えない。  
+分割後も「どの trigger が起きたか」「どこで layout / reinitialize が呼ばれたか」を切り分けられる状態を保つ。
+
+Round 4 でも同様であり、Section 4 の rollback は**配置を戻しただけ**であって、secondary recovery の意味・条件・ログ観測点そのものを変えるものではない。  
+そのため、Section 4 のログ観測は引き続き既存の recovery trigger / termination / sync context ログを使って見る。
+
+Round 6 以降も同様であり、Section 4 の physical split は**置き場所の変更と thin coordinator 化**であって、secondary recovery の意味・条件・ログ観測点そのものを変えるものではない。
+
+
+### 8.2 テスト確認観点
+
+テスト確認では、少なくとも次を確認する。
+
+- 通常再生で panel / overlay が壊れない
+- large seek 後に primary が復帰する
+- secondary recovery / force-rebind が必要なときだけ走る
+- panel 開閉や controls 再描画で layout が崩れない
+- 再初期化後に二重 attach や二重 render が出ない
+- user scroll と auto-follow が不自然に競合しない
+
+Round 2 / 3 の確認では、加えて次を軽く見る。
+
+- observer start / stop 後にエラーが出ない
+- layout observer の attach / detach が二重化していない
+- `waitForVideo` 経由の初期化待ちで例外が出ない
+
+Round 4 の確認では、さらに次を最低限確認する。
+
+- `syncIntervalRunSecondaryRecoveryPass is not defined` が出ていない
+- `content.js` 先頭に static import を残していない
+- `node --check content.js` が通る
+- テストで sync interval 起点の secondary recovery が落ちずに動く
+- rollback 後の `content.js` 行数が 3892 であることを記録している
+
+Round 6 の確認では、加えて次を確認した。
+
+- 通常再生で sync interval orchestrator 経由にしてもエラーが出ない
+- large seek 後、secondary 欠落の既存 Known Issue は再現するが、新しい runtime error は出ない
+- orchestrator 不在時 fallback を導入しても、正常構成では early return に入らない
+
+Round 6 follow-up の確認では、さらに次を確認する。
+
+
+- large seek が観測ログ上で検知されている、または今回ケースでは未検知であることが明示できる
+- recovery pass 開始ログが seek 後に続いて出ている、または Section 4 に未到達であることが切り分けられる
+- decision ログで recover 判定の有無と reason が確認できる
+- trigger 前後ログで secondary track / active cues の戻り有無が確認できる
+- Section 4 ログが 0 件の場合、initial cue recovery 系統だけが動いていないかを併せて確認する
+
+
+### 8.3 Known Issue の切り分け
+
+
+現時点では、次を拡張側ロジックの問題と即断しない。
+
+
+- recovery / force-rebind は走っている
+- track の再バインドも行われている
+- それでも JA track の active cues が復帰しない
+
+
+このケースは Apple TV+ 側挙動に依存する Known Issue として切り分ける。
+
+
+large seek 後 secondary missing の Known Issue については、
+次の 2 系統を分けて観測する。
+
+
+#### A. Section 4 到達系（sync interval / recovery pass は走るが 2字幕が揃わない）
+
+- representative case では、`hasPrimarySignal: true`、`mergedPrimaryHealthy: true`、`mergedShouldRecoverSecondary: true` の条件で secondary recovery が発火しているにもかかわらず、`secondary recovery trigger finished` 後も `secondaryTrackFoundAfter: true` かつ `secondaryActiveCuesLengthAfter: 0` が継続した。
+- このケースでは「secondary track が見つからない」のではなく、「選ばれた secondary track から、その時刻で読める cue が得られていない」可能性が高い。
+- したがって Section 4 の termination 条件や missCount だけを調整しても、根治しない可能性がある。
+- split 設計上は、Section 4 を recovery orchestration lane、`subtitle-track-resolver` / `syncSecondarySubtitleTrackBinding()` / cue readable 判定を secondary signal lane として分離し、後者を次の重点観測対象に置く。
+- 既知問題の表現としては、`Section 4 に到達しても recovery 後の secondary signal が 0 のまま残る representative case がある` と記録するのが現状に最も合っている。
+
+
+#### B. Section 4 未到達系
+
+
+large seek 後 secondary missing は再現しているが、
+Section 4 の観測ログが 1 行も出ていないケースである。  
+Round 6 follow-up の手動再現で、この系統の存在を確認した。
+
+
+この場合は、次を優先して疑う。
+
+
+- `detectLargeSeek()` の前提条件が、実際の seek 操作に噛み合っていない
+- `state.lastObservedVideoTime` が null / 非有限のままになっている
+- （seek 閾値調整ラウンド以前は）`delta > 6` の閾値が大きすぎて、再現操作を拾えていなかった可能性
+- 現行の `delta > 3` でもなお Section 4 未到達のケースが残るかどうか
+
+
+この系統では、まず seek 検知条件と入口条件を見直し、
+必要なら initial cue recovery 側も別系統の観測対象として扱う。
+
+
+observer 分割後も、この Known Issue の切り分け方の基本は変わらない。  
+Round 2 / 3 は observer の配置と state 保持場所を変えたラウンドであり、subtitle recovery 仕様そのものは変更していない。
+
+
+Round 4 についても同様で、rollback は Section 4 の**置き場所**を戻しただけであり、secondary recovery の仕様変更とは扱わない。
+
+
+Round 6 の手動テストでは、large seek 後に `hasPrimarySignal: true` / `hasSecondarySignal: false` のまま current subtitle block 更新が継続し、primary のみ表示される既存挙動を確認した。  
+Round 6 follow-up では、同系の再現ケースで Section 4 観測ログが 0 件であり、initial cue recovery render と current subtitle block updated のみ確認された。
+
+
+したがって現時点では、
+large seek 後 secondary missing Known Issue を **Section 4 到達系** と
+**Section 4 未到達系** に分けて扱う。
+
+
+---
+
+
+## 9. 注意
+
+
+- この文書は Issue #32 の **実装運用正本** であり、subtitle sync 設計そのものの正本ではない
+- truth / health / recovery / UI 境界の設計は `docs/content-architecture.md` を参照する
+- セッション運用の一般ルールは `docs/ai-session-templates.md` を参照する
+- Round 1 / Round 2 / Round 3 / Round 4 / Round 5 / Round 6 を混ぜない
+- **区画整理 / 物理移送 / private 化 / rollback 判断** を常に別論点として扱う
+- 行数削減は重要だが、より重要なのは責務が正しい場所へ移っていることである
+- Round 2 は physical move-only、Round 3 は state カプセル化 only として扱い、挙動変更を混ぜない
+- Round 4 は責務境界整理と試行的 physical split を含むが、rollback 済みの部分完了ラウンドとして扱う
+- Round 5 は content script 向け module loading strategy / 依存注入境界 / 公開 API の確定ラウンドとして扱う
+- Round 6 は Section 4 の physical split 完了ラウンドとして扱い、既存 Known Issue の解消とは分けて扱う
