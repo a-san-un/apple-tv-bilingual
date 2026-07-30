@@ -535,7 +535,7 @@
       },
       getTrackActiveCuesLength: (...args) => getTrackActiveCuesLength(...args),
       getCurrentCueText: (...args) => getCurrentCueText(...args),
-      normalizeSubtitleText: (...args) => normalizeSubtitleText(...args),
+      normalizeSubtitleText: (...args) => vttDeps.normalizeSubtitleText(...args),
       logContentSubtitle: (...args) => logContentSubtitle(...args),
       isDebugEnabled: () => debugSecondarySubs,
       idleClearMs: SECONDARY_SUBTITLE_IDLE_CLEAR_MS,
@@ -1000,10 +1000,10 @@
 
   function computeCurrentSubtitleBlock(reason = "unknown") {
     const currentBlock = state.currentSubtitleBlock || null;
-    const primaryText = normalizeSubtitleText(
+    const primaryText = vttDeps.normalizeSubtitleText(
       currentBlock?.primaryText || state.lastPrimaryText || "",
     );
-    const secondaryText = normalizeSubtitleText(
+    const secondaryText = vttDeps.normalizeSubtitleText(
       currentBlock?.secondaryText || "",
     );
 
@@ -1178,7 +1178,6 @@
       cueTextApi.getCurrentCueText?.(...args) ?? "",
   };
 
-  const { normalizeSubtitleText, cleanCueText } = vttDeps;
 
   const {
     buildSubtitleBlockSequence = () => ({
@@ -2822,7 +2821,7 @@ function ensureSyncIntervalOrchestrator() {
         debugPanelProbe: DEBUG_PANEL_PROBE,
         getTrackActiveCuesLength,
         getCurrentCueText,
-        normalizeSubtitleText,
+        normalizeSubtitleText: vttDeps.normalizeSubtitleText,
         getMergedSubtitleHealthSnapshot,
         syncSecondarySubtitleTrackBinding,
         syncSecondarySubtitleTrack,
