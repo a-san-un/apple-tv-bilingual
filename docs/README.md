@@ -222,13 +222,15 @@ archive 移行時は、必要なら旧文書の先頭に移行先を書き残す
 
 ## 7. 現在の主線
 
-現在の主線は、`issue-32-content-core-split` ブランチ上で進めている `content.js` コア分割と subtitle sync / recovery 整理である。
+現在の主線は、`issue-32-content-core-split` ブランチ上で進めている
+`content.js` コア分割と subtitle sync / recovery 整理である。
 
 特に次が中心課題になっている。
 
 - `content.js` を thin coordinator に近づけるための段階分割
 - secondary recovery の Runtime First 方針の安定化
-- `playbackContext`、layout、reinitialize、sync interval などの責務移送
+- playback context controller / layout / reinitialize / sync interval などの責務移送
 - Apple TV+ 側挙動と拡張側ロジックの切り分け
 
-新しいセッションを始めるときは、まず `content-architecture.md` と `issue-32-content-core-split.md` を確認してから進める。
+新しいセッションを始めるときは、まず `content-architecture.md` と
+`issue-32-content-core-split.md` を確認してから進める。
