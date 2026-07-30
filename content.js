@@ -1228,16 +1228,16 @@
   }
 
   function findCueAt(track, time) {
-    return cueTextApi.findCueAt(track, time);
+    return resolverDeps.findCueAt(track, time);
   }
 
   function getCurrentCue(track, time = state.video?.currentTime ?? 0) {
-    return cueTextApi.getCurrentCue(track, time);
+    return resolverDeps.getCurrentCue(track, time);
   }
 
   function getCurrentCueText(track, time = state.video?.currentTime ?? 0) {
-    return cueTextApi.getCurrentCueText(track, time, {
-      cleanCueTextFn: cleanCueText,
+    return resolverDeps.getCurrentCueText(track, time, {
+      cleanCueTextFn: vttDeps.cleanCueText,
     });
   }
 
