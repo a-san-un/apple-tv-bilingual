@@ -263,243 +263,70 @@ function forwardContentLog(...args) {
       logContentSubtitle,
       subtitleHistoryMaxPerContent: SUBTITLE_HISTORY_MAX_PER_CONTENT,
     }) ?? null;
-  
-  // 再生準備の判定に必要な DOM / track 状態を集める。
-  // 字幕同期や UI 更新の判断はここで持たない。
+
   function getPlaybackContext() {
-    if (playbackContextController?.getPlaybackContext) {
-      return playbackContextController.getPlaybackContext();
-    }
-
-    const video = document.querySelector("video");
-    const playbackDialog = document.querySelector("dialog.playback-view");
-    const playbackView = document.querySelector(
-      '[data-testid="playback-view"]',
-    );
-    const textTrackCount = video?.textTracks?.length ?? 0;
-
-    // 再生判定は URL ではなく DOM 条件を基準にする。
-    const isPlaybackReady =
-    Boolean(video) &&
-    (Boolean(playbackDialog) || Boolean(playbackView));
-
-    return {
-      video,
-      playbackDialog,
-      playbackView,
-      textTrackCount,
-      isPlaybackReady,
-    };
+    return playbackContextController.getPlaybackContext();
   }
 
   function getVideoAndDialog() {
-    if (playbackContextController?.getVideoAndDialog) {
-      return playbackContextController.getVideoAndDialog();
-    }
-
-    const ctx = getPlaybackContext();
-    if (!ctx.isPlaybackReady) return null;
-
-    const resolvedDialog =
-      ctx.playbackDialog || ctx.playbackView?.closest("dialog") || null;
-
-    if (!resolvedDialog && !ctx.playbackView) return null;
-
-    return { video: ctx.video, dialog: resolvedDialog };
+    return playbackContextController.getVideoAndDialog();
   }
 
   function isPlaybackPageReady() {
-    if (playbackContextController?.isPlaybackPageReady) {
-      return playbackContextController.isPlaybackPageReady();
-    }
-
-    return getPlaybackContext().isPlaybackReady;
+    return playbackContextController.isPlaybackPageReady();
   }
 
-  // playback context detection helpers
-  // playback readiness の観測結果を、logging や上位判断へ渡すための補助関数群。
   function getPlaybackContextLogPayload() {
-    if (playbackContextController?.getPlaybackContextLogPayload) {
-      return playbackContextController.getPlaybackContextLogPayload();
-    }
-
-    const ctx = getPlaybackContext();
-    return {
-      hasVideo: Boolean(ctx.video),
-      hasPlaybackDialog: Boolean(ctx.playbackDialog),
-      hasPlaybackView: Boolean(ctx.playbackView),
-      textTrackCount: ctx.textTrackCount,
-      isPlaybackReady: ctx.isPlaybackReady,
-    };
+    return playbackContextController.getPlaybackContextLogPayload();
   }
 
-  // content key resolver helpers
-  // 現在の再生対象から安定した content key を組み立てるための下位 helper 群。
   function normalizeContentKeyPart(value) {
-    if (playbackContextController?.normalizeContentKeyPart) {
-      return playbackContextController.normalizeContentKeyPart(value);
-    }
-
-    return String(value || "")
-      .trim()
-      .replace(/\s+/g, " ")
-      .toLowerCase();
+    return playbackContextController.normalizeContentKeyPart(value);
   }
 
   function normalizeMediaSourceKey(rawSrc) {
-    if (playbackContextController?.normalizeMediaSourceKey) {
-      return playbackContextController.normalizeMediaSourceKey(rawSrc);
-    }
-
-    const src = String(rawSrc || "").trim();
-    if (!src) return "";
-
-    try {
-      const parsed = new URL(src, location.href);
-      return `${parsed.origin}${parsed.pathname}`.toLowerCase();
-    } catch (_) {
-      return src.split("?")[0].split("#")[0].toLowerCase();
-    }
+    return playbackContextController.normalizeMediaSourceKey(rawSrc);
   }
 
   function getPlaybackTitleKey() {
-    if (playbackContextController?.getPlaybackTitleKey) {
-      return playbackContextController.getPlaybackTitleKey();
-    }
-
-    const rawTitle = String(document.title || "");
-    const cleanedTitle = rawTitle
-      .replace(/\s*[|｜-]\s*apple tv\+\s*$/i, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    return normalizeContentKeyPart(cleanedTitle);
+    return playbackContextController.getPlaybackTitleKey();
   }
 
   function resolvePlaybackContentKey(ctx = getPlaybackContext()) {
-    if (playbackContextController?.resolvePlaybackContentKey) {
-      return playbackContextController.resolvePlaybackContentKey(ctx);
-    }
-
-    const mediaSourceKey = normalizeMediaSourceKey(
-      ctx.video?.currentSrc || ctx.video?.getAttribute("src") || "",
-    );
-    // エピソード識別は currentSrc を最優先にする。
-    if (mediaSourceKey) {
-      return `media:${mediaSourceKey}`;
-    }
-
-    const titleKey = getPlaybackTitleKey();
-    const attrCandidates = [
-      ctx.playbackView?.getAttribute("data-automation-id"),
-      ctx.playbackView?.getAttribute("data-testid"),
-      ctx.playbackView?.getAttribute("aria-label"),
-      ctx.playbackDialog?.getAttribute("aria-label"),
-    ];
-    const stableIdKey = attrCandidates
-      .map((value) => normalizeContentKeyPart(value))
-      .find(Boolean);
-
-    const keyParts = [];
-    if (titleKey) keyParts.push(`title:${titleKey}`);
-    if (stableIdKey) keyParts.push(`id:${stableIdKey}`);
-
-    if (!keyParts.length) return "content:unknown";
-    return keyParts.join("|");
+    return playbackContextController.resolvePlaybackContentKey(ctx);
   }
 
   function getCurrentVideoSrcKey(video = state.video) {
-    if (playbackContextController?.getCurrentVideoSrcKey) {
-      return playbackContextController.getCurrentVideoSrcKey(video);
-    }
-
-    return normalizeMediaSourceKey(
-      video?.currentSrc || video?.getAttribute("src") || "",
-    );
+    return playbackContextController.getCurrentVideoSrcKey(video);
   }
 
-  // playback history context helpers
-  // content key ごとの履歴バケット切替と保存先選択だけを担当する。
   function getHistoryBucketForContentKey(contentKey) {
-    if (playbackContextController?.getHistoryBucketForContentKey) {
-      return playbackContextController.getHistoryBucketForContentKey(
-        contentKey,
-      );
-    }
-
-    if (!contentKey) return null;
-    return state.subtitleHistoryStore.get(contentKey) || null;
+    return playbackContextController.getHistoryBucketForContentKey(contentKey);
   }
 
   function loadHistoryForContentKey(contentKey) {
-    if (playbackContextController?.loadHistoryForContentKey) {
-      return playbackContextController.loadHistoryForContentKey(contentKey);
-    }
-
-    const bucket = getHistoryBucketForContentKey(contentKey);
-    const items = Array.isArray(bucket?.items) ? bucket.items : [];
-    setSubtitleHistory(
-      items.slice(-SUBTITLE_HISTORY_MAX_PER_CONTENT),
-      "loadHistoryForContentKey",
-    );
+    return playbackContextController.loadHistoryForContentKey(contentKey);
   }
 
   function saveHistoryForContentKey(
     contentKey,
-    history = getSubtitleHistory(),
+    history = state.subtitleHistory,
   ) {
-    if (playbackContextController?.saveHistoryForContentKey) {
-      return playbackContextController.saveHistoryForContentKey(
-        contentKey,
-        history,
-      );
-    }
-
-    if (!contentKey) return;
-    const items = Array.isArray(history)
-      ? history.slice(-SUBTITLE_HISTORY_MAX_PER_CONTENT)
-      : [];
-    state.subtitleHistoryStore.set(contentKey, {
-      items,
-      updatedAt: Date.now(),
-    });
+    return playbackContextController.saveHistoryForContentKey(
+      contentKey,
+      history,
+    );
   }
 
   function switchHistoryContext(nextContentKey, reason = "unknown") {
-    if (playbackContextController?.switchHistoryContext) {
-      return playbackContextController.switchHistoryContext(
-        nextContentKey,
-        reason,
-      );
-    }
-
-    const resolvedContentKey = nextContentKey || "content:unknown";
-    const previousContentKey = state.currentContentKey;
-
-    if (previousContentKey === resolvedContentKey) return false;
-
-    if (previousContentKey) {
-      saveHistoryForContentKey(previousContentKey);
-    }
-
-    state.currentContentKey = resolvedContentKey;
-    loadHistoryForContentKey(resolvedContentKey);
-    state.lastPrimaryText = "";
-
-    logContentSubtitle("history context switched", {
+    return playbackContextController.switchHistoryContext(
+      nextContentKey,
       reason,
-      previousContentKey,
-      nextContentKey: resolvedContentKey,
-      historySize: getSubtitleHistory().length,
-    });
-    return true;
+    );
   }
 
   function syncHistoryContextWithPlayback(reason = "unknown") {
-    if (playbackContextController?.syncHistoryContextWithPlayback) {
-      return playbackContextController.syncHistoryContextWithPlayback(reason);
-    }
-
-    return switchHistoryContext(resolvePlaybackContentKey(), reason);
+    return playbackContextController.syncHistoryContextWithPlayback(reason);
   }
 
   function appendSubtitleHistory(entry) {
