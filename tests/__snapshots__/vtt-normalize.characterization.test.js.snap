@@ -1,3 +1,13 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`cleanCueText (characterization) > keeps current behavior for { text: '' } 1`] = `undefined`;
+
+exports[`cleanCueText (characterization) > keeps current behavior for { text: '<i>italic</i>' } 1`] = `undefined`;
+
+exports[`cleanCueText (characterization) > keeps current behavior for { text: 'Line1\\nLine2' } 1`] = `undefined`;
+
+exports[`cleanCueText (characterization) > keeps current behavior for { text: 'hello' } 1`] = `undefined`;
+
+exports[`cleanCueText (characterization) > keeps current behavior for null 1`] = `undefined`;
+
 exports[`cleanCueText (characterization) > preserves current cleaning behavior 1`] = `undefined`;

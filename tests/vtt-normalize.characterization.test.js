@@ -1,4 +1,3 @@
-// tests/vtt-normalize.characterization.test.js
 import { describe, test, expect } from "vitest";
 import { normalizeSubtitleText, cleanCueText } from "../modules/vtt.js";
 
@@ -20,9 +19,13 @@ test.skip("normalizeSubtitleText basic sanity", () => {
 });
 
 describe("cleanCueText (characterization)", () => {
-  const fakeCue = { text: "Line1\nLine2 <b>bold</b>" };
-
-  test("preserves current cleaning behavior", () => {
-    expect(cleanCueText(fakeCue)).toMatchSnapshot();
+  test.each([
+    [{ text: "hello" }],
+    [{ text: "Line1\nLine2" }],
+    [{ text: "<i>italic</i>" }],
+    [{ text: "" }],
+    [null],
+  ])("keeps current behavior for %o", (cue) => {
+    expect(cleanCueText(cue)).toMatchSnapshot();
   });
 });
