@@ -171,48 +171,8 @@ function forwardContentLog(...args) {
   // logger API の logContent へ橋渡しする。
   // 既存の logContent(message, payload) 互換を維持しつつ contentKey を付与する。
   function logContent(...args) {
-    try {
-      const buffer = (window.__atvDebugLogs = window.__atvDebugLogs || []);
-      const entry = {
-        ts: new Date().toISOString(),
-        message: String(args[0] ?? ""),
-        payload: args[1] ?? null,
-      };
-      buffer.push(entry);
-      if (buffer.length > 400) buffer.splice(0, buffer.length - 400);
-    } catch (_) {}
-    const logger = window.ATVB?.logger;
-    if (!logger?.logContent) return;
-
-    if (args.length >= 3) {
-      const [category, message, payload] = args;
-      return logger.logContent(
-        category,
-        message,
-        buildContentScopedPayload(payload),
-      );
-    }
-
-    if (args.length === 2) {
-      const [first, second] = args;
-      const normalizedFirst = String(first || "").toLowerCase();
-      const isCategory =
-        Object.values(LOG_CATEGORIES).includes(normalizedFirst);
-      if (isCategory && typeof second === "string") {
-        return logger.logContent(
-          first,
-          second,
-          buildContentScopedPayload(null),
-        );
-      }
-      return logger.logContent(first, buildContentScopedPayload(second));
-    }
-
-    if (args.length === 1) {
-      return logger.logContent(args[0], buildContentScopedPayload(null));
-    }
-
-    return logger.logContent();
+    appendContentDebugBufferEntry(args);
+    return forwardContentLog(...args);
   }
   // logger API の getDebugLogText へ橋渡しする。
   const getDebugLogText = async (...args) =>
