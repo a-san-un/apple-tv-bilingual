@@ -3,10 +3,10 @@ import { normalizeSubtitleText, cleanCueText } from "../modules/vtt.js";
 
 describe("normalizeSubtitleText (characterization)", () => {
   const cases = [
-    { input: "  Hello   World  ", expected: undefined },
-    { input: "<i>italic</i> text", expected: undefined },
-    { input: "", expected: undefined },
-    { input: null, expected: undefined },
+    { input: "  Hello   World  ", expected: "  Hello   World  " },
+    { input: "<i>italic</i> text", expected: "italic text" },
+    { input: "", expected: "" },
+    { input: null, expected: "" },
   ];
 
   test.each(cases)("normalizes %o consistently", ({ input, expected }) => {
