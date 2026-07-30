@@ -1535,22 +1535,20 @@
   function applyManagedFooterSizing(footer, widthPx, leftPx = 0) {
     if (!footer) return;
 
-    if (!footer.hasAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR)) {
-      footer.setAttribute(
-        PLAYBACK_FOOTER_BASE_WIDTH_ATTR,
-        footer.style.width || "",
-      );
-    }
-    if (!footer.hasAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR)) {
-      footer.setAttribute(
-        PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR,
-        footer.style.maxWidth || "",
-      );
-    }
-
     const safeWidth = `${Math.max(0, widthPx).toFixed(2)}px`;
-    setStyleIfChanged(footer, "width", safeWidth);
-    setStyleIfChanged(footer, "maxWidth", safeWidth);
+    applyManagedSizing(footer, [
+      {
+        attrName: PLAYBACK_FOOTER_BASE_WIDTH_ATTR,
+        propertyName: "width",
+        value: safeWidth,
+      },
+      {
+        attrName: PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR,
+        propertyName: "maxWidth",
+        value: safeWidth,
+      },
+    ]);
+
     applyManagedInlineStyle(
       footer,
       "footer",
@@ -1563,23 +1561,16 @@
   function clearManagedFooterSizing(footer) {
     if (!footer) return;
 
-    if (footer.hasAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR)) {
-      setStyleIfChanged(
-        footer,
-        "width",
-        footer.getAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR) || "",
-      );
-      footer.removeAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR);
-    }
-
-    if (footer.hasAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR)) {
-      setStyleIfChanged(
-        footer,
-        "maxWidth",
-        footer.getAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR) || "",
-      );
-      footer.removeAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR);
-    }
+    clearManagedSizing(footer, [
+      {
+        attrName: PLAYBACK_FOOTER_BASE_WIDTH_ATTR,
+        propertyName: "width",
+      },
+      {
+        attrName: PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR,
+        propertyName: "maxWidth",
+      },
+    ]);
 
     clearManagedInlineStyle(footer, "footer", "marginLeft");
     clearManagedInlineStyle(footer, "footer", "marginRight");
@@ -1588,22 +1579,20 @@
   function applyManagedHeaderSizing(header, widthPx, leftPx = 0) {
     if (!header) return;
 
-    if (!header.hasAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR)) {
-      header.setAttribute(
-        PLAYBACK_HEADER_BASE_WIDTH_ATTR,
-        header.style.width || "",
-      );
-    }
-    if (!header.hasAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR)) {
-      header.setAttribute(
-        PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR,
-        header.style.maxWidth || "",
-      );
-    }
-
     const safeWidth = `${Math.max(0, widthPx).toFixed(2)}px`;
-    setStyleIfChanged(header, "width", safeWidth);
-    setStyleIfChanged(header, "maxWidth", safeWidth);
+    applyManagedSizing(header, [
+      {
+        attrName: PLAYBACK_HEADER_BASE_WIDTH_ATTR,
+        propertyName: "width",
+        value: safeWidth,
+      },
+      {
+        attrName: PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR,
+        propertyName: "maxWidth",
+        value: safeWidth,
+      },
+    ]);
+
     applyManagedInlineStyle(
       header,
       "header",
@@ -1616,23 +1605,16 @@
   function clearManagedHeaderSizing(header) {
     if (!header) return;
 
-    if (header.hasAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR)) {
-      setStyleIfChanged(
-        header,
-        "width",
-        header.getAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR) || "",
-      );
-      header.removeAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR);
-    }
-
-    if (header.hasAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR)) {
-      setStyleIfChanged(
-        header,
-        "maxWidth",
-        header.getAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR) || "",
-      );
-      header.removeAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR);
-    }
+    clearManagedSizing(header, [
+      {
+        attrName: PLAYBACK_HEADER_BASE_WIDTH_ATTR,
+        propertyName: "width",
+      },
+      {
+        attrName: PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR,
+        propertyName: "maxWidth",
+      },
+    ]);
 
     clearManagedInlineStyle(header, "header", "marginLeft");
     clearManagedInlineStyle(header, "header", "marginRight");
@@ -1641,57 +1623,42 @@
   function applyManagedProgressInset(progress) {
     if (!progress) return;
 
-    if (!progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR)) {
-      progress.setAttribute(
-        PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR,
-        progress.style.minWidth || "",
-      );
-    }
-    if (!progress.hasAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR)) {
-      progress.setAttribute(
-        PLAYBACK_PROGRESS_BASE_WIDTH_ATTR,
-        progress.style.width || "",
-      );
-    }
-    if (!progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR)) {
-      progress.setAttribute(
-        PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR,
-        progress.style.maxWidth || "",
-      );
-    }
-
-    setStyleIfChanged(progress, "minWidth", "0");
-    setStyleIfChanged(progress, "width", "calc(100% - 48px)");
-    setStyleIfChanged(progress, "maxWidth", "calc(100% - 48px)");
+    applyManagedSizing(progress, [
+      {
+        attrName: PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR,
+        propertyName: "minWidth",
+        value: "0",
+      },
+      {
+        attrName: PLAYBACK_PROGRESS_BASE_WIDTH_ATTR,
+        propertyName: "width",
+        value: "calc(100% - 48px)",
+      },
+      {
+        attrName: PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR,
+        propertyName: "maxWidth",
+        value: "calc(100% - 48px)",
+      },
+    ]);
   }
 
   function clearManagedProgressInset(progress) {
     if (!progress) return;
 
-    if (progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR)) {
-      setStyleIfChanged(
-        progress,
-        "minWidth",
-        progress.getAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR) || "",
-      );
-      progress.removeAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR);
-    }
-    if (progress.hasAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR)) {
-      setStyleIfChanged(
-        progress,
-        "width",
-        progress.getAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR) || "",
-      );
-      progress.removeAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR);
-    }
-    if (progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR)) {
-      setStyleIfChanged(
-        progress,
-        "maxWidth",
-        progress.getAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR) || "",
-      );
-      progress.removeAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR);
-    }
+    clearManagedSizing(progress, [
+      {
+        attrName: PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR,
+        propertyName: "minWidth",
+      },
+      {
+        attrName: PLAYBACK_PROGRESS_BASE_WIDTH_ATTR,
+        propertyName: "width",
+      },
+      {
+        attrName: PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR,
+        propertyName: "maxWidth",
+      },
+    ]);
   }
 
   function getManagedInlineStyleAttr(scope, propertyName) {
@@ -1718,59 +1685,44 @@
   function applyManagedSkipPosition(skipOverlay, safeAreaRight) {
     if (!skipOverlay) return;
 
-    if (!skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR)) {
-      skipOverlay.setAttribute(
-        PLAYBACK_SKIP_BASE_LEFT_ATTR,
-        skipOverlay.style.left || "",
-      );
-    }
-    if (!skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR)) {
-      skipOverlay.setAttribute(
-        PLAYBACK_SKIP_BASE_RIGHT_ATTR,
-        skipOverlay.style.right || "",
-      );
-    }
-    if (!skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR)) {
-      skipOverlay.setAttribute(
-        PLAYBACK_SKIP_BASE_TRANSFORM_ATTR,
-        skipOverlay.style.transform || "",
-      );
-    }
-
     const rect = skipOverlay.getBoundingClientRect();
     const left = safeAreaRight - rect.width;
-    setStyleIfChanged(skipOverlay, "left", `${left.toFixed(2)}px`);
-    setStyleIfChanged(skipOverlay, "right", "auto");
-    setStyleIfChanged(skipOverlay, "transform", "none");
+    applyManagedSizing(skipOverlay, [
+      {
+        attrName: PLAYBACK_SKIP_BASE_LEFT_ATTR,
+        propertyName: "left",
+        value: `${left.toFixed(2)}px`,
+      },
+      {
+        attrName: PLAYBACK_SKIP_BASE_RIGHT_ATTR,
+        propertyName: "right",
+        value: "auto",
+      },
+      {
+        attrName: PLAYBACK_SKIP_BASE_TRANSFORM_ATTR,
+        propertyName: "transform",
+        value: "none",
+      },
+    ]);
   }
 
   function clearManagedSkipPosition(skipOverlay) {
     if (!skipOverlay) return;
 
-    if (skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR)) {
-      setStyleIfChanged(
-        skipOverlay,
-        "left",
-        skipOverlay.getAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR) || "",
-      );
-      skipOverlay.removeAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR);
-    }
-    if (skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR)) {
-      setStyleIfChanged(
-        skipOverlay,
-        "right",
-        skipOverlay.getAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR) || "",
-      );
-      skipOverlay.removeAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR);
-    }
-    if (skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR)) {
-      setStyleIfChanged(
-        skipOverlay,
-        "transform",
-        skipOverlay.getAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR) || "",
-      );
-      skipOverlay.removeAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR);
-    }
+    clearManagedSizing(skipOverlay, [
+      {
+        attrName: PLAYBACK_SKIP_BASE_LEFT_ATTR,
+        propertyName: "left",
+      },
+      {
+        attrName: PLAYBACK_SKIP_BASE_RIGHT_ATTR,
+        propertyName: "right",
+      },
+      {
+        attrName: PLAYBACK_SKIP_BASE_TRANSFORM_ATTR,
+        propertyName: "transform",
+      },
+    ]);
   }
 
   function getShadowProgressTargets() {
