@@ -61,7 +61,7 @@ export function findCueAt(track, time) {
   return bestCue;
 }
 
-export function getCurrentCue(track, time = 0) {
+export function getCurrentCue(track, time) {
   if (!track) return null;
 
   try {
@@ -72,4 +72,15 @@ export function getCurrentCue(track, time = 0) {
   }
 
   return findCueAt(track, time);
+}
+
+export function getCurrentCueText(
+  track,
+  time,
+  {
+    getCurrentCueFn = getCurrentCue,
+    cleanCueTextFn = (cue) => cue?.text ?? "",
+  } = {}
+) {
+  return cleanCueTextFn(getCurrentCueFn(track, time));
 }
