@@ -437,12 +437,15 @@ function forwardContentLog(...args) {
 
     const bucket = getHistoryBucketForContentKey(contentKey);
     const items = Array.isArray(bucket?.items) ? bucket.items : [];
-    state.subtitleHistory = items.slice(-SUBTITLE_HISTORY_MAX_PER_CONTENT);
+    setSubtitleHistory(
+      items.slice(-SUBTITLE_HISTORY_MAX_PER_CONTENT),
+      "loadHistoryForContentKey",
+    );
   }
 
   function saveHistoryForContentKey(
     contentKey,
-    history = state.subtitleHistory,
+    history = getSubtitleHistory(),
   ) {
     if (playbackContextController?.saveHistoryForContentKey) {
       return playbackContextController.saveHistoryForContentKey(
@@ -486,7 +489,7 @@ function forwardContentLog(...args) {
       reason,
       previousContentKey,
       nextContentKey: resolvedContentKey,
-      historySize: state.subtitleHistory.length,
+      historySize: getSubtitleHistory().length,
     });
     return true;
   }
@@ -502,10 +505,10 @@ function forwardContentLog(...args) {
   function appendSubtitleHistory(entry) {
     if (!entry) return;
 
-    const nextHistory = state.subtitleHistory
+    const nextHistory = getSubtitleHistory()
       .concat(entry)
       .slice(-SUBTITLE_HISTORY_MAX_PER_CONTENT);
-    state.subtitleHistory = nextHistory;
+    setSubtitleHistory(nextHistory, "appendSubtitleHistory");
     saveHistoryForContentKey(state.currentContentKey, nextHistory);
   }
 
@@ -1010,7 +1013,7 @@ function forwardContentLog(...args) {
   }
 
   function computeCurrentSubtitleBlock(reason = "unknown") {
-    const currentBlock = state.currentSubtitleBlock || null;
+    const currentBlock = getCurrentSubtitleBlock() || null;
     const primaryText = vttDeps.normalizeSubtitleText(
       currentBlock?.primaryText || state.lastPrimaryText || "",
     );
@@ -1054,9 +1057,9 @@ function forwardContentLog(...args) {
   /* subtitle block sequence の truth snapshot を返す。 */
   function getSubtitleBlockSequence() {
     return {
-      blocks: state.subtitleBlocks,
-      currentIndex: state.subtitleCurrentIndex,
-      meta: state.subtitleBlockMeta,
+      blocks: getSubtitleBlocks(),
+      currentIndex: getSubtitleCurrentIndex(),
+      meta: getSubtitleBlockMeta(),
     };
   }
 
@@ -1092,11 +1095,11 @@ function forwardContentLog(...args) {
   function getCurrentSubtitleBlockFromSequence(sequenceResult = null) {
     const blocks = Array.isArray(sequenceResult?.blocks)
       ? sequenceResult.blocks
-      : state.subtitleBlocks;
+      : getSubtitleBlocks();
     const currentIndex =
       typeof sequenceResult?.currentIndex === "number"
         ? sequenceResult.currentIndex
-        : state.subtitleCurrentIndex;
+        : getSubtitleCurrentIndex();
 
     if (
       !Array.isArray(blocks) ||
@@ -2699,7 +2702,7 @@ function forwardContentLog(...args) {
     getCurrentTime: () => state.video?.currentTime ?? 0,
     getPrimaryTrackCues: () => state.primaryTrack?.cues || [],
     getSecondaryTrackCues: () => state.secondaryTrack?.cues || [],
-    getPreviousSubtitleBlocks: () => state.subtitleBlocks || [],
+    getPreviousSubtitleBlocks: () => getSubtitleBlocks() || [],
     buildSubtitleBlockSequence,
     setSubtitleBlocks,
     getSubtitleBlockSequence,
