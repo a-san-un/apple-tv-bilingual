@@ -1148,6 +1148,7 @@
 
 
   const vttApi = window.ATVB?.vtt || {};
+  const cueTextApi = window.ATVB?.cueText || {};
   const resolverApi = window.ATVB?.resolver || {};
   const subtitleBlocksApi = window.ATVB?.subtitleBlocks || {};
   const subtitleBlockResolverApi = window.ATVB?.subtitleBlockResolver || {};
@@ -1171,6 +1172,10 @@
       resolverApi.getSecondarySubtitleTrackCandidates?.(...args) ?? [],
     resolveSecondarySubtitleTrack: (...args) =>
       resolverApi.resolveSecondarySubtitleTrack?.(...args) ?? null,
+    findCueAt: (...args) => cueTextApi.findCueAt?.(...args) ?? null,
+    getCurrentCue: (...args) => cueTextApi.getCurrentCue?.(...args) ?? null,
+    getCurrentCueText: (...args) =>
+      cueTextApi.getCurrentCueText?.(...args) ?? "",
   };
 
   const { normalizeSubtitleText, cleanCueText } = vttDeps;
