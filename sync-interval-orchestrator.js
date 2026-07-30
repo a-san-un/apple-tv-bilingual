@@ -167,6 +167,10 @@
 
         state.lastLargeSeekAt = Date.now();
 
+        window.ATVB?.subtitleSyncControllerInstance?.notifyLargeSeek?.(
+          state.lastLargeSeekAt,
+        );
+
         logContent("large seek detected", {
           previousObservedTime,
           currentVideoTime,

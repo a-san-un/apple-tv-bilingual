@@ -264,6 +264,24 @@ function forwardContentLog(...args) {
       subtitleHistoryMaxPerContent: SUBTITLE_HISTORY_MAX_PER_CONTENT,
     }) ?? null;
 
+  const subtitleSyncController =
+    window.ATVB?.subtitleSyncController?.createSubtitleSyncController?.({
+      state,
+      logContent,
+      cueController,
+      renderSecondarySubtitle,
+      getRequestedSecondaryLanguage: () =>
+        state.requestedSecondaryLang || state.contentSettings.secondaryLang,
+      resolverDeps,
+      getTrackActiveCuesLength,
+      ensureSyncIntervalOrchestrator,
+      onRecoveryNeeded: ({ reason }) =>
+        reinitializeCoordinator?.reinitializeSubtitlePipeline?.(reason),
+    }) ?? null;
+
+  window.ATVB = window.ATVB || {};
+  window.ATVB.subtitleSyncControllerInstance = subtitleSyncController;
+
   function getPlaybackContext() {
     return playbackContextController.getPlaybackContext();
   }
@@ -288,56 +306,17 @@ function forwardContentLog(...args) {
     return playbackContextController.normalizeMediaSourceKey(rawSrc);
   }
 
-  function getPlaybackTitleKey() {
-    return playbackContextController.getPlaybackTitleKey();
-  }
-
-  function resolvePlaybackContentKey(ctx = getPlaybackContext()) {
-    return playbackContextController.resolvePlaybackContentKey(ctx);
-  }
-
-  function getCurrentVideoSrcKey(video = state.video) {
-    return playbackContextController.getCurrentVideoSrcKey(video);
-  }
-
-  function getHistoryBucketForContentKey(contentKey) {
-    return playbackContextController.getHistoryBucketForContentKey(contentKey);
-  }
-
-  function loadHistoryForContentKey(contentKey) {
-    return playbackContextController.loadHistoryForContentKey(contentKey);
-  }
-
-  function saveHistoryForContentKey(
-    contentKey,
-    history = state.subtitleHistory,
-  ) {
-    return playbackContextController.saveHistoryForContentKey(
-      contentKey,
-      history,
+  function getSecondaryTrackDebugPayload(effectiveSecondaryLanguage, track) {
+    return subtitleSyncController.getSecondaryTrackDebugPayload(
+      effectiveSecondaryLanguage,
+      track,
     );
   }
 
-  function switchHistoryContext(nextContentKey, reason = "unknown") {
-    return playbackContextController.switchHistoryContext(
-      nextContentKey,
-      reason,
-    );
+  function canReadCueFromTrack(track) {
+    return subtitleSyncController.canReadCueFromTrack(track);
   }
 
-  function syncHistoryContextWithPlayback(reason = "unknown") {
-    return playbackContextController.syncHistoryContextWithPlayback(reason);
-  }
-
-  function appendSubtitleHistory(entry) {
-    if (!entry) return;
-
-    const nextHistory = getSubtitleHistory()
-      .concat(entry)
-      .slice(-SUBTITLE_HISTORY_MAX_PER_CONTENT);
-    setSubtitleHistory(nextHistory, "appendSubtitleHistory");
-    saveHistoryForContentKey(state.currentContentKey, nextHistory);
-  }
 
 // =====================================================================
 // Section 3: Secondary Subtitle DOM
@@ -410,69 +389,7 @@ function forwardContentLog(...args) {
   // playback context 更新 → large seek 検知 → secondary recovery pass →
   // 必要時のみ primary recovery という順序で処理する。
   function ensureSecondaryTrackSyncInterval() {
-    if (secondaryTrackSyncInterval) return;
-
-    secondaryTrackSyncInterval = window.setInterval(() => {
-      const orchestrator = ensureSyncIntervalOrchestrator();
-
-      logContent("sync interval tick", {
-        restarting: state.restarting,
-        hasSyncIntervalOrchestrator: Boolean(orchestrator),
-        hasVideo: Boolean(state.video),
-        requestedSecondaryLang:
-          state.requestedSecondaryLang ||
-          state.contentSettings.secondaryLang ||
-          "",
-        currentTime: Number(state.video?.currentTime ?? 0),
-      });
-
-      if (state.restarting) return;
-      if (!orchestrator) return;
-
-      orchestrator.refreshPlaybackContext();
-      orchestrator.detectLargeSeek();
-
-      const effectiveSecondaryLanguage =
-        state.requestedSecondaryLang || state.contentSettings.secondaryLang;
-      if (!state.video || !effectiveSecondaryLanguage) return;
-
-      const { now, hasSecondarySignal, hasPrimarySignal } =
-        orchestrator.runSecondaryRecoveryPass(effectiveSecondaryLanguage);
-
-      const trackCount = state.video?.textTracks?.length ?? 0;
-      const shouldAttemptPrimaryRecovery =
-        hasSecondarySignal && !hasPrimarySignal && trackCount > 1;
-
-      if (!shouldAttemptPrimaryRecovery) {
-        if (hasPrimarySignal) state.lastPrimaryRecoveryAttemptAt = 0;
-        return;
-      }
-
-      if (
-        state.lastPrimaryRecoveryAttemptAt &&
-        now - state.lastPrimaryRecoveryAttemptAt < 4000
-      ) {
-        return;
-      }
-
-      state.lastPrimaryRecoveryAttemptAt = now;
-      const recoveryResult =
-        reinitializeCoordinator?.reinitializeSubtitlePipeline?.(
-          "syncintervalprimaryrecovery",
-        ) ?? {};
-
-      logContent("sync interval primary recovery", {
-        trackCount,
-        primaryTrackFound: recoveryResult.primaryTrackFound,
-        secondaryTrackFound: recoveryResult.secondaryTrackFound,
-        primaryListenerBound: recoveryResult.primaryListenerBound,
-        secondaryListenerBound: recoveryResult.secondaryListenerBound,
-      });
-
-      if (recoveryResult.primaryTrackFound) {
-        state.lastPrimaryRecoveryAttemptAt = 0;
-      }
-    }, 2000);
+    return subtitleSyncController.ensureSecondaryTrackSyncInterval();
   }
 
 // =====================================================================
@@ -821,8 +738,7 @@ function forwardContentLog(...args) {
 
 
   let secondaryTrackCleanup = null;
-  let secondaryTrackBound = null;
-  let secondaryTrackSyncInterval = null;
+  let secondaryTrackBound = null;  
   let layoutRetryTimers = [];
   let startupCompletedLogged = false;
   let lastSecondaryText = "";
@@ -1192,55 +1108,13 @@ function forwardContentLog(...args) {
     renderFn,
     options = {},
   ) {
-    const forceRebind = options?.forceRebind === true;
-    const suppressRender = options?.suppressRender === true;
-    const previousTrack = state.secondaryTrack || null;
-
-    logContent("secondary track binding sync requested", {
-      requestedLang: requestedLang || "",
-      forceRebind,
-      suppressRender,
-      hasVideo: Boolean(video),
-      previousTrackExists: Boolean(previousTrack),
-      previousTrackLanguage: previousTrack?.language || "",
-      previousTrackMode: previousTrack?.mode || "",
-    });
-
-    cueController.syncSecondarySubtitleTrack(
+    return subtitleSyncController.syncSecondarySubtitleTrackBinding(
       video,
       requestedLang,
       renderFn,
       options,
     );
-
-    const boundTrack = cueController.getBoundSecondaryTrack?.() || null;
-
-    logContent("secondary track binding sync finished", {
-      requestedLang: requestedLang || "",
-      forceRebind,
-      suppressRender,
-      previousTrackExists: Boolean(previousTrack),
-      boundTrackExists: Boolean(boundTrack),
-      sameTrackRef: Boolean(previousTrack && boundTrack && previousTrack === boundTrack),
-      boundTrackLanguage: boundTrack?.language || "",
-      boundTrackMode: boundTrack?.mode || "",
-      boundTrackCuesLength: (() => {
-        try {
-          return boundTrack?.cues?.length ?? 0;
-        } catch (_) {
-          return -1;
-        }
-      })(),
-      boundTrackActiveCuesLength: (() => {
-        try {
-          return boundTrack?.activeCues?.length ?? 0;
-        } catch (_) {
-          return -1;
-        }
-      })(),
-    });
   }
-
 
   // secondary missing 復旧のための再同期要求を処理する。
   // ここでは現在の state から video / language を解決し、
@@ -1249,122 +1123,11 @@ function forwardContentLog(...args) {
     reason = "unknown",
     forceRebind = false,
   } = {}) {
-    const video = state.video;
-    const requestedLang =
-      state.requestedSecondaryLang || state.contentSettings.secondaryLang;
-
-    const previousTrack = state.secondaryTrack || null;
-
-    logContent("secondary track resync requested", {
+    return subtitleSyncController.syncSecondarySubtitleTrack({
       reason,
       forceRebind,
-      requestedLang: requestedLang || "",
-      hasVideo: Boolean(video),
-      previousTrackExists: Boolean(previousTrack),
-      previousTrackLanguage: previousTrack?.language || "",
-      previousTrackMode: previousTrack?.mode || "",
-      previousTrackCuesLength: (() => {
-        try {
-          return previousTrack?.cues?.length ?? 0;
-        } catch (_) {
-          return -1;
-        }
-      })(),
-      previousTrackActiveCuesLength: (() => {
-        try {
-          return previousTrack?.activeCues?.length ?? 0;
-        } catch (_) {
-          return -1;
-        }
-      })(),
     });
-
-    if (!video || !requestedLang) {
-      logContent("secondary sync result: skipped before binding", {
-        reason,
-        forceRebind,
-        requestedLang: requestedLang || "",
-        hasVideo: Boolean(video),
-      });
-      return;
-    }
-
-    try {
-      syncSecondarySubtitleTrackBinding(
-        video,
-        requestedLang,
-        renderSecondarySubtitle,
-        {
-          forceRebind,
-          suppressRender: true,
-        },
-      );
-    } catch (error) {
-      logContent("secondary sync result: binding threw", {
-        reason,
-        forceRebind,
-        requestedLang,
-        message: String(error?.message || error || ""),
-      });
-      throw error;
-    }
-
-    state.secondaryTrack = cueController.getBoundSecondaryTrack?.() || null;
-    const currentTrack = state.secondaryTrack;
-
-    if (!currentTrack) {
-      logContent("secondary sync result: no track resolved (clearing)", {
-        reason,
-        forceRebind,
-        requestedLang,
-      });
-    } else if (previousTrack !== currentTrack || forceRebind) {
-      logContent("secondary sync result: track re-bound", {
-        reason,
-        forceRebind,
-        requestedLang,
-        trackLang: currentTrack.language || "",
-        trackMode: currentTrack.mode || "",
-        cuesLength: (() => {
-          try {
-            return currentTrack?.cues?.length ?? 0;
-          } catch (_) {
-            return -1;
-          }
-        })(),
-        activeCuesLength: (() => {
-          try {
-            return currentTrack?.activeCues?.length ?? 0;
-          } catch (_) {
-            return -1;
-          }
-        })(),
-      });
-    } else {
-      logContent("secondary sync result: same track (no re-bind needed)", {
-        reason,
-        forceRebind,
-        requestedLang,
-        trackLang: currentTrack.language || "",
-        trackMode: currentTrack.mode || "",
-        cuesLength: (() => {
-          try {
-            return currentTrack?.cues?.length ?? 0;
-          } catch (_) {
-            return -1;
-          }
-        })(),
-        activeCuesLength: (() => {
-          try {
-            return currentTrack?.activeCues?.length ?? 0;
-          } catch (_) {
-            return -1;
-          }
-        })(),
-      });
-    }
   }
-
 
   function isVisibleElement(el) {
     if (!el) return false;
