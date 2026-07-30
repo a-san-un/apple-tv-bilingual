@@ -117,6 +117,57 @@
 // - log storage / filtering / panel rendering details
 // =====================================================================
 
+function appendContentDebugBufferEntry(args) {
+  try {
+    const buffer = (window.__atvDebugLogs = window.__atvDebugLogs || []);
+    const entry = {
+      ts: new Date().toISOString(),
+      message: String(args[0] ?? ""),
+      payload: args[1] ?? null,
+    };
+    buffer.push(entry);
+    if (buffer.length > 400) buffer.splice(0, buffer.length - 400);
+  } catch (_) {}
+}
+
+function isContentLogCategoryPair(first, second) {
+  const normalizedFirst = String(first || "").toLowerCase();
+  const isCategory = Object.values(LOG_CATEGORIES).includes(normalizedFirst);
+  return isCategory && typeof second === "string";
+}
+
+function forwardContentLog(...args) {
+  const logger = window.ATVB?.logger;
+  if (!logger?.logContent) return;
+
+  if (args.length >= 3) {
+    const [category, message, payload] = args;
+    return logger.logContent(
+      category,
+      message,
+      buildContentScopedPayload(payload),
+    );
+  }
+
+  if (args.length === 2) {
+    const [first, second] = args;
+    if (isContentLogCategoryPair(first, second)) {
+      return logger.logContent(
+        first,
+        second,
+        buildContentScopedPayload(null),
+      );
+    }
+    return logger.logContent(first, buildContentScopedPayload(second));
+  }
+
+  if (args.length === 1) {
+    return logger.logContent(args[0], buildContentScopedPayload(null));
+  }
+
+  return logger.logContent();
+}
+
   // logger API の logContent へ橋渡しする。
   // 既存の logContent(message, payload) 互換を維持しつつ contentKey を付与する。
   function logContent(...args) {
