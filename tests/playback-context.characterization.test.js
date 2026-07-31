@@ -1,4 +1,5 @@
 import { describe, test, expect } from "vitest";
+
 // playback-context-controller は IIFE で window.ATVB にぶら下がるので、
 // テスト用に一時的に global をモックするか、関数をローカルに複製する。
 

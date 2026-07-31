@@ -243,768 +243,93 @@ function forwardContentLog(...args) {
     });
   }
 
-// =====================================================================
-// Section 2: Playback Context Bridge
-// Role:
-// - playback DOM / textTrack 状態から context を検出
-// - contentKey / history context の切替
-// Keep in content.js:
-// - playback context の入口 / content 切替 trigger
-// Move to modules:
-// - context build / content key normalize / history bucket management
-// =====================================================================
-
-  // future module controller slots
-  // playbackContext は最初に外出ししやすい候補として、
-  // controller 受け皿をここに置く前提で整理を進める。
-  const playbackContextController =
-    window.ATVB?.createPlaybackContextController?.({
-      state,
-      logContentSubtitle,
-      subtitleHistoryMaxPerContent: SUBTITLE_HISTORY_MAX_PER_CONTENT,
-    }) ?? null;
-
-  const subtitleSyncController =
-    window.ATVB?.subtitleSyncController?.createSubtitleSyncController?.({
-      state,
-      logContent,
-      cueController,
-      renderSecondarySubtitle,
-      getRequestedSecondaryLanguage: () =>
-        state.requestedSecondaryLang || state.contentSettings.secondaryLang,
-      resolverDeps,
-      getTrackActiveCuesLength,
-      ensureSyncIntervalOrchestrator,
-      onRecoveryNeeded: ({ reason }) =>
-        reinitializeCoordinator?.reinitializeSubtitlePipeline?.(reason),
-    }) ?? null;
-
-  window.ATVB = window.ATVB || {};
-  window.ATVB.subtitleSyncControllerInstance = subtitleSyncController;
-
-  function getPlaybackContext() {
-    return playbackContextController.getPlaybackContext();
+  function applySecondaryLangFallback(settings) {
+    const result = { ...settings };
+    if (!result.secondaryLang) {
+      const browserLang = (navigator.language || navigator.userLanguage || "en")
+        .toLowerCase()
+        .split("-")[0];
+      result.secondaryLang = browserLang;
+      logContentSettings(
+        "secondaryLang empty: applying browser language fallback",
+        browserLang,
+      );
+    }
+    return result;
   }
 
-  function getVideoAndDialog() {
-    return playbackContextController.getVideoAndDialog();
-  }
+  function loadSettingsSnapshot(reason = "unknown") {
+    const loadFromStorage = () =>
+      new Promise((resolve, reject) => {
+        chrome.storage.sync.get(null, (storedSettings = {}) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
 
-  function isPlaybackPageReady() {
-    return playbackContextController.isPlaybackPageReady();
-  }
-
-  function getPlaybackContextLogPayload() {
-    return playbackContextController.getPlaybackContextLogPayload();
-  }
-
-  function normalizeContentKeyPart(value) {
-    return playbackContextController.normalizeContentKeyPart(value);
-  }
-
-  function normalizeMediaSourceKey(rawSrc) {
-    return playbackContextController.normalizeMediaSourceKey(rawSrc);
-  }
-
-  function getSecondaryTrackDebugPayload(effectiveSecondaryLanguage, track) {
-    return subtitleSyncController.getSecondaryTrackDebugPayload(
-      effectiveSecondaryLanguage,
-      track,
-    );
-  }
-
-  function canReadCueFromTrack(track) {
-    return subtitleSyncController.canReadCueFromTrack(track);
-  }
-
-
-// =====================================================================
-// Section 3: Secondary Subtitle DOM
-// Role:
-// - secondary subtitle DOM の caller wiring
-// - secondary text render / clear の入口
-// - language/settings 依存の ready 判定
-// Keep in content.js:
-// - buildUi / snapshot render から secondary DOM を呼ぶ入口
-// - startup / recovery 断面での caller orchestration
-// Move to modules:
-// - secondary element ensure / text render / idle clear / cleanup
-// Panel host responsibility:
-// - panel host / panel shell の生成は panel-ui.js
-// - secondary subtitle DOM の ensure / render / clear は secondary-subtitle-dom.js
-// =====================================================================
-  const debugSecondarySubs =
-    typeof DEBUG_SECONDARY_SUBS !== "undefined"
-      ? DEBUG_SECONDARY_SUBS
-      : false;
-
-  const secondaryDomController =
-    window.ATVB?.createSecondarySubtitleDom?.({
-      getTarget,
-      isSecondaryDomReady: () => {
-        const requestedSettings = state.requestedContentSettings || {};
-        const effectiveSettings = {
-          primaryLang:
-            requestedSettings.primaryLang || state.contentSettings.primaryLang,
-          secondaryLang:
-            requestedSettings.secondaryLang ||
-            state.requestedSecondaryLang ||
-            state.contentSettings.secondaryLang,
-        };
-        return isLanguageSelectionReady(effectiveSettings);
-      },
-      getTrackActiveCuesLength: (...args) => getTrackActiveCuesLength(...args),
-      getCurrentCueText: (...args) => getCurrentCueText(...args),
-      normalizeSubtitleText: (...args) => vttDeps.normalizeSubtitleText(...args),
-      logContentSubtitle: (...args) => logContentSubtitle(...args),
-      isDebugEnabled: () => debugSecondarySubs,
-      idleClearMs: SECONDARY_SUBTITLE_IDLE_CLEAR_MS,
-      panelSlotLayerStyleId: PANEL_SLOT_LAYER_STYLE_ID,
-    }) || null;
-
-  // secondary subtitle DOM を ensure する caller 入口。
-  // panel host 生成は行わず、host 既存前提で secondary DOM 側へ委譲する。
-  function ensureSecondarySubtitleElement() {
-    return secondaryDomController?.ensure() ?? null;
-  }
-
-  // secondary text render の薄い橋渡し。
-  // 実際の text resolve / idle clear は secondary DOM module 側に委譲する。
-  function renderSecondarySubtitle(text, track, reason) {
-    secondaryDomController?.render(text, track, reason || "legacy-call");
-  }
-
-// =====================================================================
-// Section 4: Sync Interval - Periodic Orchestration
-// Role:
-// - sync interval ごとの playback context refresh
-// - large seek detection / secondary recovery pass 起動
-// Keep in content.js:
-// - scheduling / runtime snapshot entry / orchestration order
-// Move to modules:
-// - recovery decision / lane state / track resolve details
-// =====================================================================
-
-  // sync interval 本体では、
-  // playback context 更新 → large seek 検知 → secondary recovery pass →
-  // 必要時のみ primary recovery という順序で処理する。
-  function ensureSecondaryTrackSyncInterval() {
-    return subtitleSyncController.ensureSecondaryTrackSyncInterval();
-  }
-
-// =====================================================================
-// Section 5: Layout - Playback Controls Adjustment
-// Role:
-// - playback controls の位置・幅・translate 調整
-// - layout retry / settling の配線
-// Keep in content.js:
-// - layout apply trigger / retry timing orchestration
-// Move to modules:
-// - layout calculation / managed style apply-clear details
-// =====================================================================
-
-  function clearPlaybackControlRetryTimers() {
-    if (!state.playbackControlsRetryTimers.length) return;
-    state.playbackControlsRetryTimers.forEach((timerId) =>
-      clearTimeout(timerId),
-    );
-    state.playbackControlsRetryTimers = [];
-  }
-
-  function requestPlaybackControlsAdjustment(reason = "unknown") {
-    if (state.playbackControlsRafId) return;
-    state.playbackControlsRafId = window.requestAnimationFrame(() => {
-      state.playbackControlsRafId = 0;
-      adjustPlaybackControlsForPanel(reason);
-    });
-  }
-
-  function scheduleAdjustPlaybackControls(
-    reason = "unknown",
-    retryDelays = [],
-    options = {},
-  ) {
-    const immediate = options.immediate !== false;
-
-    clearPlaybackControlRetryTimers();
-    if (immediate) requestPlaybackControlsAdjustment(reason);
-
-    retryDelays.forEach((delayMs) => {
-      const timerId = window.setTimeout(() => {
-        requestPlaybackControlsAdjustment(`${reason}-retry-${delayMs}`);
-      }, delayMs);
-      state.playbackControlsRetryTimers.push(timerId);
-    });
-  }
-
-  function clearControlSettlingTimers() {
-    if (!state.controlSettlingTimers.length) return;
-    state.controlSettlingTimers.forEach((timerId) => clearTimeout(timerId));
-    state.controlSettlingTimers = [];
-  }
-
-  function scheduleControlSettlingBurst(
-    reason = "unknown",
-    delays = [180, 420, 800, 1300, 1900, 2700, 3800],
-  ) {
-    clearControlSettlingTimers();
-
-    delays.forEach((delayMs) => {
-      const timerId = window.setTimeout(() => {
-        if (!state.panelVisible) return;
-        scheduleAdjustPlaybackControls(`${reason}-settle-${delayMs}`, [], {
-          immediate: true,
+          const requestedSettings = { ...DEFAULT_SETTINGS, ...storedSettings };
+          const effectiveSettings =
+            applySecondaryLangFallback(requestedSettings);
+          resolve({
+            storedSettings: { ...storedSettings },
+            requestedSettings,
+            effectiveSettings,
+            requestedSecondaryLang: storedSettings.secondaryLang || "",
+          });
         });
-      }, delayMs);
-      state.controlSettlingTimers.push(timerId);
-    });
-  }
-
-  function clearPlaybackControlsTransforms() {
-    return clearPlaybackControlsTransformsFromModule();
-  }
-
-  function adjustPlaybackControlsForPanel(reason = "unknown") {
-    if (state.playbackControlsApplying) return;
-
-    state.playbackControlsApplying = true;
-    try {
-      return adjustPlaybackControlsForPanelFromModule(reason);
-    } finally {
-      state.playbackControlsApplying = false;
-    }
-  }
-
-  function clearLayoutRetryTimers() {
-    if (!layoutRetryTimers.length) return;
-    layoutRetryTimers.forEach((timerId) => clearTimeout(timerId));
-    layoutRetryTimers = [];
-  }
-
-  function getLayoutTargets() {
-    const opaqueVideoContainer =
-      document.querySelector(".video-container.svelte-1psbnd5.is-opaque") ||
-      document.querySelector(".video-container.is-opaque") ||
-      document.querySelector(".video-container");
-    return {
-      vc: document.querySelector(".video-player__video-container"),
-      content: document.querySelector(".video-player__content"),
-      htmlVideo: document.querySelector("video"),
-      opaqueVideoContainer,
-      backgroundVideo: document.querySelector(".background-video"),
-    };
-  }
-
-  function applyLayoutToTargets(targets, visible) {
-    const { vc, content, htmlVideo, opaqueVideoContainer, backgroundVideo } =
-      targets;
-
-    if (visible) {
-      if (vc) {
-        vc.style.width = "70%";
-        vc.style.maxWidth = "70%";
-        vc.style.flexShrink = "0";
-        vc.style.marginRight = "";
-      }
-      if (content) {
-        content.style.width = "";
-        content.style.maxWidth = "";
-        content.style.flexShrink = "";
-        content.style.marginRight = "";
-      }
-      if (htmlVideo) {
-        htmlVideo.style.maxWidth = "100%";
-      }
-      if (opaqueVideoContainer) {
-        opaqueVideoContainer.style.right = "30%";
-      }
-      if (backgroundVideo) {
-        backgroundVideo.style.right = "30%";
-      }
-    } else {
-      if (vc) {
-        vc.style.width = "";
-        vc.style.maxWidth = "";
-        vc.style.flexShrink = "";
-        vc.style.marginRight = "";
-      }
-      if (content) {
-        content.style.width = "";
-        content.style.maxWidth = "";
-        content.style.flexShrink = "";
-        content.style.marginRight = "";
-      }
-      if (htmlVideo) {
-        htmlVideo.style.maxWidth = "";
-      }
-      if (opaqueVideoContainer) {
-        opaqueVideoContainer.style.right = "";
-      }
-      if (backgroundVideo) {
-        backgroundVideo.style.right = "";
-      }
-    }
-  }
-
-  // [observer/layout]
-  function applyLayout(show) {
-    clearLayoutRetryTimers();
-    applyLayoutToTargets(getLayoutTargets(), show);
-
-    setOverlayVisible(!show);
-
-    scheduleAdjustPlaybackControls("applyLayout", show ? [1200] : [], {
-      immediate: !show,
-    });
-  }
-
-// =====================================================================
-// Section 6: Observer - Runtime Monitoring
-// Role:
-// - mutation / resize / raf observers の登録・解除
-// - runtime 変化に応じた trigger 配線
-// Keep in content.js:
-// - observer attach-detach / reinitialize-layout-render entrypoints
-// Move to modules:
-// - re-evaluation / reconnect / reposition implementation details
-// =====================================================================
-
-
-
-
-// =====================================================================
-// Section 7: Lifecycle - Boot & Teardown
-// Role:
-// - boot / restart / teardown
-// - message listener / roots / timer cleanup
-// Keep in content.js:
-// - extension lifecycle entrypoints / top-level wiring
-// Move to modules:
-// - per-module internal init / dispose details
-// =====================================================================
-
-  // [binder/cue: attach] primary / secondary の listener・timer・mode をまとめて解除する。
-  function clearSecondaryTrackState() {
-    state.secondaryTrack = null;
-    cueController.unbindSecondarySubtitleTrack();
-  }
-
-  function clearTrackBindings() {
-    // [attach: detach timers] track resolve retry timer を解除する。
-    reinitializeCoordinator?.clearTrackResolveRetryTimers();
-    clearSecondaryTrackState();
-
-    // [attach: detach primary listener] primary cuechange listener を解除する。
-    if (state.primaryTrack) {
-      try {
-        state.primaryTrack.removeEventListener("cuechange", onCueChange);
-      } catch (_) {}
-    }
-
-    // [attach: detach track modes] textTracks を hidden に戻す。
-    if (state.video?.textTracks) {
-      for (let i = 0; i < state.video.textTracks.length; i++) {
-        try {
-          state.video.textTracks[i].mode = "hidden";
-        } catch (_) {}
-      }
-    }
-
-    // [attach: detach secondary timer] secondary hide timer を解除する。
-    if (state.secondaryHideTimer) {
-      clearTimeout(state.secondaryHideTimer);
-      state.secondaryHideTimer = null;
-    }
-
-    // [attach: detach state reset] binder が保持する track 参照をクリアする。
-    state.primaryTrack = null;
-  }
-
-  function resetRuntimeState(options = {}) {
-    if (options.clearCurrentHistory === true) {
-      state.subtitleHistory = [];
-      saveHistoryForContentKey(state.currentContentKey, []);
-    }
-    state.subtitleBlocks = [];
-    state.subtitleCurrentIndex = -1;
-    state.subtitleBlockMeta = null;
-    state.panelPastBlocks = [];
-    state.currentSubtitleBlock = null;
-    state.lastCurrentSubtitleBlockAt = 0;
-    state.lastPanelRenderSnapshot = null;
-    state.lastPrimaryText = "";
-    state.lastPrimarySnapshotAt = 0;
-    state.lastObservedVideoTime = null;
-  }
-
-  function teardownPlaybackControlsUi() {
-    stopPlaybackControlLayoutObservers();
-
-    if (state.playbackControlsRafId) {
-      window.cancelAnimationFrame(state.playbackControlsRafId);
-      state.playbackControlsRafId = 0;
-    }
-
-    clearPlaybackControlsTransforms();
-  }
-
-  function teardownUiHostsAndListeners() {
-    if (state.popupDocClickHandler) {
-      // createPopupHost で登録した document listener の解除
-      document.removeEventListener("click", state.popupDocClickHandler);
-      state.popupDocClickHandler = null;
-    }
-
-    destroyUiHosts();
-    applyLayout(false);
-  }
-
-  function teardownRuntimeBindingsForRestart() {
-    clearTrackBindings();
-    clearInitialCueRecovery();
-    clearPlaybackControlRetryTimers();
-    clearControlSettlingTimers();
-  }
-
-  function teardownForRestart() {
-    teardownRuntimeBindingsForRestart();
-    teardownPlaybackControlsUi();
-    teardownUiHostsAndListeners();
-  }
-
-  function prepareForRestart() {
-    teardownForRestart();
-    resetRuntimeState();
-  }
-
-  // [binder/cue: attach] bootstrap から呼ばれる track bind の薄い入口。
-  function bindTracks() {
-    return selectPrimaryAndSecondaryTracks(
-      state.video,
-      state.contentSettings.primaryLang,
-      state.requestedSecondaryLang || state.contentSettings.secondaryLang,
-      "bindTracks",
-    );
-  }
-
-  // [bootstrap]
-  function buildUi() {
-    createOverlay();
-    panelUi.createRightPanel();
-    ensureSecondarySubtitleElement();
-    createPopupHost();
-    createToggleButton();
-    panelUi.createDebugPanel();
-    startPlaybackControlLayoutObservers();
-    scheduleAdjustPlaybackControls("buildUi", [700, 1600], {
-      immediate: false,
-    });
-  }
-
-  function applyInitialCueSnapshotOrWait() {
-    // [initial snapshot policy]
-    // 起動時に cue が既に読めるなら通常の cuechange 経路を即時実行する。
-    // まだ cue が無ければ recovery 側に任せ、ここでは待機ログだけ出す。
-
-    if (hasRecoverableInitialCue()) {
-      onCueChange();
-      return;
-    }
-
-    // 初回 activeCues=0 は空描画で確定せず、cuechange 回復導線へ委譲する。
-    logContent("initial snapshot waiting for first cue", {
-      primaryActiveCues: getTrackActiveCuesLength(state.primaryTrack),
-      secondaryActiveCues: getTrackActiveCuesLength(state.secondaryTrack),
-    });
-  }
-
-  // [settings load path: initial snapshot]
-  // 初回ロード時に sync storage / bridge から設定 snapshot を読む入口。
-  // requested settings と effective settings を整え、未設定時は DEFAULT_SETTINGS に退避する。
-  // 実際の起動は startBilingual に委譲する。
-  // [settings reinit path: full restart]
-  // runtime state と UI を teardown してから起動シーケンスをやり直す。
-  // 設定変更反映や大きな再初期化が必要なケースの入口。
-
-  function boot() {
-    if (state.booted) return;
-    state.booted = true;
-    registerDebugLogUpdateCallback();
-    logContent("content startup begin");
-    ensureMessageListener();
-    ensureSecondaryTrackSyncInterval();
-    waitForVideo(attachTracks);
-  }
-
-
-  let secondaryTrackCleanup = null;
-  let secondaryTrackBound = null;  
-  let layoutRetryTimers = [];
-  let startupCompletedLogged = false;
-  let lastSecondaryText = "";
-  let lastSecondaryTextAt = 0;
-  let lastSecondarySignalAt = 0;
-
-
-
-  function getMergedSubtitleHealthSnapshot() {
-    try {
-      return cueController?.getMergedSubtitleHealth?.() || null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function computeCurrentSubtitleBlock(reason = "unknown") {
-    const currentBlock = getCurrentSubtitleBlock() || null;
-    const primaryText = vttDeps.normalizeSubtitleText(
-      currentBlock?.primaryText || state.lastPrimaryText || "",
-    );
-    const secondaryText = vttDeps.normalizeSubtitleText(
-      currentBlock?.secondaryText || "",
-    );
-
-    return {
-      startTime: currentBlock?.startTime ?? null,
-      endTime: currentBlock?.endTime ?? null,
-      primaryText,
-      secondaryText,
-      hasPrimarySignal: Boolean(primaryText),
-      hasSecondarySignal: Boolean(secondaryText),
-      sourceReason: reason,
-      updatedAt: Date.now(),
-    };
-  }
-
-  function setSubtitleBlocks(result, reason = "unknown") {
-    const nextBlocks = Array.isArray(result?.blocks) ? result.blocks : [];
-    const nextCurrentIndex =
-      typeof result?.currentIndex === "number" ? result.currentIndex : -1;
-    const nextPanelPastBlocks = nextBlocks.filter(
-      (block) => block?.state === "past",
-    );
-
-    state.subtitleBlocks = nextBlocks;
-    state.subtitleCurrentIndex = nextCurrentIndex;
-    state.subtitleBlockMeta = result?.meta || null;
-    state.panelPastBlocks = nextPanelPastBlocks;
-
-    logContent("subtitle blocks updated", {
-      reason,
-      blockCount: nextBlocks.length,
-      currentIndex: nextCurrentIndex,
-      panelPastCount: nextPanelPastBlocks.length,
-    });
-  }
-
-  /* subtitle block sequence の truth snapshot を返す。 */
-  function getSubtitleBlockSequence() {
-    return {
-      blocks: getSubtitleBlocks(),
-      currentIndex: getSubtitleCurrentIndex(),
-      meta: getSubtitleBlockMeta(),
-    };
-  }
-
-  function getSubtitleBlocks() {
-    return state.subtitleBlocks;
-  }
-
-  function getCurrentSubtitleBlock() {
-    return state.currentSubtitleBlock;
-  }
-
-  function getSubtitleHistory() {
-    return state.subtitleHistory;
-  }
-
-  function setSubtitleHistory(next, reason = "unknown") {
-    state.subtitleHistory = next;
-  }
-
-  function getSubtitleCurrentIndex() {
-    return state.subtitleCurrentIndex;
-  }
-
-  function getSubtitleBlockMeta() {
-    return state.subtitleBlockMeta;
-  }
-
-  function getPanelPastBlocks() {
-    return state.panelPastBlocks;
-  }
-
-  /* subtitle block sequence から current block を取り出す。 */
-  function getCurrentSubtitleBlockFromSequence(sequenceResult = null) {
-    const blocks = Array.isArray(sequenceResult?.blocks)
-      ? sequenceResult.blocks
-      : getSubtitleBlocks();
-    const currentIndex =
-      typeof sequenceResult?.currentIndex === "number"
-        ? sequenceResult.currentIndex
-        : getSubtitleCurrentIndex();
-
-    if (
-      !Array.isArray(blocks) ||
-      currentIndex < 0 ||
-      currentIndex >= blocks.length
-    ) {
-      return null;
-    }
-
-    const block = blocks[currentIndex];
-    if (!block) return null;
-
-    return {
-      startTime: block.startTime ?? null,
-      endTime: block.endTime ?? null,
-      primaryText: block.primaryText || block.primary || "",
-      secondaryText: block.secondaryText || block.secondary || "",
-      hasPrimarySignal: Boolean(block.primaryText || block.primary),
-      hasSecondarySignal: Boolean(block.secondaryText || block.secondary),
-      sourceReason: "subtitleBlockSequence",
-      updatedAt: Date.now(),
-      key: block.key || null,
-      stable: block.stable ?? false,
-    };
-  }
-
-  // 現在字幕の更新と一時的なテキスト巻き戻りの抑止
-  function setCurrentSubtitleBlock(block, reason = "unknown") {
-    const previousBlock = state.currentSubtitleBlock || null;
-
-    const isSameTimeWindow =
-      previousBlock &&
-      block &&
-      previousBlock.startTime === block.startTime &&
-      previousBlock.endTime === block.endTime;
-
-    const shouldKeepPreviousTexts =
-      isSameTimeWindow &&
-      previousBlock.hasPrimarySignal &&
-      previousBlock.primaryText &&
-      block?.hasPrimarySignal &&
-      block.primaryText &&
-      previousBlock.primaryText !== block.primaryText &&
-      state.lastPrimaryText === previousBlock.primaryText;
-
-    const nextBlock = shouldKeepPreviousTexts
-      ? {
-          ...block,
-          primaryText: previousBlock.primaryText,
-          secondaryText:
-            previousBlock.secondaryText || block.secondaryText || "",
-          hasPrimarySignal: previousBlock.hasPrimarySignal,
-          hasSecondarySignal:
-            previousBlock.hasSecondarySignal || block.hasSecondarySignal,
-        }
-      : block;
-
-    state.currentSubtitleBlock = nextBlock;
-    state.lastCurrentSubtitleBlockAt = Date.now();
-
-    if (
-      nextBlock?.hasPrimarySignal &&
-      nextBlock.primaryText &&
-      nextBlock.primaryText !== state.lastPrimaryText
-    ) {
-      state.lastPrimaryText = nextBlock.primaryText;
-
-      appendSubtitleHistory({
-        startTime: nextBlock.startTime ?? null,
-        endTime: nextBlock.endTime ?? null,
-        primary: nextBlock.primaryText,
-        secondary: nextBlock.secondaryText || "",
       });
+
+    const settingsBridge = window.ATVB?.settingsBridge;
+    if (!settingsBridge?.loadSettings) {
+      return loadFromStorage();
     }
 
-    logContent("current subtitle block updated", {
-      reason,
-      hasBlock: Boolean(nextBlock),
-      primaryTextLength: nextBlock?.primaryText?.length || 0,
-      secondaryTextLength: nextBlock?.secondaryText?.length || 0,
-      hasPrimarySignal: Boolean(nextBlock?.hasPrimarySignal),
-      hasSecondarySignal: Boolean(nextBlock?.hasSecondarySignal),
-      blockStartTime: nextBlock?.startTime ?? null,
-      blockEndTime: nextBlock?.endTime ?? null,
-    });
+    return settingsBridge
+      .loadSettings({
+        defaults: DEFAULT_SETTINGS,
+        applyFallback: applySecondaryLangFallback,
+      })
+      .then(() => {
+        const snapshot = settingsBridge.getCurrentSettings?.() || {};
+        const storedSettings = { ...(snapshot.storedSettings || {}) };
+        const requestedSettings = {
+          ...DEFAULT_SETTINGS,
+          ...(snapshot.requestedSettings || storedSettings),
+        };
+        const effectiveSettings =
+          snapshot.effectiveSettings || snapshot.settings || requestedSettings;
+        return {
+          storedSettings,
+          requestedSettings,
+          effectiveSettings: { ...effectiveSettings },
+          requestedSecondaryLang:
+            snapshot.requestedSecondaryLang ??
+            storedSettings.secondaryLang ??
+            "",
+        };
+      })
+      .catch((error) => {
+        logContentError("settings bridge load failed", {
+          reason,
+          error: String(error),
+        });
+        return loadFromStorage();
+      });
   }
 
-
-
-  const vttApi = window.ATVB?.vtt || {};
-  const cueTextApi = window.ATVB?.cueText || {};
-  const resolverApi = window.ATVB?.resolver || {};
-  const subtitleBlocksApi = window.ATVB?.subtitleBlocks || {};
-  const subtitleBlockResolverApi = window.ATVB?.subtitleBlockResolver || {};
-
-  const vttDeps = {
-    normalizeSubtitleText: (...args) =>
-      vttApi.normalizeSubtitleText?.(...args) ?? "",
-    cleanCueText: (...args) => vttApi.cleanCueText?.(...args) ?? "",
-    formatTime: (...args) => vttApi.formatTime?.(...args) ?? "",
-  };
-
-  const resolverDeps = {
-    getUniqueTracks: (...args) => resolverApi.getUniqueTracks?.(...args) ?? [],
-    getTrackCuesLength: (...args) =>
-      resolverApi.getTrackCuesLength?.(...args) ?? 0,
-    getTrackActiveCuesLength: (...args) =>
-      resolverApi.getTrackActiveCuesLength?.(...args) ?? 0,
-    pickBestSubtitleTrack: (...args) =>
-      resolverApi.pickBestSubtitleTrack?.(...args) ?? null,
-    getSecondarySubtitleTrackCandidates: (...args) =>
-      resolverApi.getSecondarySubtitleTrackCandidates?.(...args) ?? [],
-    resolveSecondarySubtitleTrack: (...args) =>
-      resolverApi.resolveSecondarySubtitleTrack?.(...args) ?? null,
-    findCueAt: (...args) => cueTextApi.findCueAt?.(...args) ?? null,
-    getCurrentCue: (...args) => cueTextApi.getCurrentCue?.(...args) ?? null,
-    getCurrentCueText: (...args) =>
-      cueTextApi.getCurrentCueText?.(...args) ?? "",
-  };
-
-
-  const {
-    buildSubtitleBlockSequence = () => ({
-      blocks: [],
-      currentIndex: -1,
-      meta: null,
-    }),
-  } = subtitleBlocksApi;
-
-  const { getTrackActiveCuesLength } = resolverDeps;
-
-  async function loadEJDict() {
-    const url = chrome.runtime.getURL("dict/ejdict.json");
-
-    logContentApi("EJDict load start", { url });
-
+  (async function loadEJDict() {
     try {
-      const res = await fetch(url, { cache: "no-cache" });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status} ${res.statusText}`.trim());
-      }
-
-      const data = await res.json();
-      state.ejdictMap = data && typeof data === "object" ? data : null;
-
+      const url = chrome.runtime.getURL("dict/ejdict.json");
+      const res = await fetch(url);
+      state.ejdictMap = await res.json();
       logContentApi("EJDict loaded", {
-        url,
-        entries: state.ejdictMap ? Object.keys(state.ejdictMap).length : 0,
+        entries: Object.keys(state.ejdictMap).length,
       });
     } catch (e) {
-      state.ejdictMap = null;
-
-      logContentError("EJDict load failed", {
-        url,
-        error: e?.message ?? String(e),
-      });
-
-      console.warn("[ATV-Bilingual] EJDict load failed:", e?.message ?? String(e));
+      logContentError("EJDict load failed", { error: e.message });
+      console.warn("[ATV-Bilingual] EJDict load failed:", e.message);
     }
-  }
-
-  loadEJDict();
+  })();
 
   function ejdictLookup(word) {
     if (!state.ejdictMap) return null;
@@ -1012,17 +337,20 @@ function forwardContentLog(...args) {
   }
 
   function findCueAt(track, time) {
-    return resolverDeps.findCueAt(track, time);
-  }
-
-  function getCurrentCue(track, time = state.video?.currentTime ?? 0) {
-    return resolverDeps.getCurrentCue(track, time);
-  }
-
-  function getCurrentCueText(track, time = state.video?.currentTime ?? 0) {
-    return resolverDeps.getCurrentCueText(track, time, {
-      cleanCueTextFn: vttDeps.cleanCueText,
-    });
+    if (!track) return null;
+    let cues = null;
+    // mode 遷移中は cues アクセスが例外/ null になり得るので保護する。
+    try {
+      cues = track.cues;
+    } catch (_) {
+      cues = null;
+    }
+    if (!cues) return null;
+    for (let i = 0; i < cues.length; i++) {
+      const c = cues[i];
+      if (c.startTime <= time + 0.1 && time < c.endTime + 0.1) return c;
+    }
+    return null;
   }
 
   function sendToBackground(msg, callback) {
@@ -1066,30 +394,202 @@ function forwardContentLog(...args) {
     return state.dialogEl || document.body;
   }
 
-  // -----------------------------------------------------------------------------
-  // playback / content context coordinator helpers
-  // content.js に残す上位入口として、再生対象の把握と content context の切替だけを扱う。
-  // subtitle sync / recovery / DOM 描画の詳細は下位 helper 側へ寄せる。
-  //
-  // 将来の playbackContext module 候補:
-  // - getPlaybackContext
-  // - getVideoAndDialog
-  // - isPlaybackPageReady
-  // - getPlaybackContextLogPayload
-  // - resolvePlaybackContentKey
-  // - getCurrentVideoSrcKey
-  // - syncHistoryContextWithPlayback
-  //
-  // まずは context 解決と history context 切替だけを外出し候補にし、
-  // appendSubtitleHistory や panel / render 側責務はここへ混ぜない。
-  // -----------------------------------------------------------------------------
+  function getPlaybackContext() {
+    const video = document.querySelector("video");
+    const playbackDialog = document.querySelector("dialog.playback-view");
+    const playbackView = document.querySelector(
+      '[data-testid="playback-view"]',
+    );
+    const textTrackCount = video?.textTracks?.length ?? 0;
 
+    // 再生判定は URL ではなく DOM 条件を基準にする。
+    const isPlaybackReady = Boolean(video) && textTrackCount > 0;
+
+    return {
+      video,
+      playbackDialog,
+      playbackView,
+      textTrackCount,
+      isPlaybackReady,
+    };
+  }
+
+  function getVideoAndDialog() {
+    const ctx = getPlaybackContext();
+    if (!ctx.isPlaybackReady) return null;
+
+    const resolvedDialog =
+      ctx.playbackDialog || ctx.playbackView?.closest("dialog") || null;
+    return { video: ctx.video, dialog: resolvedDialog };
+  }
+
+  function isPlaybackPageReady() {
+    return getPlaybackContext().isPlaybackReady;
+  }
+
+  // playback context detection helpers
+  // playback readiness の観測結果を、logging や上位判断へ渡すための補助関数群。
+  function getPlaybackContextLogPayload() {
+    const ctx = getPlaybackContext();
+    return {
+      hasVideo: Boolean(ctx.video),
+      hasPlaybackDialog: Boolean(ctx.playbackDialog),
+      hasPlaybackView: Boolean(ctx.playbackView),
+      textTrackCount: ctx.textTrackCount,
+      isPlaybackReady: ctx.isPlaybackReady,
+    };
+  }
+
+  // content key resolver helpers
+  // 現在の再生対象から安定した content key を組み立てるための下位 helper 群。
+  function normalizeContentKeyPart(value) {
+    return String(value || "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+  }
+
+  function normalizeMediaSourceKey(rawSrc) {
+    const src = String(rawSrc || "").trim();
+    if (!src) return "";
+
+    try {
+      const parsed = new URL(src, location.href);
+      return `${parsed.origin}${parsed.pathname}`.toLowerCase();
+    } catch (_) {
+      return src.split("?")[0].split("#")[0].toLowerCase();
+    }
+  }
+
+  function getPlaybackTitleKey() {
+    const rawTitle = String(document.title || "");
+    const cleanedTitle = rawTitle
+      .replace(/\s*[|｜-]\s*apple tv\+\s*$/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return normalizeContentKeyPart(cleanedTitle);
+  }
+
+  function resolvePlaybackContentKey(ctx = getPlaybackContext()) {
+    const mediaSourceKey = normalizeMediaSourceKey(
+      ctx.video?.currentSrc || ctx.video?.getAttribute("src") || "",
+    );
+    // エピソード識別は currentSrc を最優先にする。
+    if (mediaSourceKey) {
+      return `media:${mediaSourceKey}`;
+    }
+
+    const titleKey = getPlaybackTitleKey();
+    const attrCandidates = [
+      ctx.playbackView?.getAttribute("data-automation-id"),
+      ctx.playbackView?.getAttribute("data-testid"),
+      ctx.playbackView?.getAttribute("aria-label"),
+      ctx.playbackDialog?.getAttribute("aria-label"),
+    ];
+    const stableIdKey = attrCandidates
+      .map((value) => normalizeContentKeyPart(value))
+      .find(Boolean);
+
+    const keyParts = [];
+    if (titleKey) keyParts.push(`title:${titleKey}`);
+    if (stableIdKey) keyParts.push(`id:${stableIdKey}`);
+
+    if (!keyParts.length) return "content:unknown";
+    return keyParts.join("|");
+  }
+
+  function getCurrentVideoSrcKey(video = state.video) {
+    return normalizeMediaSourceKey(
+      video?.currentSrc || video?.getAttribute("src") || "",
+    );
+  }
+
+  function getHistoryBucketForContentKey(contentKey) {
+    if (!contentKey) return null;
+    return state.subtitleHistoryStore.get(contentKey) || null;
+  }
+
+  function loadHistoryForContentKey(contentKey) {
+    const bucket = getHistoryBucketForContentKey(contentKey);
+    const items = Array.isArray(bucket?.items) ? bucket.items : [];
+    state.subtitleHistory = items.slice(-SUBTITLE_HISTORY_MAX_PER_CONTENT);
+  }
+
+  function saveHistoryForContentKey(
+    contentKey,
+    history = state.subtitleHistory,
+  ) {
+    if (!contentKey) return;
+    const items = Array.isArray(history)
+      ? history.slice(-SUBTITLE_HISTORY_MAX_PER_CONTENT)
+      : [];
+    state.subtitleHistoryStore.set(contentKey, {
+      items,
+      updatedAt: Date.now(),
+    });
+  }
+
+  function switchHistoryContext(nextContentKey, reason = "unknown") {
+    const resolvedContentKey = nextContentKey || "content:unknown";
+    const previousContentKey = state.currentContentKey;
+
+    if (previousContentKey === resolvedContentKey) return false;
+
+    if (previousContentKey) {
+      saveHistoryForContentKey(previousContentKey);
+    }
+
+    state.currentContentKey = resolvedContentKey;
+    loadHistoryForContentKey(resolvedContentKey);
+    state.lastPrimaryText = "";
+
+    logContentSubtitle("history context switched", {
+      reason,
+      previousContentKey,
+      nextContentKey: resolvedContentKey,
+      historySize: state.subtitleHistory.length,
+    });
+    return true;
+  }
+
+  function syncHistoryContextWithPlayback(reason = "unknown") {
+    return switchHistoryContext(resolvePlaybackContentKey(), reason);
+  }
+
+  function appendSubtitleHistory(entry) {
+    if (!entry) return;
+
+    const nextHistory = state.subtitleHistory
+      .concat(entry)
+      .slice(-SUBTITLE_HISTORY_MAX_PER_CONTENT);
+    state.subtitleHistory = nextHistory;
+    saveHistoryForContentKey(state.currentContentKey, nextHistory);
+  }
+
+  function waitForVideo(cb) {
+    const check = () => {
+      const found = getVideoAndDialog();
+      if (found) {
+        state.dialogEl = found.dialog;
+        logContent("waitForVideo resolved", {
+          hasVideo: true,
+          trackCount: found.video.textTracks.length,
+          injectedIntoDialog: Boolean(found.dialog),
+        });
+        cb(found.video);
+        return;
+      }
+      state.waitTimer = window.setTimeout(check, 500);
+    };
+    if (state.waitTimer) clearTimeout(state.waitTimer);
+    check();
+  }
 
   function getSecondaryTrackDebugPayload(effectiveSecondaryLanguage, track) {
     return {
       effectiveSecondaryLanguage: effectiveSecondaryLanguage || "",
       selectedTrackLanguage: track?.language || "",
-      cuesLength: resolverDeps.getTrackCuesLength(track),
+      cuesLength: getTrackCuesLength(track),
       activeCuesLength: getTrackActiveCuesLength(track),
     };
   }
@@ -1099,34 +599,459 @@ function forwardContentLog(...args) {
     return track.mode === "hidden" || track.mode === "showing";
   }
 
+  function getCurrentCue(track, time = state.video?.currentTime ?? 0) {
+    if (!track) return null;
 
-  // cueController の secondary track 同期を content.js から呼ぶための低レベル helper。
-  // 通常同期では、video / language / render 関数を明示して bind 状態をそろえる。
-  function syncSecondarySubtitleTrackBinding(
-    video,
-    requestedLang,
-    renderFn,
-    options = {},
-  ) {
-    return subtitleSyncController.syncSecondarySubtitleTrackBinding(
-      video,
-      requestedLang,
-      renderFn,
-      options,
-    );
+    try {
+      const activeCue = track.activeCues?.[0] ?? null;
+      if (activeCue) return activeCue;
+    } catch (_) {}
+
+    return findCueAt(track, time);
   }
 
-  // secondary missing 復旧のための再同期要求を処理する。
-  // ここでは現在の state から video / language を解決し、
-  // 必要なら forceRebind を付けて cueController 側へ再同期を委譲する。
-  function syncSecondarySubtitleTrack({
-    reason = "unknown",
-    forceRebind = false,
-  } = {}) {
-    return subtitleSyncController.syncSecondarySubtitleTrack({
-      reason,
-      forceRebind,
-    });
+  function getCurrentCueText(track, time = state.video?.currentTime ?? 0) {
+    return cleanCueText(getCurrentCue(track, time));
+  }
+
+  function getSecondaryRenderLogPayload(text, track, elementCount) {
+    return {
+      textPreview: String(text || "").slice(0, 40),
+      trackLanguage: track?.language || "",
+      activeCuesLength: getTrackActiveCuesLength(track),
+      secondaryElementCount: elementCount,
+    };
+  }
+
+  function ensureSecondarySubtitleElement() {
+    const requestedSettings = state.requestedContentSettings || {};
+    const effectiveSettings = {
+      primaryLang:
+        requestedSettings.primaryLang ||
+        state.contentSettings.primaryLang ||
+        "",
+      secondaryLang:
+        requestedSettings.secondaryLang ||
+        state.requestedSecondaryLang ||
+        state.contentSettings.secondaryLang ||
+        "",
+    };
+
+    if (!isLanguageSelectionReady(effectiveSettings)) {
+      return null;
+    }
+
+    ensurePanelSlotLayerStyle();
+
+    const allExisting = document.querySelectorAll(
+      "[data-secondary-subtitle], .dual-subtitles-secondary",
+    );
+    if (allExisting.length > 1) {
+      const keep = allExisting[0];
+      for (let i = 1; i < allExisting.length; i++) {
+        allExisting[i].remove();
+      }
+      if (DEBUG_SECONDARY_SUBS) {
+        logContent(
+          "secondary duplicate elements cleaned",
+          getSecondaryRenderLogPayload(
+            keep.textContent || "",
+            secondaryTrackBound,
+            allExisting.length,
+          ),
+        );
+      }
+      if (!keep.hasAttribute("data-secondary-subtitle")) {
+        keep.setAttribute("data-secondary-subtitle", "");
+      }
+      if (!keep.classList.contains("dual-subtitles-secondary")) {
+        keep.classList.add("dual-subtitles-secondary");
+      }
+      return keep;
+    }
+
+    if (allExisting.length === 1) {
+      const only = allExisting[0];
+      if (!only.hasAttribute("data-secondary-subtitle")) {
+        only.setAttribute("data-secondary-subtitle", "");
+      }
+      if (!only.classList.contains("dual-subtitles-secondary")) {
+        only.classList.add("dual-subtitles-secondary");
+      }
+      return only;
+    }
+
+    let panelHost = getTarget().querySelector("#atv-panel-host");
+    if (!panelHost) {
+      createRightPanel();
+      panelHost = getTarget().querySelector("#atv-panel-host");
+    }
+    if (!panelHost) return null;
+
+    // createRightPanel may have already ensured it during setup.
+    const ensuredAfterPanel = document.querySelector(
+      "[data-secondary-subtitle]",
+    );
+    if (ensuredAfterPanel) return ensuredAfterPanel;
+
+    let panel = document.querySelector("[data-dual-subtitles-panel]");
+    if (!panel) {
+      panel = document.querySelector(".dual-subtitles-panel");
+    }
+    if (!panel && panelHost.shadowRoot) {
+      panel = panelHost.shadowRoot.querySelector(
+        "[data-dual-subtitles-panel], .dual-subtitles-panel",
+      );
+    }
+
+    if (panel && panelHost.shadowRoot?.contains(panel)) {
+      panel.setAttribute("data-dual-subtitles-panel", "");
+      panel.classList.add("dual-subtitles-panel");
+    }
+
+    const el = document.createElement("div");
+    el.setAttribute("data-secondary-subtitle", "");
+    el.className = "dual-subtitles-secondary";
+    el.slot = "secondary-subtitle-slot";
+    panelHost.appendChild(el);
+
+    if (DEBUG_SECONDARY_SUBS) {
+      logContent("secondary element ensured");
+    }
+    return el;
+  }
+
+  function ensurePanelSlotLayerStyle() {
+    if (document.getElementById(PANEL_SLOT_LAYER_STYLE_ID)) return;
+
+    const style = document.createElement("style");
+    style.id = PANEL_SLOT_LAYER_STYLE_ID;
+    style.textContent = `
+      #atv-panel-host > .dual-subtitles-secondary,
+      #atv-panel-host > [data-secondary-subtitle] {
+        display: none !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  // [render: panel shell apply]
+  function renderSecondarySubtitle(text, track) {
+    let el = ensureSecondarySubtitleElement();
+    if (!el) return;
+
+    const elementCountBefore = document.querySelectorAll(
+      "[data-secondary-subtitle], .dual-subtitles-secondary",
+    ).length;
+    if (elementCountBefore > 1) {
+      if (DEBUG_SECONDARY_SUBS) {
+        logContent(
+          "secondary duplicate elements cleaned",
+          getSecondaryRenderLogPayload(text, track, elementCountBefore),
+        );
+      }
+      el = ensureSecondarySubtitleElement();
+    }
+
+    if (!el) {
+      if (DEBUG_SECONDARY_SUBS) {
+        logContent("secondary element missing, recreating");
+      }
+      el = ensureSecondarySubtitleElement();
+    }
+    if (!el) return;
+
+    const activeCuesLength = getTrackActiveCuesLength(track);
+    let resolvedText = text || "";
+    if (!resolvedText && activeCuesLength > 0) {
+      resolvedText = getCurrentCueText(track) || "";
+      const elementCount = document.querySelectorAll(
+        "[data-secondary-subtitle], .dual-subtitles-secondary",
+      ).length;
+      if (DEBUG_SECONDARY_SUBS) {
+        logContent(
+          "secondary cue text resolved",
+          getSecondaryRenderLogPayload(resolvedText, track, elementCount),
+        );
+      }
+    }
+
+    const elementCount = document.querySelectorAll(
+      "[data-secondary-subtitle], .dual-subtitles-secondary",
+    ).length;
+
+    resolvedText = normalizeSubtitleText(resolvedText);
+
+    let finalText = resolvedText;
+    const now = Date.now();
+
+    if (finalText) {
+      lastSecondaryText = finalText;
+      lastSecondaryTextAt = now;
+    } else if (
+      !finalText &&
+      activeCuesLength === 0 &&
+      lastSecondaryText &&
+      now - lastSecondaryTextAt <= SECONDARY_SUBTITLE_GRACE_MS
+    ) {
+      finalText = lastSecondaryText;
+      if (DEBUG_SECONDARY_SUBS) {
+        logContent(
+          "secondary subtitle retained during grace period",
+          getSecondaryRenderLogPayload(finalText, track, elementCount),
+        );
+      }
+    } else if (
+      !finalText &&
+      now - lastSecondaryTextAt > SECONDARY_SUBTITLE_GRACE_MS
+    ) {
+      if (el.textContent) {
+        if (DEBUG_SECONDARY_SUBS) {
+          logContent(
+            "secondary subtitle cleared after grace period",
+            getSecondaryRenderLogPayload("", track, elementCount),
+          );
+        }
+      }
+      lastSecondaryText = "";
+      lastSecondaryTextAt = 0;
+    }
+
+    if (DEBUG_SECONDARY_SUBS) {
+      logContent(
+        "secondary render called",
+        getSecondaryRenderLogPayload(finalText, track, elementCount),
+      );
+    }
+
+    el.textContent = finalText;
+    el.dataset.language = track?.language || "";
+    logSubtitlePanelState("after-renderSecondarySubtitle");
+  }
+
+  function logSubtitlePanelState(tag) {
+    try {
+      const panelHost = getTarget().querySelector("#atv-panel-host");
+      const secondaryEl = panelHost?.querySelector("[data-secondary-subtitle]");
+      const snapshot = state.lastPanelRenderSnapshot || {};
+      const currentSubtitleBlock = snapshot.currentSubtitleBlock || null;
+      const payload = {
+        tag,
+        allBlocksCount: snapshot.allBlocksCount ?? 0,
+        historyCount: state.subtitleHistory.length,
+        hasCurrentBlock: Boolean(currentSubtitleBlock),
+        currentPrimary: currentSubtitleBlock?.primaryText || "",
+        currentSecondary: currentSubtitleBlock?.secondaryText || "",
+        secondaryElText: secondaryEl?.textContent || "",
+      };
+
+      if (tag === "after-renderSecondarySubtitle") {
+        const signature = JSON.stringify({
+          allBlocksCount: payload.allBlocksCount,
+          historyCount: payload.historyCount,
+          hasCurrentBlock: payload.hasCurrentBlock,
+          currentPrimary: payload.currentPrimary,
+          currentSecondary: payload.currentSecondary,
+          secondaryElText: payload.secondaryElText,
+        });
+        if (signature === state.lastAfterRenderSecondarySnapshotSignature) {
+          return;
+        }
+        state.lastAfterRenderSecondarySnapshotSignature = signature;
+      }
+    } catch (error) {
+      console.warn("[ATVB] panel state snapshot failed", {
+        tag,
+        error: String(error),
+      });
+    }
+  }
+
+  function syncSecondarySubtitleTrack(
+    video,
+    requestedLang,
+    renderSecondarySubtitle,
+  ) {
+    if (!video) return;
+
+    if (DEBUG_SECONDARY_SUBS) {
+      logContent(
+        "secondary sync",
+        getSecondaryTrackDebugPayload(requestedLang, secondaryTrackBound),
+      );
+    }
+
+    const track = resolveSecondarySubtitleTrack(video, requestedLang);
+
+    if (!track) {
+      unbindSecondarySubtitleTrack();
+      renderSecondarySubtitle("", null);
+      return;
+    }
+
+    if (secondaryTrackBound !== track) {
+      bindSecondarySubtitleTrack(track, renderSecondarySubtitle);
+      return;
+    }
+
+    // Same track, just refresh.
+    renderSecondarySubtitle(getCurrentCueText(track), track);
+  }
+
+  function ensureSecondaryTrackSyncInterval() {
+    if (secondaryTrackSyncInterval) return;
+
+    secondaryTrackSyncInterval = window.setInterval(() => {
+      if (state.restarting) return;
+
+      const found = getVideoAndDialog();
+      const nextVideo = found?.video || state.video;
+      const nextVideoSrcKey = getCurrentVideoSrcKey(nextVideo);
+      const hasCurrentSrcChanged =
+        Boolean(nextVideoSrcKey) &&
+        Boolean(state.lastVideoSrcKey) &&
+        nextVideoSrcKey !== state.lastVideoSrcKey;
+
+      if (hasCurrentSrcChanged) {
+        logContent("currentSrc changed", {
+          previousVideoSrcKey: state.lastVideoSrcKey,
+          nextVideoSrcKey,
+        });
+      }
+
+      if (found && (found.video !== state.video || hasCurrentSrcChanged)) {
+        state.video = found.video;
+        state.dialogEl = found.dialog;
+        state.lastVideoSrcKey = nextVideoSrcKey;
+        state.lastObservedVideoTime = null;
+        reloadSettingsAndReinitialize("video_changed");
+      } else if (found && state.video) {
+        const switched = syncHistoryContextWithPlayback("content_key_changed");
+        if (switched) {
+          renderCurrentSnapshot();
+          renderPanel();
+        }
+      }
+
+      const currentVideoTime = Number(state.video?.currentTime ?? 0);
+      const previousObservedTime = Number(state.lastObservedVideoTime);
+      const largeSeekDetected =
+        Number.isFinite(previousObservedTime) &&
+        Number.isFinite(currentVideoTime) &&
+        Math.abs(currentVideoTime - previousObservedTime) > 6;
+      state.lastObservedVideoTime = Number.isFinite(currentVideoTime)
+        ? currentVideoTime
+        : null;
+
+      if (largeSeekDetected) {
+        applyCurrentStateToPanel("sync_interval_large_seek_resync");
+      }
+
+      const effectiveSecondaryLanguage =
+        state.requestedSecondaryLang || state.contentSettings.secondaryLang;
+      if (!state.video || !effectiveSecondaryLanguage) return;
+
+      const previousSecondaryTrack = state.secondaryTrack;
+      syncSecondarySubtitleTrack(
+        state.video,
+        effectiveSecondaryLanguage,
+        renderSecondarySubtitle,
+      );
+      state.secondaryTrack = secondaryTrackBound;
+
+      const secondaryActiveCues = getTrackActiveCuesLength(
+        state.secondaryTrack,
+      );
+      const primaryActiveCues = getTrackActiveCuesLength(state.primaryTrack);
+      const secondaryCueText = normalizeSubtitleText(
+        getCurrentCueText(state.secondaryTrack),
+      );
+      const primaryCueText = normalizeSubtitleText(
+        getCurrentCueText(state.primaryTrack),
+      );
+      const snapshotPrimaryText = normalizeSubtitleText(
+        state.lastPanelRenderSnapshot?.currentSubtitleBlock?.primaryText || "",
+      );
+      const hasPrimaryLiveSignal =
+        primaryActiveCues > 0 || Boolean(primaryCueText);
+      const now = Date.now();
+      const hasFreshPrimarySnapshot =
+        Boolean(snapshotPrimaryText) &&
+        state.lastPrimarySnapshotAt > 0 &&
+        now - state.lastPrimarySnapshotAt <= 3000;
+      const hasSecondarySignal =
+        secondaryActiveCues > 0 || Boolean(secondaryCueText);
+      const hasPrimarySignal = hasPrimaryLiveSignal || hasFreshPrimarySnapshot;
+
+      const syncContextSummary = JSON.stringify({
+        trackCount: state.video?.textTracks?.length ?? 0,
+        primaryTrackFound: Boolean(state.primaryTrack),
+        secondaryTrackFound: Boolean(state.secondaryTrack),
+        secondaryTrackLanguage: state.secondaryTrack?.language || "",
+        secondaryActiveCues,
+        primaryActiveCues,
+        primaryCueTextLength: primaryCueText.length,
+        snapshotPrimaryTextLength: snapshotPrimaryText.length,
+        hasFreshPrimarySnapshot,
+      });
+      const shouldLogSyncContext =
+        previousSecondaryTrack !== state.secondaryTrack ||
+        syncContextSummary !== state.lastSecondarySyncContext;
+      if (shouldLogSyncContext) {
+        state.lastSecondarySyncContext = syncContextSummary;
+        logContent("secondary track sync context", {
+          reason: "sync_interval",
+          effectiveSecondaryLanguage,
+          trackCount: state.video?.textTracks?.length ?? 0,
+          primaryTrackFound: Boolean(state.primaryTrack),
+          secondaryTrackFound: Boolean(state.secondaryTrack),
+          secondaryTrackLanguage: state.secondaryTrack?.language || "",
+          secondaryActiveCues,
+          primaryActiveCues,
+          primaryCueTextLength: primaryCueText.length,
+          snapshotPrimaryTextLength: snapshotPrimaryText.length,
+          hasFreshPrimarySnapshot,
+        });
+      }
+
+      const trackCount = state.video?.textTracks?.length ?? 0;
+      const shouldAttemptPrimaryRecovery =
+        hasSecondarySignal && !hasPrimarySignal && trackCount > 1;
+
+      // [binder/cue: recovery - sync interval path]
+      // secondary signal はあるが primary signal が無い場合、
+      // sync interval 経由で primary recovery を試行する。
+
+      if (!shouldAttemptPrimaryRecovery) {
+        if (hasPrimarySignal) {
+          state.lastPrimaryRecoveryAttemptAt = 0;
+        }
+        return;
+      }
+
+      if (
+        state.lastPrimaryRecoveryAttemptAt &&
+        now - state.lastPrimaryRecoveryAttemptAt < 4000
+      ) {
+        return;
+      }
+
+      state.lastPrimaryRecoveryAttemptAt = now;
+      const recoveryResult = reinitializeSubtitlePipeline(
+        "sync_interval_primary_recovery",
+      );
+      logContent("sync interval primary recovery", {
+        trackCount,
+        primaryTrackFound: recoveryResult.primaryTrackFound,
+        secondaryTrackFound: recoveryResult.secondaryTrackFound,
+        primaryListenerBound: recoveryResult.primaryListenerBound,
+        secondaryListenerBound: recoveryResult.secondaryListenerBound,
+      });
+
+      if (recoveryResult.primaryTrackFound) {
+        state.lastPrimaryRecoveryAttemptAt = 0;
+      }
+    }, 2000);
   }
 
   function isVisibleElement(el) {
@@ -1136,6 +1061,27 @@ function forwardContentLog(...args) {
     return getComputedStyle(el).display !== "none";
   }
 
+  function composeManagedTransform(baseTransform, shiftX) {
+    const normalizedBase = String(baseTransform || "").trim();
+    const normalizedShift =
+      Math.abs(shiftX) < 0.5 ? 0 : Number(shiftX.toFixed(2));
+
+    if (!normalizedShift) return normalizedBase;
+
+    const shiftTransform = `translateX(${normalizedShift}px)`;
+    return normalizedBase
+      ? `${normalizedBase} ${shiftTransform}`
+      : shiftTransform;
+  }
+
+  function setTransformIfChanged(el, value) {
+    if (!el) return;
+    const normalizedNext = String(value || "").trim();
+    const normalizedCurrent = String(el.style.transform || "").trim();
+    if (normalizedCurrent === normalizedNext) return;
+    el.style.transform = normalizedNext;
+  }
+
   function setStyleIfChanged(el, propertyName, value) {
     if (!el) return;
     const next = String(value || "");
@@ -1143,44 +1089,62 @@ function forwardContentLog(...args) {
     el.style[propertyName] = next;
   }
 
-  function applyManagedSizing(el, entries) {
+  function applyManagedTranslateX(el, shiftX) {
     if (!el) return;
 
-    entries.forEach(({ attrName, propertyName, value }) => {
-      if (!el.hasAttribute(attrName)) {
-        el.setAttribute(attrName, el.style[propertyName] || "");
-      }
-      setStyleIfChanged(el, propertyName, value);
-    });
+    const managed = el.getAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR) === "1";
+    const baseTransform = managed
+      ? el.getAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR) || ""
+      : String(el.style.transform || "").trim();
+
+    if (!managed) {
+      el.setAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR, baseTransform);
+    }
+
+    const composed = composeManagedTransform(baseTransform, shiftX);
+    setTransformIfChanged(el, composed);
+    el.setAttribute(PLAYBACK_CONTROLS_SHIFT_X_ATTR, String(shiftX || 0));
+    el.setAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR, "1");
   }
 
-  function clearManagedSizing(el, entries) {
-    if (!el) return;
+  function getManagedShiftX(el) {
+    if (!el) return 0;
+    const raw = el.getAttribute(PLAYBACK_CONTROLS_SHIFT_X_ATTR);
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
 
-    entries.forEach(({ attrName, propertyName }) => {
-      if (!el.hasAttribute(attrName)) return;
-      setStyleIfChanged(el, propertyName, el.getAttribute(attrName) || "");
-      el.removeAttribute(attrName);
-    });
+  function clearManagedTranslateX(el) {
+    if (!el) return;
+    if (el.getAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR) !== "1") return;
+
+    const baseTransform =
+      el.getAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR) || "";
+    setTransformIfChanged(el, baseTransform);
+    el.removeAttribute(PLAYBACK_CONTROLS_SHIFT_X_ATTR);
+    el.removeAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR);
+    el.removeAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR);
   }
 
   function applyManagedFooterSizing(footer, widthPx, leftPx = 0) {
     if (!footer) return;
 
-    const safeWidth = `${Math.max(0, widthPx).toFixed(2)}px`;
-    applyManagedSizing(footer, [
-      {
-        attrName: PLAYBACK_FOOTER_BASE_WIDTH_ATTR,
-        propertyName: "width",
-        value: safeWidth,
-      },
-      {
-        attrName: PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR,
-        propertyName: "maxWidth",
-        value: safeWidth,
-      },
-    ]);
+    if (!footer.hasAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR)) {
+      footer.setAttribute(
+        PLAYBACK_FOOTER_BASE_WIDTH_ATTR,
+        footer.style.width || "",
+      );
+    }
+    if (!footer.hasAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR)) {
+      footer.setAttribute(
+        PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR,
+        footer.style.maxWidth || "",
+      );
+    }
 
+    const safeWidth = `${Math.max(0, widthPx).toFixed(2)}px`;
+    setStyleIfChanged(footer, "width", safeWidth);
+    setStyleIfChanged(footer, "maxWidth", safeWidth);
     applyManagedInlineStyle(
       footer,
       "footer",
@@ -1193,16 +1157,23 @@ function forwardContentLog(...args) {
   function clearManagedFooterSizing(footer) {
     if (!footer) return;
 
-    clearManagedSizing(footer, [
-      {
-        attrName: PLAYBACK_FOOTER_BASE_WIDTH_ATTR,
-        propertyName: "width",
-      },
-      {
-        attrName: PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR,
-        propertyName: "maxWidth",
-      },
-    ]);
+    if (footer.hasAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR)) {
+      setStyleIfChanged(
+        footer,
+        "width",
+        footer.getAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR) || "",
+      );
+      footer.removeAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR);
+    }
+
+    if (footer.hasAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR)) {
+      setStyleIfChanged(
+        footer,
+        "maxWidth",
+        footer.getAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR) || "",
+      );
+      footer.removeAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR);
+    }
 
     clearManagedInlineStyle(footer, "footer", "marginLeft");
     clearManagedInlineStyle(footer, "footer", "marginRight");
@@ -1211,20 +1182,22 @@ function forwardContentLog(...args) {
   function applyManagedHeaderSizing(header, widthPx, leftPx = 0) {
     if (!header) return;
 
-    const safeWidth = `${Math.max(0, widthPx).toFixed(2)}px`;
-    applyManagedSizing(header, [
-      {
-        attrName: PLAYBACK_HEADER_BASE_WIDTH_ATTR,
-        propertyName: "width",
-        value: safeWidth,
-      },
-      {
-        attrName: PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR,
-        propertyName: "maxWidth",
-        value: safeWidth,
-      },
-    ]);
+    if (!header.hasAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR)) {
+      header.setAttribute(
+        PLAYBACK_HEADER_BASE_WIDTH_ATTR,
+        header.style.width || "",
+      );
+    }
+    if (!header.hasAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR)) {
+      header.setAttribute(
+        PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR,
+        header.style.maxWidth || "",
+      );
+    }
 
+    const safeWidth = `${Math.max(0, widthPx).toFixed(2)}px`;
+    setStyleIfChanged(header, "width", safeWidth);
+    setStyleIfChanged(header, "maxWidth", safeWidth);
     applyManagedInlineStyle(
       header,
       "header",
@@ -1237,16 +1210,23 @@ function forwardContentLog(...args) {
   function clearManagedHeaderSizing(header) {
     if (!header) return;
 
-    clearManagedSizing(header, [
-      {
-        attrName: PLAYBACK_HEADER_BASE_WIDTH_ATTR,
-        propertyName: "width",
-      },
-      {
-        attrName: PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR,
-        propertyName: "maxWidth",
-      },
-    ]);
+    if (header.hasAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR)) {
+      setStyleIfChanged(
+        header,
+        "width",
+        header.getAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR) || "",
+      );
+      header.removeAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR);
+    }
+
+    if (header.hasAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR)) {
+      setStyleIfChanged(
+        header,
+        "maxWidth",
+        header.getAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR) || "",
+      );
+      header.removeAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR);
+    }
 
     clearManagedInlineStyle(header, "header", "marginLeft");
     clearManagedInlineStyle(header, "header", "marginRight");
@@ -1255,42 +1235,115 @@ function forwardContentLog(...args) {
   function applyManagedProgressInset(progress) {
     if (!progress) return;
 
-    applyManagedSizing(progress, [
-      {
-        attrName: PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR,
-        propertyName: "minWidth",
-        value: "0",
-      },
-      {
-        attrName: PLAYBACK_PROGRESS_BASE_WIDTH_ATTR,
-        propertyName: "width",
-        value: "calc(100% - 48px)",
-      },
-      {
-        attrName: PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR,
-        propertyName: "maxWidth",
-        value: "calc(100% - 48px)",
-      },
-    ]);
+    if (!progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR)) {
+      progress.setAttribute(
+        PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR,
+        progress.style.minWidth || "",
+      );
+    }
+    if (!progress.hasAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR)) {
+      progress.setAttribute(
+        PLAYBACK_PROGRESS_BASE_WIDTH_ATTR,
+        progress.style.width || "",
+      );
+    }
+    if (!progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR)) {
+      progress.setAttribute(
+        PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR,
+        progress.style.maxWidth || "",
+      );
+    }
+
+    setStyleIfChanged(progress, "minWidth", "0");
+    setStyleIfChanged(progress, "width", "calc(100% - 48px)");
+    setStyleIfChanged(progress, "maxWidth", "calc(100% - 48px)");
   }
 
   function clearManagedProgressInset(progress) {
     if (!progress) return;
 
-    clearManagedSizing(progress, [
-      {
-        attrName: PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR,
-        propertyName: "minWidth",
-      },
-      {
-        attrName: PLAYBACK_PROGRESS_BASE_WIDTH_ATTR,
-        propertyName: "width",
-      },
-      {
-        attrName: PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR,
-        propertyName: "maxWidth",
-      },
-    ]);
+    if (progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR)) {
+      setStyleIfChanged(
+        progress,
+        "minWidth",
+        progress.getAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR) || "",
+      );
+      progress.removeAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR);
+    }
+    if (progress.hasAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR)) {
+      setStyleIfChanged(
+        progress,
+        "width",
+        progress.getAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR) || "",
+      );
+      progress.removeAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR);
+    }
+    if (progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR)) {
+      setStyleIfChanged(
+        progress,
+        "maxWidth",
+        progress.getAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR) || "",
+      );
+      progress.removeAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR);
+    }
+  }
+
+  function applyManagedSkipPosition(skipOverlay, safeAreaRight) {
+    if (!skipOverlay) return;
+
+    if (!skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR)) {
+      skipOverlay.setAttribute(
+        PLAYBACK_SKIP_BASE_LEFT_ATTR,
+        skipOverlay.style.left || "",
+      );
+    }
+    if (!skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR)) {
+      skipOverlay.setAttribute(
+        PLAYBACK_SKIP_BASE_RIGHT_ATTR,
+        skipOverlay.style.right || "",
+      );
+    }
+    if (!skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR)) {
+      skipOverlay.setAttribute(
+        PLAYBACK_SKIP_BASE_TRANSFORM_ATTR,
+        skipOverlay.style.transform || "",
+      );
+    }
+
+    const rect = skipOverlay.getBoundingClientRect();
+    const left = safeAreaRight - rect.width;
+    setStyleIfChanged(skipOverlay, "left", `${left.toFixed(2)}px`);
+    setStyleIfChanged(skipOverlay, "right", "auto");
+    setStyleIfChanged(skipOverlay, "transform", "none");
+  }
+
+  function clearManagedSkipPosition(skipOverlay) {
+    if (!skipOverlay) return;
+
+    if (skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR)) {
+      setStyleIfChanged(
+        skipOverlay,
+        "left",
+        skipOverlay.getAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR) || "",
+      );
+      skipOverlay.removeAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR);
+    }
+    if (skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR)) {
+      setStyleIfChanged(
+        skipOverlay,
+        "right",
+        skipOverlay.getAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR) || "",
+      );
+      skipOverlay.removeAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR);
+    }
+    if (skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR)) {
+      setStyleIfChanged(
+        skipOverlay,
+        "transform",
+        skipOverlay.getAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR) || "",
+      );
+      skipOverlay.removeAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR);
+    }
   }
 
   function getManagedInlineStyleAttr(scope, propertyName) {
@@ -1314,47 +1367,154 @@ function forwardContentLog(...args) {
     el.removeAttribute(attrName);
   }
 
-  function applyManagedSkipPosition(skipOverlay, safeAreaRight) {
-    if (!skipOverlay) return;
+  function applyManagedFooterChildSizing(footer, safeAreaWidth) {
+    if (!footer) return;
 
-    const rect = skipOverlay.getBoundingClientRect();
-    const left = safeAreaRight - rect.width;
-    applyManagedSizing(skipOverlay, [
-      {
-        attrName: PLAYBACK_SKIP_BASE_LEFT_ATTR,
-        propertyName: "left",
-        value: `${left.toFixed(2)}px`,
-      },
-      {
-        attrName: PLAYBACK_SKIP_BASE_RIGHT_ATTR,
-        propertyName: "right",
-        value: "auto",
-      },
-      {
-        attrName: PLAYBACK_SKIP_BASE_TRANSFORM_ATTR,
-        propertyName: "transform",
-        value: "none",
-      },
-    ]);
+    const metadata = footer.querySelector(
+      PLAYBACK_CONTROLS_LAYOUT.metadataSelector,
+    );
+    const progress = footer.querySelector(
+      PLAYBACK_CONTROLS_LAYOUT.progressSelector,
+    );
+    const tabs = footer.querySelector(PLAYBACK_CONTROLS_LAYOUT.tabsSelector);
+    const autoSubsNote = footer.querySelector(
+      PLAYBACK_CONTROLS_LAYOUT.autoSubsNoteSelector,
+    );
+
+    [metadata, progress, tabs].forEach((el, index) => {
+      const scope = ["metadata", "progress", "tabs"][index];
+      if (!el) return;
+      applyManagedInlineStyle(el, scope, "minWidth", "0");
+      applyManagedInlineStyle(el, scope, "maxWidth", "100%");
+      applyManagedInlineStyle(el, scope, "overflow", "hidden");
+      applyManagedInlineStyle(el, scope, "flexShrink", "1");
+    });
+
+    if (progress) {
+      applyManagedInlineStyle(progress, "progress", "width", "100%");
+    }
+
+    if (autoSubsNote) {
+      applyManagedInlineStyle(
+        autoSubsNote,
+        "auto-subs-note",
+        "maxWidth",
+        "100%",
+      );
+      applyManagedInlineStyle(
+        autoSubsNote,
+        "auto-subs-note",
+        "overflow",
+        "hidden",
+      );
+      applyManagedInlineStyle(
+        autoSubsNote,
+        "auto-subs-note",
+        "flexShrink",
+        "1",
+      );
+      if (safeAreaWidth < 1200) {
+        applyManagedInlineStyle(
+          autoSubsNote,
+          "auto-subs-note",
+          "display",
+          "none",
+        );
+      } else {
+        clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "display");
+      }
+    }
   }
 
-  function clearManagedSkipPosition(skipOverlay) {
-    if (!skipOverlay) return;
+  function clearManagedFooterChildSizing(footer) {
+    if (!footer) return;
 
-    clearManagedSizing(skipOverlay, [
-      {
-        attrName: PLAYBACK_SKIP_BASE_LEFT_ATTR,
-        propertyName: "left",
-      },
-      {
-        attrName: PLAYBACK_SKIP_BASE_RIGHT_ATTR,
-        propertyName: "right",
-      },
-      {
-        attrName: PLAYBACK_SKIP_BASE_TRANSFORM_ATTR,
-        propertyName: "transform",
-      },
-    ]);
+    const metadata = footer.querySelector(
+      PLAYBACK_CONTROLS_LAYOUT.metadataSelector,
+    );
+    const progress = footer.querySelector(
+      PLAYBACK_CONTROLS_LAYOUT.progressSelector,
+    );
+    const tabs = footer.querySelector(PLAYBACK_CONTROLS_LAYOUT.tabsSelector);
+    const autoSubsNote = footer.querySelector(
+      PLAYBACK_CONTROLS_LAYOUT.autoSubsNoteSelector,
+    );
+
+    [
+      [metadata, "metadata"],
+      [progress, "progress"],
+      [tabs, "tabs"],
+    ].forEach(([el, scope]) => {
+      clearManagedInlineStyle(el, scope, "minWidth");
+      clearManagedInlineStyle(el, scope, "maxWidth");
+      clearManagedInlineStyle(el, scope, "overflow");
+      clearManagedInlineStyle(el, scope, "flexShrink");
+    });
+
+    clearManagedInlineStyle(progress, "progress", "width");
+
+    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "maxWidth");
+    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "overflow");
+    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "flexShrink");
+    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "display");
+  }
+
+  function getPlaybackPanelLayoutAnchor() {
+    return (
+      document.querySelector(PLAYBACK_CONTROLS_LAYOUT.panelSelector) ||
+      document.querySelector(".dual-subtitles-secondary") ||
+      document.querySelector("[data-secondary-subtitle]")
+    );
+  }
+
+  function computePlaybackVisibleArea(panelAnchor, video) {
+    if (!isVisibleElement(panelAnchor) || !isVisibleElement(video)) return null;
+
+    const videoRect = video.getBoundingClientRect();
+    const panelRect = panelAnchor.getBoundingClientRect();
+    const safeGutter = PLAYBACK_CONTROLS_LAYOUT.footerSafeGutterPx;
+    const safeAreaLeft = videoRect.left + safeGutter;
+    const safeAreaRight =
+      Math.min(videoRect.right, panelRect.left) - safeGutter;
+    const safeAreaWidth = Math.max(0, safeAreaRight - safeAreaLeft);
+
+    return {
+      panelRect,
+      videoRect,
+      safeAreaLeft,
+      safeAreaRight,
+      safeAreaWidth,
+    };
+  }
+
+  function clampManagedShiftX(
+    rect,
+    existingShiftX,
+    nextShiftX,
+    minLeft,
+    maxRight,
+  ) {
+    if (!rect) return 0;
+
+    let shiftX = nextShiftX;
+    const projectLeft = (candidateShiftX) =>
+      rect.left + (candidateShiftX - existingShiftX);
+    const projectRight = (candidateShiftX) =>
+      rect.right + (candidateShiftX - existingShiftX);
+
+    if (projectRight(shiftX) > maxRight) {
+      shiftX -= projectRight(shiftX) - maxRight;
+    }
+
+    if (projectLeft(shiftX) < minLeft) {
+      shiftX += minLeft - projectLeft(shiftX);
+    }
+
+    if (shiftX > 0) {
+      shiftX = 0;
+    }
+
+    return shiftX;
   }
 
   function getShadowProgressTargets() {
@@ -1371,6 +1531,620 @@ function forwardContentLog(...args) {
     };
   }
 
+  function clearPlaybackControlRetryTimers() {
+    if (!state.playbackControlsRetryTimers.length) return;
+    state.playbackControlsRetryTimers.forEach((timerId) =>
+      clearTimeout(timerId),
+    );
+    state.playbackControlsRetryTimers = [];
+  }
+
+  function scheduleAdjustPlaybackControls(
+    reason = "unknown",
+    retryDelays = [],
+    options = {},
+  ) {
+    const immediate = options.immediate !== false;
+
+    const runOnce = (runReason) => {
+      if (state.playbackControlsRafId) return;
+      state.playbackControlsRafId = window.requestAnimationFrame(() => {
+        state.playbackControlsRafId = 0;
+        adjustPlaybackControlsForPanel(runReason);
+      });
+    };
+
+    clearPlaybackControlRetryTimers();
+    if (immediate) runOnce(reason);
+
+    retryDelays.forEach((delayMs) => {
+      const timerId = window.setTimeout(() => {
+        runOnce(`${reason}-retry-${delayMs}`);
+      }, delayMs);
+      state.playbackControlsRetryTimers.push(timerId);
+    });
+  }
+
+  function clearControlSettlingTimers() {
+    if (!state.controlSettlingTimers.length) return;
+    state.controlSettlingTimers.forEach((timerId) => clearTimeout(timerId));
+    state.controlSettlingTimers = [];
+  }
+
+  function scheduleControlSettlingBurst(
+    reason = "unknown",
+    delays = [180, 420, 800, 1300, 1900, 2700, 3800],
+  ) {
+    clearControlSettlingTimers();
+
+    delays.forEach((delayMs) => {
+      const timerId = window.setTimeout(() => {
+        if (!state.panelVisible) return;
+        scheduleAdjustPlaybackControls(`${reason}-settle-${delayMs}`, [], {
+          immediate: true,
+        });
+      }, delayMs);
+      state.controlSettlingTimers.push(timerId);
+    });
+  }
+
+  function getPlaybackControlsLayoutTargets() {
+    return {
+      panel: getPlaybackPanelLayoutAnchor(),
+      header: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.headerSelector),
+      controls: document.querySelector(
+        PLAYBACK_CONTROLS_LAYOUT.controlsSelector,
+      ),
+      progress: document.querySelector(
+        PLAYBACK_CONTROLS_LAYOUT.progressSelector,
+      ),
+      skipOverlay: document.querySelector(
+        PLAYBACK_CONTROLS_LAYOUT.skipOverlaySelector,
+      ),
+      footer:
+        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerSelector) ||
+        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerFallbackSelector),
+      unified: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.unifiedSelector),
+      volume:
+        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.volumeSelector) ||
+        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.volumeFallbackSelector),
+      video: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.videoSelector),
+    };
+  }
+
+  function refreshPlaybackControlResizeObserverTargets() {
+    const ro = state.playbackControlsResizeObserver;
+    if (!ro) return;
+
+    const { panel, footer, unified, volume, video } =
+      getPlaybackControlsLayoutTargets();
+    const targets = [panel, footer, unified, volume, video].filter(Boolean);
+
+    for (const target of targets) {
+      if (state.playbackControlsResizeTargets.has(target)) continue;
+      ro.observe(target);
+      state.playbackControlsResizeTargets.add(target);
+    }
+
+    for (const prev of [...state.playbackControlsResizeTargets]) {
+      if (targets.includes(prev) && prev.isConnected) continue;
+      ro.unobserve(prev);
+      state.playbackControlsResizeTargets.delete(prev);
+    }
+  }
+
+  function clearPlaybackControlsTransforms() {
+    const { header, controls, progress, skipOverlay, footer, unified, volume } =
+      getPlaybackControlsLayoutTargets();
+    const { bar, remaining } = getShadowProgressTargets();
+    clearManagedHeaderSizing(header);
+    clearManagedTranslateX(controls);
+    clearManagedProgressInset(progress);
+    clearManagedTranslateX(bar);
+    clearManagedTranslateX(remaining);
+    clearManagedSkipPosition(skipOverlay);
+    clearManagedTranslateX(skipOverlay);
+    clearManagedTranslateX(footer);
+    clearManagedFooterSizing(footer);
+    clearManagedFooterChildSizing(footer);
+    clearManagedTranslateX(unified);
+    clearManagedTranslateX(volume);
+  }
+
+  function clearPlaybackControlsLayoutState({
+    header,
+    controls,
+    progress,
+    skipOverlay,
+    footer,
+    unified,
+    volume,
+    shadowProgressBar,
+    shadowRemainingTime,
+  }) {
+    clearManagedHeaderSizing(header);
+    clearManagedTranslateX(controls);
+    clearManagedProgressInset(progress);
+    clearManagedTranslateX(shadowProgressBar);
+    clearManagedTranslateX(shadowRemainingTime);
+    clearManagedSkipPosition(skipOverlay);
+    clearManagedTranslateX(skipOverlay);
+    clearManagedFooterSizing(footer);
+    clearManagedFooterChildSizing(footer);
+    clearManagedTranslateX(unified);
+    clearManagedTranslateX(volume);
+  }
+
+  function adjustPlaybackControlsForPanel(reason = "unknown") {
+    if (state.playbackControlsApplying) return;
+
+    state.playbackControlsApplying = true;
+    try {
+      const {
+        panel,
+        header,
+        controls,
+        progress,
+        skipOverlay,
+        footer,
+        unified,
+        volume,
+        video,
+      } = getPlaybackControlsLayoutTargets();
+      const { bar: shadowProgressBar, remaining: shadowRemainingTime } =
+        getShadowProgressTargets();
+      if (
+        !header &&
+        !controls &&
+        !progress &&
+        !skipOverlay &&
+        !footer &&
+        !unified &&
+        !volume &&
+        !shadowProgressBar &&
+        !shadowRemainingTime
+      ) {
+        return;
+      }
+
+      const visibleArea = computePlaybackVisibleArea(panel, video);
+      if (!visibleArea) {
+        clearManagedTranslateX(footer);
+        clearPlaybackControlsLayoutState({
+          header,
+          controls,
+          progress,
+          skipOverlay,
+          footer,
+          unified,
+          volume,
+          shadowProgressBar,
+          shadowRemainingTime,
+        });
+        return;
+      }
+
+      const { panelRect, safeAreaLeft, safeAreaRight, safeAreaWidth } =
+        visibleArea;
+      const visibleRight = safeAreaRight;
+      const visibleWidth = safeAreaWidth;
+
+      if (header) {
+        if (visibleWidth > 0) {
+          applyManagedHeaderSizing(header, visibleWidth, safeAreaLeft);
+        } else {
+          clearManagedHeaderSizing(header);
+        }
+      }
+
+      clearManagedTranslateX(footer);
+      if (footer) {
+        if (visibleWidth > 0) {
+          applyManagedFooterSizing(footer, visibleWidth, safeAreaLeft);
+          applyManagedFooterChildSizing(footer, visibleWidth);
+        } else {
+          clearManagedFooterSizing(footer);
+          clearManagedFooterChildSizing(footer);
+        }
+      }
+
+      clearManagedProgressInset(progress);
+
+      if (visibleWidth <= 0) {
+        clearPlaybackControlsLayoutState({
+          header,
+          controls,
+          progress,
+          skipOverlay,
+          footer,
+          unified,
+          volume,
+          shadowProgressBar,
+          shadowRemainingTime,
+        });
+        return;
+      }
+
+      const targetCenterX = safeAreaLeft + visibleWidth / 2;
+      const unifiedMaxRight = panelRect.left - 16;
+      const unifiedMinLeft = safeAreaLeft + 16;
+      const controlsTargetRight = panelRect.left - 40;
+      const controlsMinLeft = safeAreaLeft + 16;
+      const volumeTargetRight = panelRect.left - 60;
+      const volumeMinLeft = safeAreaLeft + 16;
+      const progressTargetRight = panelRect.left - 40;
+      const progressMinLeft = safeAreaLeft + 24;
+      const remainingTargetRight = panelRect.left - 60;
+      const remainingMinLeft = safeAreaLeft + 24;
+
+      if (unified) {
+        const unifiedRect = unified.getBoundingClientRect();
+        const unifiedExistingShiftX = getManagedShiftX(unified);
+        const unifiedCenterX = unifiedRect.left + unifiedRect.width / 2;
+        let unifiedShiftX =
+          unifiedExistingShiftX + (targetCenterX - unifiedCenterX);
+
+        unifiedShiftX = clampManagedShiftX(
+          unifiedRect,
+          unifiedExistingShiftX,
+          unifiedShiftX,
+          unifiedMinLeft,
+          unifiedMaxRight,
+        );
+
+        applyManagedTranslateX(unified, unifiedShiftX);
+
+        if (DEBUG_SECONDARY_SUBS) {
+          logContent("unified controls recentered", {
+            reason,
+            unifiedShiftX: Number(unifiedShiftX.toFixed(2)),
+            visibleRight: Number(visibleRight.toFixed(2)),
+            targetCenterX: Number(targetCenterX.toFixed(2)),
+          });
+        }
+      }
+
+      if (
+        volume &&
+        !(unified && (volume === unified || unified.contains(volume)))
+      ) {
+        const volumeRect = volume.getBoundingClientRect();
+        const volumeExistingShiftX = getManagedShiftX(volume);
+        let volumeShiftX = volumeExistingShiftX;
+        if (volumeRect.right > volumeTargetRight) {
+          volumeShiftX += volumeTargetRight - volumeRect.right;
+        }
+        volumeShiftX = clampManagedShiftX(
+          volumeRect,
+          volumeExistingShiftX,
+          volumeShiftX,
+          volumeMinLeft,
+          volumeTargetRight,
+        );
+        applyManagedTranslateX(volume, volumeShiftX);
+      }
+
+      if (controls) {
+        const controlsRect = controls.getBoundingClientRect();
+        const controlsExistingShiftX = getManagedShiftX(controls);
+        let controlsShiftX = controlsExistingShiftX;
+        if (controlsRect.right > controlsTargetRight) {
+          controlsShiftX += controlsTargetRight - controlsRect.right;
+        }
+        controlsShiftX = clampManagedShiftX(
+          controlsRect,
+          controlsExistingShiftX,
+          controlsShiftX,
+          controlsMinLeft,
+          controlsTargetRight,
+        );
+        applyManagedTranslateX(controls, controlsShiftX);
+      }
+
+      if (shadowProgressBar) {
+        const progressRect = shadowProgressBar.getBoundingClientRect();
+        const progressExistingShiftX = getManagedShiftX(shadowProgressBar);
+        let progressShiftX = progressExistingShiftX;
+        if (progressRect.right > progressTargetRight) {
+          progressShiftX += progressTargetRight - progressRect.right;
+        }
+
+        progressShiftX = clampManagedShiftX(
+          progressRect,
+          progressExistingShiftX,
+          progressShiftX,
+          progressMinLeft,
+          progressTargetRight,
+        );
+
+        applyManagedTranslateX(shadowProgressBar, progressShiftX);
+      }
+
+      if (shadowRemainingTime) {
+        const remainingRect = shadowRemainingTime.getBoundingClientRect();
+        const remainingExistingShiftX = getManagedShiftX(shadowRemainingTime);
+        let remainingShiftX = remainingExistingShiftX;
+        if (remainingRect.right > remainingTargetRight) {
+          remainingShiftX += remainingTargetRight - remainingRect.right;
+        }
+        remainingShiftX = clampManagedShiftX(
+          remainingRect,
+          remainingExistingShiftX,
+          remainingShiftX,
+          remainingMinLeft,
+          remainingTargetRight,
+        );
+        applyManagedTranslateX(shadowRemainingTime, remainingShiftX);
+      }
+
+      if (skipOverlay) {
+        clearManagedTranslateX(skipOverlay);
+        applyManagedSkipPosition(skipOverlay, safeAreaRight);
+      }
+    } finally {
+      state.playbackControlsApplying = false;
+    }
+  }
+
+  // [observer/layout]
+  function stopPlaybackControlLayoutObservers() {
+    if (state.playbackControlsMutationObserver) {
+      state.playbackControlsMutationObserver.disconnect();
+      state.playbackControlsMutationObserver = null;
+    }
+
+    if (state.playbackControlsResizeObserver) {
+      state.playbackControlsResizeObserver.disconnect();
+      state.playbackControlsResizeObserver = null;
+    }
+
+    state.playbackControlsResizeTargets.clear();
+
+    if (state.playbackControlsResizeHandler) {
+      window.removeEventListener("resize", state.playbackControlsResizeHandler);
+      state.playbackControlsResizeHandler = null;
+    }
+
+    if (state.playbackControlsOrientationHandler) {
+      window.removeEventListener(
+        "orientationchange",
+        state.playbackControlsOrientationHandler,
+      );
+      state.playbackControlsOrientationHandler = null;
+    }
+  }
+
+  function startPlaybackControlLayoutObservers() {
+    const schedulePlaybackLayoutRefresh = (
+      reason = "unknown",
+      options = {},
+    ) => {
+      if (!state.panelVisible) return;
+
+      refreshPlaybackControlResizeObserverTargets();
+      scheduleAdjustPlaybackControls(
+        reason,
+        options.retryDelays || [160, 420],
+        {
+          immediate: options.immediate !== false,
+        },
+      );
+
+      if (options.settle !== false) {
+        scheduleControlSettlingBurst(
+          reason,
+          options.settleDelays || [180, 520, 1100],
+        );
+      }
+    };
+
+    if (!state.playbackControlsResizeHandler) {
+      state.playbackControlsResizeHandler = () => {
+        schedulePlaybackLayoutRefresh("window_resize", {
+          retryDelays: [120, 320, 700],
+          settleDelays: [180, 520, 1100, 1800],
+        });
+      };
+      window.addEventListener("resize", state.playbackControlsResizeHandler, {
+        passive: true,
+      });
+    }
+
+    if (!state.playbackControlsOrientationHandler) {
+      state.playbackControlsOrientationHandler = () => {
+        schedulePlaybackLayoutRefresh("orientation_change", {
+          retryDelays: [120, 320, 700],
+          settleDelays: [180, 520, 1100, 1800],
+        });
+      };
+      window.addEventListener(
+        "orientationchange",
+        state.playbackControlsOrientationHandler,
+      );
+    }
+
+    if (
+      typeof ResizeObserver !== "undefined" &&
+      !state.playbackControlsResizeObserver
+    ) {
+      state.playbackControlsResizeObserver = new ResizeObserver(() => {
+        schedulePlaybackLayoutRefresh("playback_resize_observer", {
+          retryDelays: [120, 320],
+          settle: false,
+        });
+      });
+    }
+
+    if (!state.playbackControlsMutationObserver) {
+      const mutationRoot = state.dialogEl || document.body;
+      if (mutationRoot) {
+        state.playbackControlsMutationObserver = new MutationObserver(
+          (mutations) => {
+            if (!state.panelVisible) return;
+
+            const hasRelevantMutation = mutations.some((mutation) => {
+              const target = mutation.target;
+              if (!(target instanceof Element))
+                return mutation.type === "childList";
+
+              return (
+                target.matches?.(
+                  ".video-player__header, .video-player__controls, .video-player__progress, .video-player__footer, .unified-controls, amp-volume-control-unified, .video-player__video-container, #atv-panel-host",
+                ) ||
+                target.closest?.(
+                  ".video-player__header, .video-player__controls, .video-player__progress, .video-player__footer, .unified-controls, amp-volume-control-unified, .video-player__video-container, #atv-panel-host",
+                )
+              );
+            });
+
+            if (!hasRelevantMutation) return;
+
+            schedulePlaybackLayoutRefresh("playback_mutation_observer", {
+              retryDelays: [120, 320, 700],
+              settle: false,
+            });
+          },
+        );
+
+        state.playbackControlsMutationObserver.observe(mutationRoot, {
+          subtree: true,
+          childList: true,
+          attributes: true,
+          attributeFilter: ["class", "hidden", "aria-hidden"],
+        });
+      }
+    }
+
+    refreshPlaybackControlResizeObserverTargets();
+  }
+
+  function applyLayout(show) {
+    const clearLayoutRetryTimers = () => {
+      if (!layoutRetryTimers.length) return;
+      layoutRetryTimers.forEach((timerId) => clearTimeout(timerId));
+      layoutRetryTimers = [];
+    };
+
+    const getLayoutTargets = () => {
+      const opaqueVideoContainer =
+        document.querySelector(".video-container.svelte-1psbnd5.is-opaque") ||
+        document.querySelector(".video-container.is-opaque") ||
+        document.querySelector(".video-container");
+      return {
+        vc: document.querySelector(".video-player__video-container"),
+        content: document.querySelector(".video-player__content"),
+        htmlVideo: document.querySelector("video"),
+        opaqueVideoContainer,
+        backgroundVideo: document.querySelector(".background-video"),
+      };
+    };
+
+    const applyLayoutToTargets = (targets, visible) => {
+      const { vc, content, htmlVideo, opaqueVideoContainer, backgroundVideo } =
+        targets;
+
+      if (visible) {
+        if (vc) {
+          vc.style.width = "70%";
+          vc.style.maxWidth = "70%";
+          vc.style.flexShrink = "0";
+          vc.style.marginRight = "";
+        }
+        if (content) {
+          content.style.width = "";
+          content.style.maxWidth = "";
+          content.style.flexShrink = "";
+          content.style.marginRight = "";
+        }
+        if (htmlVideo) {
+          htmlVideo.style.maxWidth = "100%";
+        }
+        if (opaqueVideoContainer) {
+          opaqueVideoContainer.style.right = "30%";
+        }
+        if (backgroundVideo) {
+          backgroundVideo.style.right = "30%";
+        }
+      } else {
+        if (vc) {
+          vc.style.width = "";
+          vc.style.maxWidth = "";
+          vc.style.flexShrink = "";
+          vc.style.marginRight = "";
+        }
+        if (content) {
+          content.style.width = "";
+          content.style.maxWidth = "";
+          content.style.flexShrink = "";
+          content.style.marginRight = "";
+        }
+        if (htmlVideo) {
+          htmlVideo.style.maxWidth = "";
+        }
+        if (opaqueVideoContainer) {
+          opaqueVideoContainer.style.right = "";
+        }
+        if (backgroundVideo) {
+          backgroundVideo.style.right = "";
+        }
+      }
+    };
+
+    clearLayoutRetryTimers();
+    applyLayoutToTargets(getLayoutTargets(), show);
+
+    const overlayHost = getTarget().querySelector("#atv-overlay-host");
+    if (overlayHost) {
+      // Bottom custom subtitle overlay is unnecessary while panel is visible.
+      overlayHost.style.display = show ? "none" : "";
+      if (!show) {
+        updateOverlayHostPosition();
+        updateOverlayTypography();
+      }
+    }
+
+    scheduleAdjustPlaybackControls("applyLayout", show ? [1200] : [], {
+      immediate: !show,
+    });
+  }
+
+  function showRightPanel() {
+    if (!state.panelVisible) {
+      togglePanel(true);
+      return;
+    }
+    applyLayout(true);
+    const panelHost = getTarget().querySelector("#atv-panel-host");
+    const overlayHost = getTarget().querySelector("#atv-overlay-host");
+    const toggleBtn = getTarget().querySelector("#atv-toggle-btn");
+    if (panelHost) panelHost.style.display = "";
+    if (overlayHost) {
+      overlayHost.style.width = "70%";
+      overlayHost.style.display = "none";
+    }
+    if (toggleBtn) toggleBtn.style.display = "none";
+  }
+
+  function hideRightPanel() {
+    if (state.panelVisible) {
+      togglePanel(false);
+      return;
+    }
+    applyLayout(false);
+    const panelHost = getTarget().querySelector("#atv-panel-host");
+    const overlayHost = getTarget().querySelector("#atv-overlay-host");
+    const toggleBtn = getTarget().querySelector("#atv-toggle-btn");
+    if (panelHost) panelHost.style.display = "none";
+    if (overlayHost) {
+      overlayHost.style.width = "100%";
+      overlayHost.style.display = "";
+    }
+    if (toggleBtn) toggleBtn.style.display = "block";
+  }
+
+  function pinRightPanel() {}
+
+  function unpinRightPanel() {}
 
   function applySettingsToUI(settings, options = {}) {
     const shouldSyncPanelVisibility = options.syncPanelVisibility !== false;
