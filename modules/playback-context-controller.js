@@ -69,16 +69,37 @@
         .toLowerCase();
     }
 
+    // URL として扱えない入力用に、query/hash を除いた比較キーを作る。
+    function normalizeNonUrlMediaSourceKey(src) {
+      return String(src || "")
+        .split("?")[0]
+        .split("#")[0]
+        .trim()
+        .replace(/\s+/g, " ")
+        .toLowerCase();
+    }
+
     // currentSrc / src 由来の URL から、比較用の安定キーを作る。
     function normalizeMediaSourceKey(rawSrc) {
       const src = String(rawSrc || "").trim();
       if (!src) return "";
 
+      const looksAbsoluteUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(src);
+      const looksRelativeUrl =
+        src.startsWith("/") || src.startsWith("./") || src.startsWith("../");
+
+      // 空白を含む文字列は、URL ではなくラベル/壊れた値として扱う。
+      // new URL(value, location.href) に通すと相対 path として解釈されてしまい、
+      // characterization test の期待値とズレるため、先に文字列正規化へ倒す。
+      if (!looksAbsoluteUrl && !looksRelativeUrl && /\s/.test(src)) {
+        return normalizeNonUrlMediaSourceKey(src);
+      }
+
       try {
         const parsed = new URL(src, location.href);
         return `${parsed.origin}${parsed.pathname}`.toLowerCase();
       } catch (_) {
-        return src.split("?")[0].split("#")[0].toLowerCase();
+        return normalizeNonUrlMediaSourceKey(src);
       }
     }
 
@@ -156,31 +177,49 @@
     }
 
     // 再生コンテンツ切り替え時に、history と lastPrimaryText の文脈を切り替える。
-    function switchHistoryContext(nextContentKey, reason = "unknown") {
-      const resolvedContentKey = nextContentKey || "content:unknown";
-      const previousContentKey = state.currentContentKey;
-      if (previousContentKey === resolvedContentKey) return false;
-
-      if (previousContentKey) {
-        saveHistoryForContentKey(previousContentKey);
+    function switchHistoryContext(nextContentKey) {
+      const previousContentKey = state.currentContentKey || "";
+      if (
+        previousContentKey &&
+        previousContentKey !== nextContentKey &&
+        state.subtitleHistory.length
+      ) {
+        saveHistoryForContentKey(previousContentKey, state.subtitleHistory);
       }
 
-      state.currentContentKey = resolvedContentKey;
-      loadHistoryForContentKey(resolvedContentKey);
+      state.currentContentKey = nextContentKey || "";
+      loadHistoryForContentKey(state.currentContentKey);
       state.lastPrimaryText = "";
-
-      logContentSubtitle("history context switched", {
-        reason,
-        previousContentKey,
-        nextContentKey: resolvedContentKey,
-        historySize: state.subtitleHistory.length,
-      });
-
-      return true;
     }
 
-    function syncHistoryContextWithPlayback(reason = "unknown") {
-      return switchHistoryContext(resolvePlaybackContentKey(), reason);
+    // video / title / aria 情報から現在の content key を更新する。
+    function refreshPlaybackContentContext(ctx = getPlaybackContext()) {
+      const nextContentKey = resolvePlaybackContentKey(ctx);
+      if (nextContentKey === state.currentContentKey) return nextContentKey;
+
+      switchHistoryContext(nextContentKey);
+      return nextContentKey;
+    }
+
+    // content 切り替え直後に積み直した字幕を bucket へ保存する。
+    function persistCurrentHistoryContext() {
+      if (!state.currentContentKey) return;
+      saveHistoryForContentKey(state.currentContentKey, state.subtitleHistory);
+    }
+
+    // primary subtitle を現在 content bucket へ追記する。
+    function appendSubtitleHistory(text) {
+      if (!text) return;
+
+      state.subtitleHistory.push(text);
+      if (state.subtitleHistory.length > subtitleHistoryMaxPerContent) {
+        state.subtitleHistory = state.subtitleHistory.slice(
+          -subtitleHistoryMaxPerContent,
+        );
+      }
+
+      persistCurrentHistoryContext();
+      logContentSubtitle(text);
     }
 
     return {
@@ -197,7 +236,9 @@
       loadHistoryForContentKey,
       saveHistoryForContentKey,
       switchHistoryContext,
-      syncHistoryContextWithPlayback,
+      refreshPlaybackContentContext,
+      persistCurrentHistoryContext,
+      appendSubtitleHistory,
     };
   }
 
