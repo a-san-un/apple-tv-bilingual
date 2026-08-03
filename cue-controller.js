@@ -45,6 +45,47 @@
 
     // 現在 bind 済みの secondary track を保持する。
     let secondaryTrackBound = null;
+    function primeSecondarySubtitleTrackActivation(video, requestedLang) {
+      if (!video?.textTracks || !requestedLang) return false;
+
+      const normalizedRequestedLang = String(requestedLang).trim().toLowerCase();
+      const tracks = Array.from(video.textTracks || []);
+      const targets = tracks.filter((track) => {
+        if (!track) return false;
+        const kind = String(track.kind || "").toLowerCase();
+        if (kind !== "subtitles" && kind !== "captions") return false;
+        const language = String(track.language || "").trim().toLowerCase();
+        return language === normalizedRequestedLang;
+      });
+
+      if (targets.length === 0) {
+        return false;
+      }
+
+      let activated = false;
+      for (const track of targets) {
+        try {
+          track.mode = "showing";
+          activated = true;
+        } catch (_) {}
+      }
+
+
+      if (!activated) {
+        return false;
+      }
+
+      queueMicrotask(() => {
+        for (const track of targets) {
+          try {
+            track.mode = "hidden";
+          } catch (_) {}
+        }
+      });
+
+      return true;
+    }
+
 
     // 最新の merged subtitle health を観測・外部参照用に保持する。
     let lastMergedSubtitleHealth = null;
@@ -566,9 +607,36 @@
         unbindSecondarySubtitleTrack();
       }
 
+      primeSecondarySubtitleTrackActivation(video, requestedLang);
+
       const track = resolveSecondarySubtitleTrack(video, requestedLang);
       const sameTrackRef = Boolean(track && previousBoundTrack === track);
       const currentTime = getCurrentTime();
+
+      // selection と bind のズレを診断するための差分観測。
+      // rebind 条件には影響させず、ログのみに使う。
+      const selectedTrackLanguage = track?.language || "";
+      const boundTrackLanguageBeforeSync = previousBoundTrack?.language || "";
+      const selectedTrackId = track?.id || "";
+      const boundTrackIdBeforeSync = previousBoundTrack?.id || "";
+
+      logContent("secondary-sync track-diff", {
+        requestedLang: requestedLang || "",
+        selectedTrackLanguage,
+        boundTrackLanguageBeforeSync,
+        selectedTrackId,
+        boundTrackIdBeforeSync,
+        sameTrackRef,
+        sameLanguageButDifferentTrackRef:
+          Boolean(selectedTrackLanguage) &&
+          Boolean(boundTrackLanguageBeforeSync) &&
+          selectedTrackLanguage === boundTrackLanguageBeforeSync &&
+          !sameTrackRef,
+        differentLanguage:
+          Boolean(selectedTrackLanguage) &&
+          Boolean(boundTrackLanguageBeforeSync) &&
+          selectedTrackLanguage !== boundTrackLanguageBeforeSync,
+      });
       const resolvedTrackActiveCuesLength = (() => {
         try {
           return track?.activeCues?.length ?? 0;
@@ -627,6 +695,17 @@
         return;
       }
 
+      const normalizedRequestedLang = String(requestedLang || "")
+        .trim()
+        .toLowerCase();
+      const previousRequestedSecondaryLang = String(
+        previousBoundTrack?.language || "",
+      )
+        .trim()
+        .toLowerCase();
+      const requestedLanguageChanged =
+        normalizedRequestedLang !== previousRequestedSecondaryLang;
+
       const unreadableSnapshot = {
         cuesLength: resolvedTrackCuesLength,
         activeCuesLength: resolvedTrackActiveCuesLength,
@@ -645,6 +724,9 @@
         logContent("secondary-sync rebind-required", {
           reason: "sameTrackButUnreadableAtCurrentTime",
           requestedLang: requestedLang || "",
+          normalizedRequestedLang,
+          previousRequestedSecondaryLang,
+          requestedLanguageChanged,
           currentTime,
           sameTrackRef,
           forceRebind,
@@ -672,6 +754,9 @@
       if (modeDecision.policy === "readability-promote") {
         logContent("secondary-sync mode-policy readability-promote", {
           requestedLang: requestedLang || "",
+          normalizedRequestedLang,
+          previousRequestedSecondaryLang,
+          requestedLanguageChanged,
           currentTime,
           sameTrackRef,
           forceRebind,
@@ -684,6 +769,37 @@
           decisionReason: modeDecision.reason,
           unreadableSnapshot,
         });
+      }
+
+      const selectedTrackUnreadable =
+        Boolean(track) &&
+        resolvedTrackCuesLength === 0 &&
+        resolvedTrackActiveCuesLength === 0 &&
+        resolvedTrackCurrentCueText.length === 0;
+
+      if (!sameTrackRef && selectedTrackUnreadable && previousBoundTrack) {
+        logContent("secondary-sync keep-previous-track", {
+          requestedLang: requestedLang || "",
+          normalizedRequestedLang,
+          previousRequestedSecondaryLang,
+          requestedLanguageChanged,
+          previousBoundTrackLanguage: previousBoundTrack?.language || "",
+          selectedTrackLanguage: track?.language || "",
+          selectedTrackMode: track?.mode || "",
+          selectedTrackCuesLength: resolvedTrackCuesLength,
+          selectedTrackActiveCuesLength: resolvedTrackActiveCuesLength,
+          selectedTrackCurrentCueTextLength: resolvedTrackCurrentCueText.length,
+        });
+
+        if (!suppressRender) {
+          (renderSecondarySubtitleOverride || renderSecondarySubtitle)(
+            getCurrentCueText(previousBoundTrack),
+            previousBoundTrack,
+          );
+        }
+
+        rebuildCurrentSceneSubtitleBlocks();
+        return;
       }
 
       if (
@@ -857,6 +973,20 @@
         const previousView = state.currentSubtitleView || null;
         const previousBlock = state.currentSubtitleBlock || null;
 
+        // hold で直前 secondaryText を流用してよいのは、
+        // bind 済み secondary track の language が現在の requestedSecondaryLang と
+        // 一致する場合のみ。不一致（= 言語切替直後）なら古い言語のテキストを持ち越さない。
+        const requestedSecondaryLangForHold = getRequestedSecondaryLanguage();
+        const boundSecondaryLangMatchesRequest =
+          Boolean(secondaryTrack?.language) &&
+          Boolean(requestedSecondaryLangForHold) &&
+          secondaryTrack.language === requestedSecondaryLangForHold;
+        const previousSecondaryTextForHold = boundSecondaryLangMatchesRequest
+          ? previousView?.currentBlock?.secondaryText ||
+            previousBlock?.secondaryText ||
+            ""
+          : "";
+
         // hold 用の current block を直前 view / block と現在 cue から補完して作る。
         const holdBlock = {
           startTime:
@@ -874,26 +1004,18 @@
             previousView?.currentBlock?.primaryText ||
             previousBlock?.primaryText ||
             "",
-          secondaryText:
-            sText ||
-            previousView?.currentBlock?.secondaryText ||
-            previousBlock?.secondaryText ||
-            "",
+          secondaryText: sText || previousSecondaryTextForHold,
           hasPrimarySignal: Boolean(
             pText ||
               previousView?.currentBlock?.primaryText ||
               previousBlock?.primaryText,
           ),
-          hasSecondarySignal: Boolean(
-            sText ||
-              previousView?.currentBlock?.secondaryText ||
-              previousBlock?.secondaryText,
-          ),
+          hasSecondarySignal: Boolean(sText || previousSecondaryTextForHold),
           sourceReason: "nearbyRebuildHold",
           updatedAt: Date.now(),
         };
 
-        // overlay / panel が参照する hold view を current block 付きで組み立てる。
+        // hold 用の current block を直前 view / block と現在 cue から補完して作る。
         const holdView = {
           currentBlock: holdBlock,
           sourceReason: "nearbyRebuildHold",
@@ -905,7 +1027,15 @@
         };
 
         state.nearbyRebuildHoldView = holdView;
-        armNearbyRebuildGuard(holdBlock);
+
+        // secondary signal が無い hold block は nearby rebuild guard を立てず、
+        // current UI 保護としては効かないようにする。
+        if (holdBlock?.hasSecondarySignal) {
+          armNearbyRebuildGuard(holdBlock);
+        } else {
+          nearbyRebuildGuard = nearbyRebuildGuard || {};
+          nearbyRebuildGuard.consumeOnNextPrimaryCueChange = false;
+        }
 
         logContent("current subtitle view hold updated", {
           reason: "nearbyRebuildHold",
@@ -985,7 +1115,7 @@
         rebuildReason: "rebuildCurrentScene",
       });
 
-      setSubtitleBlocks(blockResult, "rebuildCurrentScene");
+      setSubtitleBlocks(blockResult?.blocks || []);
 
       const sequenceHealth = blockResult?.meta?.sequenceHealth || null;
 
@@ -1002,20 +1132,24 @@
       lastMergedSubtitleHealth = mergedSubtitleHealth;
 
       // sequence current が取れない場合でも最低限の fallback block を作る。
-      const currentBlock = getCurrentSubtitleBlockFromSequence(blockResult) || {
-        startTime: pCue?.startTime ?? null,
-        endTime: pCue?.endTime ?? null,
-        primaryText: pText || "",
-        secondaryText: sText || "",
-        hasPrimarySignal: Boolean(pText),
-        hasSecondarySignal: Boolean(sText),
-        sourceReason: "nearbyRebuild:fallback",
-        updatedAt: Date.now(),
-      };
+      const currentBlock =
+        (typeof blockResult?.currentIndex === "number" &&
+        blockResult.currentIndex >= 0
+          ? blockResult?.blocks?.[blockResult.currentIndex] || null
+          : null) || {
+          startTime: pCue?.startTime ?? null,
+          endTime: pCue?.endTime ?? null,
+          primaryText: pText || "",
+          secondaryText: sText || "",
+          hasPrimarySignal: Boolean(pText),
+          hasSecondarySignal: Boolean(sText),
+          sourceReason: "nearbyRebuild:fallback",
+          updatedAt: Date.now(),
+        };
 
       currentBlock.sourceReason = "nearbyRebuild";
 
-      setCurrentSubtitleBlock(currentBlock, "nearbyRebuild");
+      setCurrentSubtitleBlock(currentBlock, blockResult?.meta || "nearbyRebuild");
       armNearbyRebuildGuard(currentBlock);
 
       logContent("current subtitle block updated", {
@@ -1046,13 +1180,37 @@
       state.currentSubtitleView = subtitleView;
 
       if (subtitleView) {
+        logContent("overlay view payload", {
+          reason: "nearbyRebuild",
+          mainLines: Array.isArray(subtitleView?.mainLines) ? subtitleView.mainLines : [],
+          subLines: Array.isArray(subtitleView?.subLines) ? subtitleView.subLines : [],
+          isEmpty: Boolean(subtitleView?.isEmpty),
+          shouldKeepVisible: Boolean(subtitleView?.shouldKeepVisible),
+          currentBlock: subtitleView?.currentBlock
+            ? {
+                startTime: subtitleView.currentBlock.startTime ?? null,
+                endTime: subtitleView.currentBlock.endTime ?? null,
+                primaryText: subtitleView.currentBlock.primaryText || "",
+                secondaryText: subtitleView.currentBlock.secondaryText || "",
+                hasPrimarySignal: Boolean(subtitleView.currentBlock.hasPrimarySignal),
+                hasSecondarySignal: Boolean(subtitleView.currentBlock.hasSecondarySignal),
+              }
+            : null,
+        });
         updateOverlayFromView(subtitleView);
       } else {
         updateOverlayFromBlock(currentBlock);
       }
 
       if (secondaryTrack) {
-        renderSecondarySubtitle(sText, secondaryTrack);
+        const directSecondaryCueText = getCurrentCueText(secondaryTrack, currentTime);
+        const resolvedSecondaryText =
+          directSecondaryCueText ||
+          (Array.isArray(subtitleView?.subLines) && subtitleView.subLines.length > 0
+            ? subtitleView.subLines.join("\n")
+            : sText);
+
+        renderSecondarySubtitle(resolvedSecondaryText, secondaryTrack);
       }
 
       renderPanel();
@@ -1107,7 +1265,21 @@
           rebuildReason: "onPrimaryCueChange",
         });
 
-        setSubtitleBlocks(blockResult, "onPrimaryCueChange");
+        setSubtitleBlocks(blockResult?.blocks || []);
+
+        const currentBlock =
+          typeof blockResult?.currentIndex === "number" &&
+          blockResult.currentIndex >= 0
+            ? blockResult?.blocks?.[blockResult.currentIndex] || null
+            : null;
+
+        if (currentBlock) {
+          currentBlock.sourceReason = "onPrimaryCueChange";
+          setCurrentSubtitleBlock(
+            currentBlock,
+            blockResult?.meta || "onPrimaryCueChange",
+          );
+        }
       } else {
         logContent("subtitle blocks api missing", {
           reason: "onPrimaryCueChange",
@@ -1152,13 +1324,26 @@
       }
 
       // current sequence block が取れない場合でも current UI 更新用の fallback block を作る。
+      const requestedSecondaryLangForFallback = getRequestedSecondaryLanguage();
+      const boundSecondaryLangMatchesFallbackRequest =
+        Boolean(secondaryTrack?.language) &&
+        Boolean(requestedSecondaryLangForFallback) &&
+        secondaryTrack.language === requestedSecondaryLangForFallback;
+      const previousSecondaryTextForFallback =
+        boundSecondaryLangMatchesFallbackRequest
+          ? state.currentSubtitleView?.currentBlock?.secondaryText ||
+            state.currentSubtitleBlock?.secondaryText ||
+            ""
+          : "";
+      const fallbackSecondaryText = sText || previousSecondaryTextForFallback;
+
       const currentBlock = getCurrentSubtitleBlockFromSequence(blockResult) || {
         startTime: pCue?.startTime ?? null,
         endTime: pCue?.endTime ?? null,
         primaryText: pText || "",
-        secondaryText: sText || "",
+        secondaryText: fallbackSecondaryText,
         hasPrimarySignal: Boolean(pText),
-        hasSecondarySignal: Boolean(sText),
+        hasSecondarySignal: Boolean(fallbackSecondaryText),
         sourceReason: "onPrimaryCueChange:fallback",
         updatedAt: Date.now(),
       };
@@ -1182,56 +1367,78 @@
             )
           : null;
 
-      // current subtitleView が空に近い場合だけ hold view を優先して UI 空白を避ける。
+      // current subtitleView が signal を持たない間だけ hold view を優先する。
       const shouldUseHoldView =
         preserveNearbyCurrent &&
         holdView &&
-        (!subtitleView ||
-          (!subtitleView.currentBlock?.hasPrimarySignal &&
-            !subtitleView.currentBlock?.hasSecondarySignal));
+        (
+          !subtitleView ||
+          (
+            !subtitleView.currentBlock?.hasPrimarySignal &&
+            !subtitleView.currentBlock?.hasSecondarySignal
+          )
+        );
 
-      if (shouldUseHoldView) {
-        logContent("current subtitle view hold used", {
-          reason: "onPrimaryCueChange:preserveNearbyRebuildHold",
-          source: "nearbyRebuild",
-          sourceReason: holdView.currentBlock?.sourceReason ?? null,
-          guardActive: Boolean(
-            nearbyRebuildGuard?.consumeOnNextPrimaryCueChange,
-          ),
-          withinSeekWindow: isWithinNearbyRebuildSeekWindow(),
-          startTime: holdView.currentBlock?.startTime ?? null,
-          endTime: holdView.currentBlock?.endTime ?? null,
-          hasPrimarySignal: Boolean(holdView.currentBlock?.hasPrimarySignal),
-          hasSecondarySignal: Boolean(
-            holdView.currentBlock?.hasSecondarySignal,
-          ),
-        });
-        consumeNearbyRebuildGuard();
-      } else {
-        clearNearbyRebuildGuard();
-        setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange");
-        logContent("current subtitle block updated", {
-          reason: "onPrimaryCueChange",
-          source: "primaryCueChange",
-          sourceReason: currentBlock?.sourceReason ?? null,
-          guardActive: Boolean(
-            nearbyRebuildGuard?.consumeOnNextPrimaryCueChange,
-          ),
-          withinSeekWindow: isWithinNearbyRebuildSeekWindow(),
-          startTime: currentBlock?.startTime ?? null,
-          endTime: currentBlock?.endTime ?? null,
-          hasPrimarySignal: Boolean(currentBlock?.hasPrimarySignal),
-          hasSecondarySignal: Boolean(currentBlock?.hasSecondarySignal),
-        });
-      }
+      // current subtitleView が空に近い場合だけ通常 view を採用する。
+      const viewHasContent =
+        subtitleView &&
+        !subtitleView.isEmpty &&
+        (
+          (Array.isArray(subtitleView.mainLines) && subtitleView.mainLines.length > 0) ||
+          (Array.isArray(subtitleView.subLines) && subtitleView.subLines.length > 0) ||
+          subtitleView.currentBlock
+        );
 
       if (shouldUseHoldView) {
         state.currentSubtitleView = holdView;
+        logContent("overlay view payload", {
+          reason: "onPrimaryCueChange:holdView",
+          mainLines: Array.isArray(holdView?.mainLines) ? holdView.mainLines : [],
+          subLines: Array.isArray(holdView?.subLines) ? holdView.subLines : [],
+          isEmpty: Boolean(holdView?.isEmpty),
+          shouldKeepVisible: Boolean(holdView?.shouldKeepVisible),
+          currentBlock: holdView?.currentBlock
+            ? {
+                startTime: holdView.currentBlock.startTime ?? null,
+                endTime: holdView.currentBlock.endTime ?? null,
+                primaryText: holdView.currentBlock.primaryText || "",
+                secondaryText: holdView.currentBlock.secondaryText || "",
+                hasPrimarySignal: Boolean(holdView.currentBlock.hasPrimarySignal),
+                hasSecondarySignal: Boolean(holdView.currentBlock.hasSecondarySignal),
+              }
+            : null,
+        });
         updateOverlayFromView(holdView);
-      } else if (subtitleView) {
+      } else if (viewHasContent) {
         state.currentSubtitleView = subtitleView;
+        logContent("overlay view payload", {
+          reason: "onPrimaryCueChange",
+          mainLines: Array.isArray(subtitleView?.mainLines) ? subtitleView.mainLines : [],
+          subLines: Array.isArray(subtitleView?.subLines) ? subtitleView.subLines : [],
+          isEmpty: Boolean(subtitleView?.isEmpty),
+          shouldKeepVisible: Boolean(subtitleView?.shouldKeepVisible),
+          currentBlock: subtitleView?.currentBlock
+            ? {
+                startTime: subtitleView.currentBlock.startTime ?? null,
+                endTime: subtitleView.currentBlock.endTime ?? null,
+                primaryText: subtitleView.currentBlock.primaryText || "",
+                secondaryText: subtitleView.currentBlock.secondaryText || "",
+                hasPrimarySignal: Boolean(subtitleView.currentBlock.hasPrimarySignal),
+                hasSecondarySignal: Boolean(subtitleView.currentBlock.hasSecondarySignal),
+              }
+            : null,
+        });
         updateOverlayFromView(subtitleView);
       } else {
+        logContent("overlay block fallback used", {
+          reason: "onPrimaryCueChange",
+          startTime: currentBlock?.startTime ?? null,
+          endTime: currentBlock?.endTime ?? null,
+          primaryText: currentBlock?.primaryText || "",
+          secondaryText: currentBlock?.secondaryText || "",
+          hasPrimarySignal: Boolean(currentBlock?.hasPrimarySignal),
+          hasSecondarySignal: Boolean(currentBlock?.hasSecondarySignal),
+        });
         updateOverlayFromBlock(currentBlock);
       }
 

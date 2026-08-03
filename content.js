@@ -85,6 +85,9 @@
     lastObservedVideoTime: null,
     lastLargeSeekAt: 0,
     lastPrimaryText: "",
+    lastSecondaryText: "",
+    lastSecondaryTextAt: 0,
+    lastSecondarySignalAt: 0,
     panelVisible: true,
     ejdictMap: null,
     secondaryHideTimer: null,
@@ -106,6 +109,7 @@
   };
 
   let panelUi = null;
+  let secondaryTrackSyncInterval = null;
 // =====================================================================
 // Section 1: Logger & Debug Bridge
 // Role:
@@ -243,87 +247,19 @@ function forwardContentLog(...args) {
     });
   }
 
-  function applySecondaryLangFallback(settings) {
-    const result = { ...settings };
-    if (!result.secondaryLang) {
-      const browserLang = (navigator.language || navigator.userLanguage || "en")
-        .toLowerCase()
-        .split("-")[0];
-      result.secondaryLang = browserLang;
-      logContentSettings(
-        "secondaryLang empty: applying browser language fallback",
-        browserLang,
-      );
-    }
-    return result;
-  }
-
-  function loadSettingsSnapshot(reason = "unknown") {
-    const loadFromStorage = () =>
-      new Promise((resolve, reject) => {
-        chrome.storage.sync.get(null, (storedSettings = {}) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-
-          const requestedSettings = { ...DEFAULT_SETTINGS, ...storedSettings };
-          const effectiveSettings =
-            applySecondaryLangFallback(requestedSettings);
-          resolve({
-            storedSettings: { ...storedSettings },
-            requestedSettings,
-            effectiveSettings,
-            requestedSecondaryLang: storedSettings.secondaryLang || "",
-          });
-        });
-      });
-
-    const settingsBridge = window.ATVB?.settingsBridge;
-    if (!settingsBridge?.loadSettings) {
-      return loadFromStorage();
-    }
-
-    return settingsBridge
-      .loadSettings({
-        defaults: DEFAULT_SETTINGS,
-        applyFallback: applySecondaryLangFallback,
-      })
-      .then(() => {
-        const snapshot = settingsBridge.getCurrentSettings?.() || {};
-        const storedSettings = { ...(snapshot.storedSettings || {}) };
-        const requestedSettings = {
-          ...DEFAULT_SETTINGS,
-          ...(snapshot.requestedSettings || storedSettings),
-        };
-        const effectiveSettings =
-          snapshot.effectiveSettings || snapshot.settings || requestedSettings;
-        return {
-          storedSettings,
-          requestedSettings,
-          effectiveSettings: { ...effectiveSettings },
-          requestedSecondaryLang:
-            snapshot.requestedSecondaryLang ??
-            storedSettings.secondaryLang ??
-            "",
-        };
-      })
-      .catch((error) => {
-        logContentError("settings bridge load failed", {
-          reason,
-          error: String(error),
-        });
-        return loadFromStorage();
-      });
-  }
-
   (async function loadEJDict() {
     try {
       const url = chrome.runtime.getURL("dict/ejdict.json");
       const res = await fetch(url);
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} ${res.statusText} @ ${url}`);
+      }
+
       state.ejdictMap = await res.json();
       logContentApi("EJDict loaded", {
         entries: Object.keys(state.ejdictMap).length,
+        url,
       });
     } catch (e) {
       logContentError("EJDict load failed", { error: e.message });
@@ -535,6 +471,14 @@ function forwardContentLog(...args) {
 
     if (previousContentKey === resolvedContentKey) return false;
 
+    if (
+      previousContentKey &&
+      resolvedContentKey &&
+      previousContentKey !== resolvedContentKey
+    ) {
+      overlayController.clearOverlayState?.();
+    }
+
     if (previousContentKey) {
       saveHistoryForContentKey(previousContentKey);
     }
@@ -549,6 +493,7 @@ function forwardContentLog(...args) {
       nextContentKey: resolvedContentKey,
       historySize: state.subtitleHistory.length,
     });
+
     return true;
   }
 
@@ -564,25 +509,6 @@ function forwardContentLog(...args) {
       .slice(-SUBTITLE_HISTORY_MAX_PER_CONTENT);
     state.subtitleHistory = nextHistory;
     saveHistoryForContentKey(state.currentContentKey, nextHistory);
-  }
-
-  function waitForVideo(cb) {
-    const check = () => {
-      const found = getVideoAndDialog();
-      if (found) {
-        state.dialogEl = found.dialog;
-        logContent("waitForVideo resolved", {
-          hasVideo: true,
-          trackCount: found.video.textTracks.length,
-          injectedIntoDialog: Boolean(found.dialog),
-        });
-        cb(found.video);
-        return;
-      }
-      state.waitTimer = window.setTimeout(check, 500);
-    };
-    if (state.waitTimer) clearTimeout(state.waitTimer);
-    check();
   }
 
   function getSecondaryTrackDebugPayload(effectiveSecondaryLanguage, track) {
@@ -611,7 +537,7 @@ function forwardContentLog(...args) {
   }
 
   function getCurrentCueText(track, time = state.video?.currentTime ?? 0) {
-    return cleanCueText(getCurrentCue(track, time));
+    return vttDeps.cleanCueText(getCurrentCue(track, time));
   }
 
   function getSecondaryRenderLogPayload(text, track, elementCount) {
@@ -624,103 +550,66 @@ function forwardContentLog(...args) {
   }
 
   function ensureSecondarySubtitleElement() {
-    const requestedSettings = state.requestedContentSettings || {};
-    const effectiveSettings = {
-      primaryLang:
-        requestedSettings.primaryLang ||
-        state.contentSettings.primaryLang ||
-        "",
-      secondaryLang:
-        requestedSettings.secondaryLang ||
-        state.requestedSecondaryLang ||
-        state.contentSettings.secondaryLang ||
-        "",
-    };
+  const requestedSettings = state.requestedContentSettings || {};
+  const effectiveSettings = {
+    primaryLang:
+      requestedSettings.primaryLang ||
+      state.contentSettings.primaryLang ||
+      "",
+    secondaryLang:
+      requestedSettings.secondaryLang ||
+      state.requestedSecondaryLang ||
+      state.contentSettings.secondaryLang ||
+      "",
+  };
 
-    if (!isLanguageSelectionReady(effectiveSettings)) {
-      return null;
-    }
-
-    ensurePanelSlotLayerStyle();
-
-    const allExisting = document.querySelectorAll(
-      "[data-secondary-subtitle], .dual-subtitles-secondary",
-    );
-    if (allExisting.length > 1) {
-      const keep = allExisting[0];
-      for (let i = 1; i < allExisting.length; i++) {
-        allExisting[i].remove();
-      }
-      if (DEBUG_SECONDARY_SUBS) {
-        logContent(
-          "secondary duplicate elements cleaned",
-          getSecondaryRenderLogPayload(
-            keep.textContent || "",
-            secondaryTrackBound,
-            allExisting.length,
-          ),
-        );
-      }
-      if (!keep.hasAttribute("data-secondary-subtitle")) {
-        keep.setAttribute("data-secondary-subtitle", "");
-      }
-      if (!keep.classList.contains("dual-subtitles-secondary")) {
-        keep.classList.add("dual-subtitles-secondary");
-      }
-      return keep;
-    }
-
-    if (allExisting.length === 1) {
-      const only = allExisting[0];
-      if (!only.hasAttribute("data-secondary-subtitle")) {
-        only.setAttribute("data-secondary-subtitle", "");
-      }
-      if (!only.classList.contains("dual-subtitles-secondary")) {
-        only.classList.add("dual-subtitles-secondary");
-      }
-      return only;
-    }
-
-    let panelHost = getTarget().querySelector("#atv-panel-host");
-    if (!panelHost) {
-      createRightPanel();
-      panelHost = getTarget().querySelector("#atv-panel-host");
-    }
-    if (!panelHost) return null;
-
-    // createRightPanel may have already ensured it during setup.
-    const ensuredAfterPanel = document.querySelector(
-      "[data-secondary-subtitle]",
-    );
-    if (ensuredAfterPanel) return ensuredAfterPanel;
-
-    let panel = document.querySelector("[data-dual-subtitles-panel]");
-    if (!panel) {
-      panel = document.querySelector(".dual-subtitles-panel");
-    }
-    if (!panel && panelHost.shadowRoot) {
-      panel = panelHost.shadowRoot.querySelector(
-        "[data-dual-subtitles-panel], .dual-subtitles-panel",
-      );
-    }
-
-    if (panel && panelHost.shadowRoot?.contains(panel)) {
-      panel.setAttribute("data-dual-subtitles-panel", "");
-      panel.classList.add("dual-subtitles-panel");
-    }
-
-    const el = document.createElement("div");
-    el.setAttribute("data-secondary-subtitle", "");
-    el.className = "dual-subtitles-secondary";
-    el.slot = "secondary-subtitle-slot";
-    panelHost.appendChild(el);
-
-    if (DEBUG_SECONDARY_SUBS) {
-      logContent("secondary element ensured");
-    }
-    return el;
+  if (!isLanguageSelectionReady(effectiveSettings)) {
+    return null;
   }
 
+  let panelHost = getTarget().querySelector("#atv-panel-host");
+  if (!panelHost) {
+    panelUi?.createRightPanel?.();
+    panelHost = getTarget().querySelector("#atv-panel-host");
+  }
+  if (!panelHost) return null;
+
+  const shadowRoot = panelHost.shadowRoot || null;
+  if (!shadowRoot) return null;
+
+  let secondaryEl = shadowRoot.querySelector(
+    "[data-secondary-subtitle], .dual-subtitles-secondary",
+  );
+  if (secondaryEl) {
+    if (!secondaryEl.hasAttribute("data-secondary-subtitle")) {
+      secondaryEl.setAttribute("data-secondary-subtitle", "");
+    }
+    if (!secondaryEl.classList.contains("dual-subtitles-secondary")) {
+      secondaryEl.classList.add("dual-subtitles-secondary");
+    }
+    return secondaryEl;
+  }
+
+  let panelScroll = shadowRoot.getElementById("panel-scroll");
+  if (!panelScroll) {
+    const panel = shadowRoot.querySelector(
+      "[data-dual-subtitles-panel], .dual-subtitles-panel",
+    );
+    panelScroll = panel || null;
+  }
+  if (!panelScroll) return null;
+
+  secondaryEl = document.createElement("div");
+  secondaryEl.setAttribute("data-secondary-subtitle", "");
+  secondaryEl.className = "dual-subtitles-secondary";
+  secondaryEl.dataset.language = "";
+  panelScroll.insertBefore(secondaryEl, panelScroll.firstChild || null);
+
+  if (DEBUG_SECONDARY_SUBS) {
+    logContent("secondary element ensured");
+  }
+  return secondaryEl;
+}
   function ensurePanelSlotLayerStyle() {
     if (document.getElementById(PANEL_SLOT_LAYER_STYLE_ID)) return;
 
@@ -786,15 +675,15 @@ function forwardContentLog(...args) {
     const now = Date.now();
 
     if (finalText) {
-      lastSecondaryText = finalText;
-      lastSecondaryTextAt = now;
+      state.lastSecondaryText = finalText;
+      state.lastSecondaryTextAt = now;
     } else if (
       !finalText &&
       activeCuesLength === 0 &&
-      lastSecondaryText &&
-      now - lastSecondaryTextAt <= SECONDARY_SUBTITLE_GRACE_MS
+      state.lastSecondaryText &&
+      now - state.lastSecondaryTextAt <= SECONDARY_SUBTITLE_GRACE_MS
     ) {
-      finalText = lastSecondaryText;
+      finalText = state.lastSecondaryText;
       if (DEBUG_SECONDARY_SUBS) {
         logContent(
           "secondary subtitle retained during grace period",
@@ -803,7 +692,7 @@ function forwardContentLog(...args) {
       }
     } else if (
       !finalText &&
-      now - lastSecondaryTextAt > SECONDARY_SUBTITLE_GRACE_MS
+      now - state.lastSecondaryTextAt > SECONDARY_SUBTITLE_GRACE_MS
     ) {
       if (el.textContent) {
         if (DEBUG_SECONDARY_SUBS) {
@@ -813,8 +702,8 @@ function forwardContentLog(...args) {
           );
         }
       }
-      lastSecondaryText = "";
-      lastSecondaryTextAt = 0;
+      state.lastSecondaryText = "";
+      state.lastSecondaryTextAt = 0;
     }
 
     if (DEBUG_SECONDARY_SUBS) {
@@ -832,7 +721,8 @@ function forwardContentLog(...args) {
   function logSubtitlePanelState(tag) {
     try {
       const panelHost = getTarget().querySelector("#atv-panel-host");
-      const secondaryEl = panelHost?.querySelector("[data-secondary-subtitle]");
+      const secondaryEl =
+        panelHost?.shadowRoot?.querySelector("[data-secondary-subtitle]") || null;
       const snapshot = state.lastPanelRenderSnapshot || {};
       const currentSubtitleBlock = snapshot.currentSubtitleBlock || null;
       const payload = {
@@ -877,25 +767,19 @@ function forwardContentLog(...args) {
     if (DEBUG_SECONDARY_SUBS) {
       logContent(
         "secondary sync",
-        getSecondaryTrackDebugPayload(requestedLang, secondaryTrackBound),
+        getSecondaryTrackDebugPayload(
+          requestedLang,
+          cueController.getBoundSecondaryTrack(),
+        ),
       );
     }
 
-    const track = resolveSecondarySubtitleTrack(video, requestedLang);
-
-    if (!track) {
-      unbindSecondarySubtitleTrack();
-      renderSecondarySubtitle("", null);
-      return;
-    }
-
-    if (secondaryTrackBound !== track) {
-      bindSecondarySubtitleTrack(track, renderSecondarySubtitle);
-      return;
-    }
-
-    // Same track, just refresh.
-    renderSecondarySubtitle(getCurrentCueText(track), track);
+    cueController.syncSecondarySubtitleTrack(
+      video,
+      requestedLang,
+      renderSecondarySubtitle,
+    );
+    state.secondaryTrack = cueController.getBoundSecondaryTrack();
   }
 
   function ensureSecondaryTrackSyncInterval() {
@@ -957,7 +841,7 @@ function forwardContentLog(...args) {
         effectiveSecondaryLanguage,
         renderSecondarySubtitle,
       );
-      state.secondaryTrack = secondaryTrackBound;
+      state.secondaryTrack = cueController.getBoundSecondaryTrack();
 
       const secondaryActiveCues = getTrackActiveCuesLength(
         state.secondaryTrack,
@@ -1531,505 +1415,71 @@ function forwardContentLog(...args) {
     };
   }
 
-  function clearPlaybackControlRetryTimers() {
-    if (!state.playbackControlsRetryTimers.length) return;
-    state.playbackControlsRetryTimers.forEach((timerId) =>
-      clearTimeout(timerId),
-    );
-    state.playbackControlsRetryTimers = [];
-  }
-
   function scheduleAdjustPlaybackControls(
     reason = "unknown",
     retryDelays = [],
     options = {},
   ) {
-    const immediate = options.immediate !== false;
-
-    const runOnce = (runReason) => {
-      if (state.playbackControlsRafId) return;
-      state.playbackControlsRafId = window.requestAnimationFrame(() => {
-        state.playbackControlsRafId = 0;
-        adjustPlaybackControlsForPanel(runReason);
-      });
-    };
-
-    clearPlaybackControlRetryTimers();
-    if (immediate) runOnce(reason);
-
-    retryDelays.forEach((delayMs) => {
-      const timerId = window.setTimeout(() => {
-        runOnce(`${reason}-retry-${delayMs}`);
-      }, delayMs);
-      state.playbackControlsRetryTimers.push(timerId);
+    layoutController.requestPlaybackControlsAdjustment(reason, {
+      delays: retryDelays,
+      immediate: options.immediate !== false,
     });
   }
 
-  function clearControlSettlingTimers() {
-    if (!state.controlSettlingTimers.length) return;
-    state.controlSettlingTimers.forEach((timerId) => clearTimeout(timerId));
-    state.controlSettlingTimers = [];
-  }
+  // ============================================================
+  // 再生 UI レイアウト調整: window resize トリガー
+  // パネル開閉だけでなく、ブラウザサイズ変更時にも
+  // playback controls の位置・サイズを再調整する。
+  // ============================================================
+  (function setupPlaybackControlsResizeTracking() {
+    if (typeof scheduleAdjustPlaybackControls !== "function") {
+      return;
+    }
+
+    let resizeAdjustTimer = null;
+
+    function scheduleOnResize() {
+      if (resizeAdjustTimer) {
+        clearTimeout(resizeAdjustTimer);
+      }
+
+      resizeAdjustTimer = setTimeout(() => {
+        try {
+          scheduleAdjustPlaybackControls("windowResize", [0, 300], {
+            immediate: true,
+          });
+        } catch (error) {
+          console.error(
+            "[ATVB] scheduleAdjustPlaybackControls(windowResize) failed",
+            error,
+          );
+        }
+      }, 150);
+    }
+
+    window.addEventListener("resize", scheduleOnResize, { passive: true });
+  })();
 
   function scheduleControlSettlingBurst(
     reason = "unknown",
     delays = [180, 420, 800, 1300, 1900, 2700, 3800],
   ) {
-    clearControlSettlingTimers();
-
-    delays.forEach((delayMs) => {
-      const timerId = window.setTimeout(() => {
-        if (!state.panelVisible) return;
-        scheduleAdjustPlaybackControls(`${reason}-settle-${delayMs}`, [], {
-          immediate: true,
-        });
-      }, delayMs);
-      state.controlSettlingTimers.push(timerId);
+    layoutController.requestPlaybackControlsAdjustment(reason, {
+      delays: [],
+      immediate: false,
+      settle: true,
+      settleDelays: delays,
     });
   }
 
-  function getPlaybackControlsLayoutTargets() {
-    return {
-      panel: getPlaybackPanelLayoutAnchor(),
-      header: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.headerSelector),
-      controls: document.querySelector(
-        PLAYBACK_CONTROLS_LAYOUT.controlsSelector,
-      ),
-      progress: document.querySelector(
-        PLAYBACK_CONTROLS_LAYOUT.progressSelector,
-      ),
-      skipOverlay: document.querySelector(
-        PLAYBACK_CONTROLS_LAYOUT.skipOverlaySelector,
-      ),
-      footer:
-        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerSelector) ||
-        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerFallbackSelector),
-      unified: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.unifiedSelector),
-      volume:
-        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.volumeSelector) ||
-        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.volumeFallbackSelector),
-      video: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.videoSelector),
-    };
-  }
-
-  function refreshPlaybackControlResizeObserverTargets() {
-    const ro = state.playbackControlsResizeObserver;
-    if (!ro) return;
-
-    const { panel, footer, unified, volume, video } =
-      getPlaybackControlsLayoutTargets();
-    const targets = [panel, footer, unified, volume, video].filter(Boolean);
-
-    for (const target of targets) {
-      if (state.playbackControlsResizeTargets.has(target)) continue;
-      ro.observe(target);
-      state.playbackControlsResizeTargets.add(target);
-    }
-
-    for (const prev of [...state.playbackControlsResizeTargets]) {
-      if (targets.includes(prev) && prev.isConnected) continue;
-      ro.unobserve(prev);
-      state.playbackControlsResizeTargets.delete(prev);
-    }
-  }
-
-  function clearPlaybackControlsTransforms() {
-    const { header, controls, progress, skipOverlay, footer, unified, volume } =
-      getPlaybackControlsLayoutTargets();
-    const { bar, remaining } = getShadowProgressTargets();
-    clearManagedHeaderSizing(header);
-    clearManagedTranslateX(controls);
-    clearManagedProgressInset(progress);
-    clearManagedTranslateX(bar);
-    clearManagedTranslateX(remaining);
-    clearManagedSkipPosition(skipOverlay);
-    clearManagedTranslateX(skipOverlay);
-    clearManagedTranslateX(footer);
-    clearManagedFooterSizing(footer);
-    clearManagedFooterChildSizing(footer);
-    clearManagedTranslateX(unified);
-    clearManagedTranslateX(volume);
-  }
-
-  function clearPlaybackControlsLayoutState({
-    header,
-    controls,
-    progress,
-    skipOverlay,
-    footer,
-    unified,
-    volume,
-    shadowProgressBar,
-    shadowRemainingTime,
-  }) {
-    clearManagedHeaderSizing(header);
-    clearManagedTranslateX(controls);
-    clearManagedProgressInset(progress);
-    clearManagedTranslateX(shadowProgressBar);
-    clearManagedTranslateX(shadowRemainingTime);
-    clearManagedSkipPosition(skipOverlay);
-    clearManagedTranslateX(skipOverlay);
-    clearManagedFooterSizing(footer);
-    clearManagedFooterChildSizing(footer);
-    clearManagedTranslateX(unified);
-    clearManagedTranslateX(volume);
-  }
-
-  function adjustPlaybackControlsForPanel(reason = "unknown") {
-    if (state.playbackControlsApplying) return;
-
-    state.playbackControlsApplying = true;
-    try {
-      const {
-        panel,
-        header,
-        controls,
-        progress,
-        skipOverlay,
-        footer,
-        unified,
-        volume,
-        video,
-      } = getPlaybackControlsLayoutTargets();
-      const { bar: shadowProgressBar, remaining: shadowRemainingTime } =
-        getShadowProgressTargets();
-      if (
-        !header &&
-        !controls &&
-        !progress &&
-        !skipOverlay &&
-        !footer &&
-        !unified &&
-        !volume &&
-        !shadowProgressBar &&
-        !shadowRemainingTime
-      ) {
-        return;
-      }
-
-      const visibleArea = computePlaybackVisibleArea(panel, video);
-      if (!visibleArea) {
-        clearManagedTranslateX(footer);
-        clearPlaybackControlsLayoutState({
-          header,
-          controls,
-          progress,
-          skipOverlay,
-          footer,
-          unified,
-          volume,
-          shadowProgressBar,
-          shadowRemainingTime,
-        });
-        return;
-      }
-
-      const { panelRect, safeAreaLeft, safeAreaRight, safeAreaWidth } =
-        visibleArea;
-      const visibleRight = safeAreaRight;
-      const visibleWidth = safeAreaWidth;
-
-      if (header) {
-        if (visibleWidth > 0) {
-          applyManagedHeaderSizing(header, visibleWidth, safeAreaLeft);
-        } else {
-          clearManagedHeaderSizing(header);
-        }
-      }
-
-      clearManagedTranslateX(footer);
-      if (footer) {
-        if (visibleWidth > 0) {
-          applyManagedFooterSizing(footer, visibleWidth, safeAreaLeft);
-          applyManagedFooterChildSizing(footer, visibleWidth);
-        } else {
-          clearManagedFooterSizing(footer);
-          clearManagedFooterChildSizing(footer);
-        }
-      }
-
-      clearManagedProgressInset(progress);
-
-      if (visibleWidth <= 0) {
-        clearPlaybackControlsLayoutState({
-          header,
-          controls,
-          progress,
-          skipOverlay,
-          footer,
-          unified,
-          volume,
-          shadowProgressBar,
-          shadowRemainingTime,
-        });
-        return;
-      }
-
-      const targetCenterX = safeAreaLeft + visibleWidth / 2;
-      const unifiedMaxRight = panelRect.left - 16;
-      const unifiedMinLeft = safeAreaLeft + 16;
-      const controlsTargetRight = panelRect.left - 40;
-      const controlsMinLeft = safeAreaLeft + 16;
-      const volumeTargetRight = panelRect.left - 60;
-      const volumeMinLeft = safeAreaLeft + 16;
-      const progressTargetRight = panelRect.left - 40;
-      const progressMinLeft = safeAreaLeft + 24;
-      const remainingTargetRight = panelRect.left - 60;
-      const remainingMinLeft = safeAreaLeft + 24;
-
-      if (unified) {
-        const unifiedRect = unified.getBoundingClientRect();
-        const unifiedExistingShiftX = getManagedShiftX(unified);
-        const unifiedCenterX = unifiedRect.left + unifiedRect.width / 2;
-        let unifiedShiftX =
-          unifiedExistingShiftX + (targetCenterX - unifiedCenterX);
-
-        unifiedShiftX = clampManagedShiftX(
-          unifiedRect,
-          unifiedExistingShiftX,
-          unifiedShiftX,
-          unifiedMinLeft,
-          unifiedMaxRight,
-        );
-
-        applyManagedTranslateX(unified, unifiedShiftX);
-
-        if (DEBUG_SECONDARY_SUBS) {
-          logContent("unified controls recentered", {
-            reason,
-            unifiedShiftX: Number(unifiedShiftX.toFixed(2)),
-            visibleRight: Number(visibleRight.toFixed(2)),
-            targetCenterX: Number(targetCenterX.toFixed(2)),
-          });
-        }
-      }
-
-      if (
-        volume &&
-        !(unified && (volume === unified || unified.contains(volume)))
-      ) {
-        const volumeRect = volume.getBoundingClientRect();
-        const volumeExistingShiftX = getManagedShiftX(volume);
-        let volumeShiftX = volumeExistingShiftX;
-        if (volumeRect.right > volumeTargetRight) {
-          volumeShiftX += volumeTargetRight - volumeRect.right;
-        }
-        volumeShiftX = clampManagedShiftX(
-          volumeRect,
-          volumeExistingShiftX,
-          volumeShiftX,
-          volumeMinLeft,
-          volumeTargetRight,
-        );
-        applyManagedTranslateX(volume, volumeShiftX);
-      }
-
-      if (controls) {
-        const controlsRect = controls.getBoundingClientRect();
-        const controlsExistingShiftX = getManagedShiftX(controls);
-        let controlsShiftX = controlsExistingShiftX;
-        if (controlsRect.right > controlsTargetRight) {
-          controlsShiftX += controlsTargetRight - controlsRect.right;
-        }
-        controlsShiftX = clampManagedShiftX(
-          controlsRect,
-          controlsExistingShiftX,
-          controlsShiftX,
-          controlsMinLeft,
-          controlsTargetRight,
-        );
-        applyManagedTranslateX(controls, controlsShiftX);
-      }
-
-      if (shadowProgressBar) {
-        const progressRect = shadowProgressBar.getBoundingClientRect();
-        const progressExistingShiftX = getManagedShiftX(shadowProgressBar);
-        let progressShiftX = progressExistingShiftX;
-        if (progressRect.right > progressTargetRight) {
-          progressShiftX += progressTargetRight - progressRect.right;
-        }
-
-        progressShiftX = clampManagedShiftX(
-          progressRect,
-          progressExistingShiftX,
-          progressShiftX,
-          progressMinLeft,
-          progressTargetRight,
-        );
-
-        applyManagedTranslateX(shadowProgressBar, progressShiftX);
-      }
-
-      if (shadowRemainingTime) {
-        const remainingRect = shadowRemainingTime.getBoundingClientRect();
-        const remainingExistingShiftX = getManagedShiftX(shadowRemainingTime);
-        let remainingShiftX = remainingExistingShiftX;
-        if (remainingRect.right > remainingTargetRight) {
-          remainingShiftX += remainingTargetRight - remainingRect.right;
-        }
-        remainingShiftX = clampManagedShiftX(
-          remainingRect,
-          remainingExistingShiftX,
-          remainingShiftX,
-          remainingMinLeft,
-          remainingTargetRight,
-        );
-        applyManagedTranslateX(shadowRemainingTime, remainingShiftX);
-      }
-
-      if (skipOverlay) {
-        clearManagedTranslateX(skipOverlay);
-        applyManagedSkipPosition(skipOverlay, safeAreaRight);
-      }
-    } finally {
-      state.playbackControlsApplying = false;
-    }
-  }
-
   // [observer/layout]
-  function stopPlaybackControlLayoutObservers() {
-    if (state.playbackControlsMutationObserver) {
-      state.playbackControlsMutationObserver.disconnect();
-      state.playbackControlsMutationObserver = null;
-    }
-
-    if (state.playbackControlsResizeObserver) {
-      state.playbackControlsResizeObserver.disconnect();
-      state.playbackControlsResizeObserver = null;
-    }
-
-    state.playbackControlsResizeTargets.clear();
-
-    if (state.playbackControlsResizeHandler) {
-      window.removeEventListener("resize", state.playbackControlsResizeHandler);
-      state.playbackControlsResizeHandler = null;
-    }
-
-    if (state.playbackControlsOrientationHandler) {
-      window.removeEventListener(
-        "orientationchange",
-        state.playbackControlsOrientationHandler,
-      );
-      state.playbackControlsOrientationHandler = null;
-    }
-  }
-
-  function startPlaybackControlLayoutObservers() {
-    const schedulePlaybackLayoutRefresh = (
-      reason = "unknown",
-      options = {},
-    ) => {
-      if (!state.panelVisible) return;
-
-      refreshPlaybackControlResizeObserverTargets();
-      scheduleAdjustPlaybackControls(
-        reason,
-        options.retryDelays || [160, 420],
-        {
-          immediate: options.immediate !== false,
-        },
-      );
-
-      if (options.settle !== false) {
-        scheduleControlSettlingBurst(
-          reason,
-          options.settleDelays || [180, 520, 1100],
-        );
-      }
-    };
-
-    if (!state.playbackControlsResizeHandler) {
-      state.playbackControlsResizeHandler = () => {
-        schedulePlaybackLayoutRefresh("window_resize", {
-          retryDelays: [120, 320, 700],
-          settleDelays: [180, 520, 1100, 1800],
-        });
-      };
-      window.addEventListener("resize", state.playbackControlsResizeHandler, {
-        passive: true,
-      });
-    }
-
-    if (!state.playbackControlsOrientationHandler) {
-      state.playbackControlsOrientationHandler = () => {
-        schedulePlaybackLayoutRefresh("orientation_change", {
-          retryDelays: [120, 320, 700],
-          settleDelays: [180, 520, 1100, 1800],
-        });
-      };
-      window.addEventListener(
-        "orientationchange",
-        state.playbackControlsOrientationHandler,
-      );
-    }
-
-    if (
-      typeof ResizeObserver !== "undefined" &&
-      !state.playbackControlsResizeObserver
-    ) {
-      state.playbackControlsResizeObserver = new ResizeObserver(() => {
-        schedulePlaybackLayoutRefresh("playback_resize_observer", {
-          retryDelays: [120, 320],
-          settle: false,
-        });
-      });
-    }
-
-    if (!state.playbackControlsMutationObserver) {
-      const mutationRoot = state.dialogEl || document.body;
-      if (mutationRoot) {
-        state.playbackControlsMutationObserver = new MutationObserver(
-          (mutations) => {
-            if (!state.panelVisible) return;
-
-            const hasRelevantMutation = mutations.some((mutation) => {
-              const target = mutation.target;
-              if (!(target instanceof Element))
-                return mutation.type === "childList";
-
-              return (
-                target.matches?.(
-                  ".video-player__header, .video-player__controls, .video-player__progress, .video-player__footer, .unified-controls, amp-volume-control-unified, .video-player__video-container, #atv-panel-host",
-                ) ||
-                target.closest?.(
-                  ".video-player__header, .video-player__controls, .video-player__progress, .video-player__footer, .unified-controls, amp-volume-control-unified, .video-player__video-container, #atv-panel-host",
-                )
-              );
-            });
-
-            if (!hasRelevantMutation) return;
-
-            schedulePlaybackLayoutRefresh("playback_mutation_observer", {
-              retryDelays: [120, 320, 700],
-              settle: false,
-            });
-          },
-        );
-
-        state.playbackControlsMutationObserver.observe(mutationRoot, {
-          subtree: true,
-          childList: true,
-          attributes: true,
-          attributeFilter: ["class", "hidden", "aria-hidden"],
-        });
-      }
-    }
-
-    refreshPlaybackControlResizeObserverTargets();
-  }
-
   function applyLayout(show) {
-    const clearLayoutRetryTimers = () => {
-      if (!layoutRetryTimers.length) return;
-      layoutRetryTimers.forEach((timerId) => clearTimeout(timerId));
-      layoutRetryTimers = [];
-    };
-
     const getLayoutTargets = () => {
       const opaqueVideoContainer =
         document.querySelector(".video-container.svelte-1psbnd5.is-opaque") ||
         document.querySelector(".video-container.is-opaque") ||
         document.querySelector(".video-container");
+
       return {
         vc: document.querySelector(".video-player__video-container"),
         content: document.querySelector(".video-player__content"),
@@ -2090,23 +1540,18 @@ function forwardContentLog(...args) {
       }
     };
 
-    clearLayoutRetryTimers();
     applyLayoutToTargets(getLayoutTargets(), show);
 
-    const overlayHost = getTarget().querySelector("#atv-overlay-host");
-    if (overlayHost) {
-      // Bottom custom subtitle overlay is unnecessary while panel is visible.
-      overlayHost.style.display = show ? "none" : "";
-      if (!show) {
-        updateOverlayHostPosition();
-        updateOverlayTypography();
-      }
-    }
+    overlayController.setOverlayVisible(!show);
 
-    scheduleAdjustPlaybackControls("applyLayout", show ? [1200] : [], {
+    layoutController.onPanelVisibilityChanged(show, {
+      reason: "applyLayout",
+      retryDelays: show ? [1200] : [],
       immediate: !show,
+      settlingDelays: [180, 420, 900, 1500],
     });
   }
+
 
   function showRightPanel() {
     if (!state.panelVisible) {
@@ -2319,7 +1764,6 @@ function forwardContentLog(...args) {
   }
 
   // [UI shell: subtitle popup]
-
   // [UI shell: subtitle popup style]
   function buildPopupShellStyleText() {
     return `
@@ -2431,7 +1875,7 @@ function forwardContentLog(...args) {
       <style>
         ${buildPopupShellStyleText()}
       </style>
-      <div id="popup">
+      <div id="popup" aria-hidden="true">
         <div id="popup-header">
           <div id="popup-header-left">
             <div id="popup-word-row">
@@ -2440,11 +1884,11 @@ function forwardContentLog(...args) {
             </div>
             <div id="popup-reading"></div>
           </div>
-          <button id="popup-close">✕</button>
+          <button id="popup-close" type="button" aria-label="Close popup">✕</button>
         </div>
         <div id="popup-tabs">
-          <button class="popup-tab active" data-tab="dict">📖 辞書</button>
-          <button class="popup-tab" data-tab="ai">🤖 AI翻訳</button>
+          <button class="popup-tab active" data-tab="dict" type="button">📖 辞書</button>
+          <button class="popup-tab" data-tab="ai" type="button">🤖 AI翻訳</button>
         </div>
         <div id="popup-body">
           <div class="popup-pane active" id="pane-dict"><span class="loading">検索中...</span></div>
@@ -2454,11 +1898,30 @@ function forwardContentLog(...args) {
     `;
   }
 
+  // popup を閉じる共通処理。
+  // close button / outside click のどちらからでも同じ状態へ戻す。
+  function hidePopupDisplay() {
+    const popup = state.popupShadowRoot?.getElementById("popup");
+    if (!popup) return;
+
+    popup.hidden = true;
+    popup.setAttribute("aria-hidden", "true");
+    popup.style.display = "none";
+  }
+
   function registerPopupOutsideClickHandler(popup) {
-    // subtitle popup 外クリックで閉じるための document listener 登録
-    state.popupDocClickHandler = () => {
-      popup.style.display = "none";
+    // 既存 handler があれば先に外し、二重登録を避ける。
+    if (state.popupDocClickHandler) {
+      document.removeEventListener("click", state.popupDocClickHandler);
+    }
+
+    // popup 外クリックだけで閉じる。
+    state.popupDocClickHandler = (e) => {
+      const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+      if (path.includes(popup)) return;
+      hidePopupDisplay();
     };
+
     document.addEventListener("click", state.popupDocClickHandler);
   }
 
@@ -2498,17 +1961,22 @@ function forwardContentLog(...args) {
   function wireSubtitlePopupUiEvents() {
     const root = state.popupShadowRoot;
     if (!root) return;
+    if (root.__atvbPopupUiWired === true) return;
 
     const popup = root.getElementById("popup");
     if (!popup) return;
 
-    root.getElementById("popup-close")?.addEventListener("click", () => {
-      popup.style.display = "none";
+    root.getElementById("popup-close")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hidePopupDisplay();
     });
 
     wirePopupTabEvents(root);
     registerPopupOutsideClickHandler(popup);
     registerPopupWordLinkHandler(root);
+
+    // 同じ shadow root へ重ねて bind しないためのフラグ。
+    root.__atvbPopupUiWired = true;
   }
 
   function mountPopupHost(target) {
@@ -2516,7 +1984,7 @@ function forwardContentLog(...args) {
     const host = document.createElement("div");
     host.id = "atv-popup-host";
     host.style.cssText =
-      "position:fixed;top:0;left:0;width:0;height:0;z-index:999999;pointer-events:none;";
+      "position:fixed;top:0;left:0;width:0;height:0;z-index:2147483647;pointer-events:auto;";
     target.appendChild(host);
 
     // [shell: subtitle popup shadow mount] shadow root を attach し、subtitle popup shell HTML を注入する。
@@ -2530,6 +1998,7 @@ function forwardContentLog(...args) {
     const existingHost = target.querySelector("#atv-popup-host");
     if (existingHost) {
       state.popupShadowRoot = existingHost.shadowRoot || state.popupShadowRoot;
+      wireSubtitlePopupUiEvents();
       return;
     }
 
@@ -2567,7 +2036,7 @@ function forwardContentLog(...args) {
       logError: logContentError,
     });
   }
-
+  
   async function updateLiveDebugPanel() {
     try {
       await window.ATVB?.debugPanel?.update?.();
@@ -2578,6 +2047,7 @@ function forwardContentLog(...args) {
 
   function repositionPopup(reason = "manual") {
     if (!state.popupShadowRoot || !state.popupLastContext) return;
+
     const popup = state.popupShadowRoot.getElementById("popup");
     if (!popup || popup.style.display === "none") return;
 
@@ -2673,12 +2143,15 @@ function forwardContentLog(...args) {
   function ensurePopupResizeObserver() {
     if (state.popupResizeObserver || typeof ResizeObserver === "undefined")
       return;
+
     const popup = state.popupShadowRoot?.getElementById("popup");
     if (!popup) return;
+
     state.popupResizeObserver = new ResizeObserver(() => {
       if (!state.popupLastContext) return;
       repositionPopup("resize_observer");
     });
+
     state.popupResizeObserver.observe(popup);
   }
 
@@ -2726,19 +2199,69 @@ function forwardContentLog(...args) {
   }
 
   function openPopupDisplay(popup) {
+    popup.hidden = false;
+    popup.setAttribute("aria-hidden", "false");
     popup.style.display = "block";
     ensurePopupResizeObserver();
     repositionPopup("initial");
+  }
+
+  function positionPopup(anchorRect, word = "") {
+    if (!state.popupShadowRoot) return;
+
+    const popup = state.popupShadowRoot.getElementById("popup");
+    const host = document.getElementById("atv-popup-host");
+    if (!popup || !host || !anchorRect) return;
+
+    const popupRect = popup.getBoundingClientRect();
+    const margin = 12;
+
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+    const viewportHeight =
+      window.innerHeight || document.documentElement.clientHeight || 0;
+
+    let left = anchorRect.left + anchorRect.width / 2 - popupRect.width / 2;
+    let top = anchorRect.bottom + 10;
+
+    if (left < margin) left = margin;
+    if (left + popupRect.width > viewportWidth - margin) {
+      left = viewportWidth - popupRect.width - margin;
+    }
+
+    if (top + popupRect.height > viewportHeight - margin) {
+      top = anchorRect.top - popupRect.height - 10;
+    }
+
+    if (top < margin) top = margin;
+
+    host.style.left = `${Math.round(left)}px`;
+    host.style.top = `${Math.round(top)}px`;
+
+    logContent("showPopup position", {
+      word,
+      anchorLeft: Math.round(anchorRect.left),
+      anchorTop: Math.round(anchorRect.top),
+      anchorWidth: Math.round(anchorRect.width),
+      anchorHeight: Math.round(anchorRect.height),
+      popupWidth: Math.round(popupRect.width),
+      popupHeight: Math.round(popupRect.height),
+      left: Math.round(left),
+      top: Math.round(top),
+    });
   }
 
   // [render: subtitle popup display] subtitle popup の表示内容を初期化し、位置を決めて辞書/翻訳取得を開始する。
   function showPopup(word, sentence, anchorRect, options = {}) {
     if (!state.popupShadowRoot) return;
 
-    const clean = word.replace(
-      /[^a-zA-Z\u3040-\u9FFF\uFF00-\uFFEF\u4E00-\u9FFF]/g,
-      "",
-    );
+    const clean = String(word || "")
+      .trim()
+      .replace(/[’]/g, "'")
+      .replace(
+        /^[^a-zA-Z\u3040-\u9FFF\uFF00-\uFFEF\u4E00-\u9FFF']+|[^a-zA-Z\u3040-\u9FFF\uFF00-\uFFEF\u4E00-\u9FFF']+$/g,
+        "",
+      )
+      .replace(/^'+|'+$/g, "");
     if (!clean) return;
 
     const popupSource = options.source || "unknown";
@@ -2749,16 +2272,29 @@ function forwardContentLog(...args) {
       popupSource,
     );
 
-    logContent("showPopup", popupContext);
     state.popupLastContext = popupContext;
 
-    const popup = resetPopupDisplayState(clean);
+    const popup = state.popupShadowRoot.getElementById("popup");
     if (!popup) return;
 
-    openPopupDisplay(popup);
+    popup.style.display = "block";
+    popup.setAttribute("aria-hidden", "false");
 
-    fetchDictionary(clean);
-    fetchTranslation(sentence || clean);
+    const root = state.popupShadowRoot;
+    root.getElementById("popup-word").textContent = clean;
+    root.getElementById("popup-reading").textContent = "";
+
+    const paneDict = root.getElementById("pane-dict");
+    const badgesEl = root.getElementById("popup-badges");
+    const readingEl = root.getElementById("popup-reading");
+
+    if (badgesEl) badgesEl.innerHTML = "";
+    if (paneDict) paneDict.innerHTML = buildDictionaryLoadingHtml(clean);
+
+    positionPopup(anchorRect, clean);
+    requestPopupDictionaryData(clean, badgesEl, readingEl);
+
+    logContent("showPopup", popupContext);
   }
 
   function applyJishoDictionaryResult(word, res, badgesEl, readingEl) {
@@ -2976,6 +2512,7 @@ function forwardContentLog(...args) {
   }
 
   const createPanelRenderer = window.ATVB?.panelRenderer?.createPanelRenderer;
+  const subtitleBlockResolverApi = window.ATVB?.subtitleBlockResolver || {};
   const {
     resolvePanelBlocksForRender = () => ({
       blocks: [],
@@ -2986,6 +2523,7 @@ function forwardContentLog(...args) {
   } = subtitleBlockResolverApi;
   const createCueController = window.ATVB?.cueController?.createCueController;
 
+
   if (typeof createPanelRenderer !== "function") {
     throw new Error("ATVB panelRenderer.createPanelRenderer is not available");
   }
@@ -2995,6 +2533,77 @@ function forwardContentLog(...args) {
   }
 
   const root = (window.ATVB = window.ATVB || {});
+  const vttDeps = window.ATVB?.vtt || {};
+  const resolverDeps = window.ATVB?.resolver || {};
+  const subtitleBlocksDeps = window.ATVB?.subtitleBlocks || {};
+  const { buildSubtitleBlockSequence } = subtitleBlocksDeps;
+
+  function getTrackCuesLength(track) {
+    return resolverDeps.getTrackCuesLength?.(track) ?? 0;
+  }
+
+  function getTrackActiveCuesLength(track) {
+    return resolverDeps.getTrackActiveCuesLength?.(track) ?? 0;
+  }
+
+  function normalizeSubtitleText(text) {
+    return vttDeps.normalizeSubtitleText?.(text) ?? "";
+  }
+
+  function setSubtitleBlocks(blocks) {
+    state.subtitleBlocks = Array.isArray(blocks) ? blocks : [];
+  }
+
+  function getSubtitleBlockSequence() {
+    return Array.isArray(state.subtitleBlocks) ? state.subtitleBlocks : [];
+  }
+
+  function getCurrentSubtitleBlockFromSequence() {
+    return state.currentSubtitleBlock || null;
+  }
+
+  function setCurrentSubtitleBlock(block, meta = null) {
+    state.currentSubtitleBlock = block || null;
+    state.subtitleBlockMeta = meta || null;
+  }
+
+  function clearSecondaryTrackState() {
+    state.secondaryTrack = null;
+    state.lastSecondarySyncContext = null;
+
+    if (state.secondaryHideTimer) {
+      clearTimeout(state.secondaryHideTimer);
+      state.secondaryHideTimer = null;
+    }
+
+    renderSecondarySubtitle("", null);
+  }
+
+  function teardownForRestart() {
+    stopPlaybackControlLayoutObservers();
+    layoutController?.teardownPlaybackControlsUi?.();
+
+    clearInitialCueRecovery();
+    clearSecondaryTrackState();
+    overlayController.clearOverlayState?.();
+    destroyOverlay();
+    destroyUiHosts();
+  }
+
+  function prepareForRestart() {
+    clearInternalSubtitleState("prepareForRestart");
+
+    state.primaryTrack = null;
+    state.secondaryTrack = null;
+    state.currentSubtitleBlock = null;
+    state.subtitleBlockMeta = null;
+    state.lastPanelRenderSnapshot = null;
+
+    state.subtitleHistory = [];
+    state.panelPastBlocks = [];
+    state.subtitleBlocks = [];
+    state.subtitleCurrentIndex = -1;
+  }
 
   const { renderPanel } = createPanelRenderer({
     resolvePanelBlocksForRender,
@@ -3030,9 +2639,24 @@ function forwardContentLog(...args) {
     PLAYBACK_CONTROLS_LAYOUT,
     getPlaybackControlsLayoutTargets:
       getPlaybackControlsLayoutTargetsFromModule,
-    clearPlaybackControlsTransforms: clearPlaybackControlsTransformsFromModule,
-    adjustPlaybackControlsForPanel: adjustPlaybackControlsForPanelFromModule,
   } = playbackControlsLayout;
+
+  const { createLayoutController } = root;
+
+  if (typeof createLayoutController !== "function") {
+    throw new Error("ATVB createLayoutController is not available");
+  }
+
+  const layoutController = createLayoutController({
+    playbackControlsLayoutApi: playbackControlsLayout,
+    logContent,
+    requestAnimationFrame: window.requestAnimationFrame.bind(window),
+    cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
+    setTimeout: window.setTimeout.bind(window),
+    clearTimeout: window.clearTimeout.bind(window),
+  });
+
+  layoutController.initForPanelVisible(state.panelVisible);
 
   const { createOverlayController } = root.overlayController;
   const overlayController = createOverlayController({
@@ -3041,6 +2665,7 @@ function forwardContentLog(...args) {
       state.overlayRoot = rootNode;
     },
     getTarget,
+    makeClickableSpans,
     showPopup,
     getPlaybackControlsLayoutTargets:
       getPlaybackControlsLayoutTargetsFromModule,
@@ -3066,7 +2691,7 @@ function forwardContentLog(...args) {
     getCurrentTime: () => state.video?.currentTime ?? 0,
     getPrimaryTrackCues: () => state.primaryTrack?.cues || [],
     getSecondaryTrackCues: () => state.secondaryTrack?.cues || [],
-    getPreviousSubtitleBlocks: () => getSubtitleBlocks() || [],
+    getPreviousSubtitleBlocks: () => getSubtitleBlockSequence() || [],
     buildSubtitleBlockSequence,
     setSubtitleBlocks,
     getSubtitleBlockSequence,
@@ -3076,9 +2701,13 @@ function forwardContentLog(...args) {
     renderSecondarySubtitle,
     updateOverlay: (...args) => overlayController.updateOverlay(...args),
     updateOverlayFromView: (view) =>
-      overlayController.updateOverlayFromView(view),
+      overlayController.updateOverlayFromView(view, {
+        contentKey: state.currentContentKey || "",
+      }),
     updateOverlayFromBlock: (block) =>
-      overlayController.updateOverlayFromBlock(block),
+      overlayController.updateOverlayFromBlock(block, {
+        contentKey: state.currentContentKey || "",
+      }),
     renderPanel,
   });
 
@@ -3093,12 +2722,12 @@ function forwardContentLog(...args) {
     onClosePanel: () => panelUi.togglePanel(false),
     applyLayout,
     persistPanelVisibility,
-    scheduleAdjustPlaybackControls,
-    scheduleControlSettlingBurst,
     logContent,
     renderCurrentSnapshot,
     renderPanel,
   });
+
+
 
   const { createRuntimeObservers } = root.runtimeObservers;
   const runtimeObservers = createRuntimeObservers({
@@ -3138,6 +2767,8 @@ function forwardContentLog(...args) {
     ensureMessageListener,
   } = settingsRuntime;
 
+  ensureMessageListener();
+
   const createReinitializeCoordinator =
     root.createReinitializeCoordinator || null;
   const reinitializeCoordinator = createReinitializeCoordinator
@@ -3163,7 +2794,7 @@ function forwardContentLog(...args) {
     services: {
       logContent,
       panelUi,
-      getTrackActiveCuesLength,
+      getTrackActiveCuesLength: resolverDeps.getTrackActiveCuesLength,
       getCurrentCueText,
       renderSecondarySubtitle,
       clearInitialCueRecovery,
@@ -3231,7 +2862,6 @@ function ensureSyncIntervalOrchestrator() {
 
   function persistPanelVisibility() {
     const nextSettings = {
-      ...state.contentSettings,
       showSidebar: state.panelVisible,
     };
 
@@ -3321,8 +2951,17 @@ function ensureSyncIntervalOrchestrator() {
       };
     }
 
-    state.video = video;
-    clearTrackBindings();
+  state.video = video;
+
+  if (state.primaryTrack) {
+    try {
+      state.primaryTrack.removeEventListener("cuechange", onCueChange);
+    } catch (_) {}
+    state.primaryTrack = null;
+  }
+
+  cueController.unbindSecondarySubtitleTrack();
+  state.secondaryTrack = null;
 
     // [attach: primary/secondary reset] 既存 bind を一度解除してから今回の track 選択に入る。
 
@@ -3348,11 +2987,11 @@ function ensureSyncIntervalOrchestrator() {
 
     // [attach: secondary] secondary resolver / binder は sync helper 側へ委譲する。
     if (secondaryLang) {
-      syncSecondarySubtitleTrackBinding(
-        video,
-        secondaryLang,
-        renderSecondarySubtitle,
-      );
+        cueController.syncSecondarySubtitleTrack(
+          video,
+          secondaryLang,
+          renderSecondarySubtitle,
+        );
     } else {
       cueController.unbindSecondarySubtitleTrack();
       renderSecondarySubtitle("", null);
@@ -3360,13 +2999,46 @@ function ensureSyncIntervalOrchestrator() {
 
     state.secondaryTrack = cueController.getBoundSecondaryTrack();
 
+    // [debug: secondary sync failure] secondaryLang を指定したにもかかわらず
+    // track が bind できなかった場合、textTracks の全量を出して原因を切り分ける。
+    // resolver 側（言語一致条件）か、Apple TV+ 側の trackList 提供タイミングかを判別する材料にする。
+    if (secondaryLang && !state.secondaryTrack) {
+      try {
+        const rawTracks = Array.from(video?.textTracks || []);
+        logContentError("secondary track sync failed: no track bound", {
+          reason,
+          requestedSecondaryLang: secondaryLang,
+          trackCount: rawTracks.length,
+          tracks: rawTracks.map((t, i) => ({
+            index: i,
+            language: t?.language || "",
+            label: t?.label || "",
+            kind: t?.kind || "",
+            mode: t?.mode || "",
+            cuesLength: (() => {
+              try {
+                return t?.cues ? t.cues.length : 0;
+              } catch (_) {
+                return 0;
+              }
+            })(),
+          })),
+        });
+      } catch (error) {
+        logContentError("secondary track sync failure logging failed", {
+          reason,
+          error: String(error),
+        });
+      }
+    }
+
     return {
       reason,
       trackCount: tracks.length,
       primaryTrackFound: Boolean(state.primaryTrack),
       secondaryTrackFound: Boolean(state.secondaryTrack),
       primaryListenerBound,
-      secondaryListenerBound: Boolean(secondaryTrackBound),
+      secondaryListenerBound: Boolean(state.secondaryTrack),
       primaryTrack: state.primaryTrack
         ? {
             language: state.primaryTrack.language || "",
@@ -3391,10 +3063,11 @@ function ensureSyncIntervalOrchestrator() {
   // [binder/cue: recovery] 現在の primary / secondary track から初回 cue を回収できるか判定する。
   function hasRecoverableInitialCue() {
     const currentTime = state.video?.currentTime ?? 0;
+    const boundSecondaryTrack = cueController.getBoundSecondaryTrack();
     const tracks = [
       state.primaryTrack,
       state.secondaryTrack,
-      secondaryTrackBound,
+      boundSecondaryTrack,
     ];
 
     for (let i = 0; i < tracks.length; i++) {
@@ -3408,15 +3081,16 @@ function ensureSyncIntervalOrchestrator() {
   }
 
   function clearInternalSubtitleState(reason = "unknown") {
-    lastSecondaryText = "";
-    lastSecondaryTextAt = 0;
-    lastSecondarySignalAt = 0;
+    state.lastSecondaryText = "";
+    state.lastSecondaryTextAt = 0;
+    state.lastSecondarySignalAt = 0;
     state.lastPrimaryText = "";
     state.lastPrimarySnapshotAt = 0;
 
+    const shouldPreserveSecondaryDom = reason === "prepareForRestart";
     const panelHost = getTarget().querySelector("#atv-panel-host");
     const secondaryEl = panelHost?.querySelector("[data-secondary-subtitle]");
-    if (secondaryEl) {
+    if (secondaryEl && !shouldPreserveSecondaryDom) {
       secondaryEl.textContent = "";
       secondaryEl.innerHTML = "";
     }
@@ -3426,6 +3100,7 @@ function ensureSyncIntervalOrchestrator() {
       contentKey: state.currentContentKey,
       hasPanelHost: Boolean(panelHost),
       hasSecondaryElement: Boolean(secondaryEl),
+      preservedSecondaryDom: shouldPreserveSecondaryDom && Boolean(secondaryEl),
     });
   }
 
@@ -3554,6 +3229,53 @@ function ensureSyncIntervalOrchestrator() {
   // track(primary/secondary) → binder → overlay/history/panel render
   function onCueChange() {
     cueController.onPrimaryCueChange();
+    logContentSubtitle(
+      "secondary resolver snapshot",
+      buildSecondaryResolverSnapshot("onCueChange"),
+    );
+  }
+
+  function buildSecondaryResolverSnapshot(reason = "") {
+    const requestedLang =
+      state.contentSettings?.secondaryLang ||
+      state.requestedSecondaryLang ||
+      "";
+
+    const video = state.video;
+    const resolver = window.ATVB?.resolver;
+    const candidatesFn = resolver?.getSecondarySubtitleTrackCandidates;
+    const resolveFn = resolver?.resolveSecondarySubtitleTrack;
+
+    const candidates =
+      video && typeof candidatesFn === "function"
+        ? candidatesFn(video, requestedLang)
+        : [];
+
+    const resolvedTrack =
+      video && typeof resolveFn === "function"
+        ? resolveFn(video, requestedLang)
+        : null;
+
+    return {
+      reason,
+      requestedSecondaryLang: requestedLang,
+      requestedSecondaryLangState: state.requestedSecondaryLang || "",
+      currentTime: Number(video?.currentTime ?? NaN),
+      trackCount: video?.textTracks?.length ?? 0,
+      candidates,
+      resolvedTrack: resolvedTrack
+        ? {
+            language: resolvedTrack.language || "",
+            label: resolvedTrack.label || "",
+            kind: resolvedTrack.kind || "",
+            mode: resolvedTrack.mode || "",
+            cues: resolvedTrack.cues ? resolvedTrack.cues.length : 0,
+            activeCues: resolvedTrack.activeCues
+              ? resolvedTrack.activeCues.length
+              : 0,
+          }
+        : null,
+    };
   }
 
 
@@ -3561,35 +3283,48 @@ function ensureSyncIntervalOrchestrator() {
   // [binder/cue: recovery] initial snapshot apply
   // [binder/cue: recovery] 起動時に取得済み cue を即時適用し、未取得なら recovery 経路へ委譲する。
   function renderCurrentSnapshot() {
-    ensureSecondarySubtitleElement();
-    applyInitialCueSnapshotOrWait();
+    const sequence = getSubtitleBlockSequence();
+    const blocks = Array.isArray(sequence?.blocks) ? sequence.blocks : [];
+    const currentIndex = Number.isInteger(sequence?.currentIndex)
+      ? sequence.currentIndex
+      : -1;
+    const meta = sequence?.meta || null;
 
-    applySettingsToUI(state.contentSettings, { syncPanelVisibility: false });
-
-    const secondaryBoundTrack = cueController.getBoundSecondaryTrack();
     const subtitleViewResolver = window.ATVB?.subtitleViewResolver || null;
-    const overlaySequence =
-      typeof getSubtitleBlockSequence === "function"
-        ? getSubtitleBlockSequence()
-        : null;
-    const uiView =
+
+    const view =
       subtitleViewResolver &&
       typeof subtitleViewResolver.resolveUiSubtitleView === "function"
-        ? subtitleViewResolver.resolveUiSubtitleView(
-            overlaySequence?.blocks,
-            overlaySequence?.currentIndex,
-            overlaySequence?.meta,
-          )
-        : null;
+        ? subtitleViewResolver.resolveUiSubtitleView(blocks, currentIndex, {
+            ...(meta || {}),
+            contentKey: state.currentContentKey || "",
+          })
+        : {
+            primary: "",
+            secondary: "",
+            isVisible: false,
+            currentBlock: null,
+            meta: meta || null,
+          };
 
-    const resolvedSecondaryText =
-      Array.isArray(uiView?.subLines) && uiView.subLines.length > 0
-        ? uiView.subLines.join("\n")
-        : getCurrentCueText(secondaryBoundTrack);
+    const primaryText = String(view?.primary || "");
+    const secondaryText = String(view?.secondary || "");
 
-    if (secondaryBoundTrack) {
-      renderSecondarySubtitle(resolvedSecondaryText, secondaryBoundTrack);
-    }
+    state.subtitleViewPrimary = primaryText;
+    state.subtitleViewSecondary = secondaryText;
+    state.currentSubtitleView = view || null;
+
+    // panel 側が別名 state を見ていても値が渡るように同期しておく
+    state.currentPrimaryText = primaryText;
+    state.currentSecondaryText = secondaryText;
+    state.lastPrimaryText = primaryText;
+    state.lastSecondaryText = secondaryText;
+
+    overlayController.updateOverlayFromView?.(view, {
+      contentKey: state.currentContentKey || "",
+    });
+
+    renderPanel();
   }
 
   // [startup path: initial bilingual start]
@@ -3603,6 +3338,18 @@ function ensureSyncIntervalOrchestrator() {
         typeof options.keepPanelVisible === "boolean"
           ? options.keepPanelVisible
           : null,
+      requestedContentSettings: {
+        primaryLang: state.requestedContentSettings?.primaryLang || "",
+        secondaryLang: state.requestedContentSettings?.secondaryLang || "",
+        showSidebar:
+          state.requestedContentSettings?.showSidebar ?? null,
+      },
+      contentSettings: {
+        primaryLang: state.contentSettings?.primaryLang || "",
+        secondaryLang: state.contentSettings?.secondaryLang || "",
+        showSidebar: state.contentSettings?.showSidebar ?? null,
+      },
+      requestedSecondaryLang: state.requestedSecondaryLang || "",
     });
     console.trace("startBilingual trace");
     if (!state.video) return;
@@ -3632,13 +3379,68 @@ function ensureSyncIntervalOrchestrator() {
       return;
     }
 
+    logContentSubtitle("startBilingual language inputs", {
+      requestedContentSettings: {
+        primaryLang: requestedSettings.primaryLang || "",
+        secondaryLang: requestedSettings.secondaryLang || "",
+        showSidebar: requestedSettings.showSidebar ?? null,
+      },
+      contentSettings: {
+        primaryLang: state.contentSettings.primaryLang || "",
+        secondaryLang: state.contentSettings.secondaryLang || "",
+        showSidebar: state.contentSettings.showSidebar ?? null,
+      },
+      requestedSecondaryLang: state.requestedSecondaryLang || "",
+    });
+
     syncHistoryContextWithPlayback("startBilingual");
 
-    bindTracks();
+    // [debug: textTracks snapshot] track 選定直前の video.textTracks 一覧をまとめてログする。
+    // ko / ko-KR / kor / Korean などの表記ゆれ切り分け用に、
+    // language/label/kind/mode/cues を resolver 呼び出し前の「生の状態」として残す。
+    try {
+      const rawTracks = Array.from(state.video?.textTracks || []);
+      logContentSubtitle("textTracks snapshot before track selection", {
+        reason: "startBilingual",
+        requestedPrimaryLang: state.contentSettings.primaryLang || "",
+        requestedSecondaryLang: state.contentSettings.secondaryLang || "",
+        trackCount: rawTracks.length,
+        tracks: rawTracks.map((t, i) => ({
+          index: i,
+          language: t?.language || "",
+          label: t?.label || "",
+          kind: t?.kind || "",
+          mode: t?.mode || "",
+          cuesLength: (() => {
+            try {
+              return t?.cues ? t.cues.length : 0;
+            } catch (_) {
+              return 0;
+            }
+          })(),
+        })),
+      });
+    } catch (error) {
+      logContentError("textTracks snapshot logging failed", {
+        reason: "startBilingual",
+        error: String(error),
+      });
+    }
+
+    selectPrimaryAndSecondaryTracks(
+      state.video,
+      state.contentSettings.primaryLang,
+      state.contentSettings.secondaryLang,
+      "startBilingual",
+    );
+
+
+    logContentSubtitle("secondary resolver snapshot", buildSecondaryResolverSnapshot("startBilingual"));
 
     logContentSubtitle("Selected tracks detail", {
       requestedPrimaryLang: state.contentSettings.primaryLang,
       requestedSecondaryLang: state.contentSettings.secondaryLang,
+      requestedSecondaryLangState: state.requestedSecondaryLang || "",
       primaryTrack: state.primaryTrack
         ? {
             language: state.primaryTrack.language,
@@ -3682,10 +3484,24 @@ function ensureSyncIntervalOrchestrator() {
           ? options.keepPanelVisible
           : null,
       showSidebarSetting: state.contentSettings.showSidebar,
+      secondaryLang: state.contentSettings.secondaryLang || "",
+      requestedSecondaryLang: state.requestedSecondaryLang || "",
     });
     console.trace("startBilingual panelVisible applied");
 
-    buildUi();
+    layoutController.initForPanelVisible(state.panelVisible);
+
+    createOverlay();
+    createToggleButton();
+    panelUi.createRightPanel();
+    createPopupHost();
+    createDebugPanel();
+
+    applyLayout(state.panelVisible);
+
+    renderCurrentSnapshot();
+    renderPanel();
+
     if (state.panelVisible) panelUi.showRightPanel();
     else panelUi.hideRightPanel();
 
@@ -3697,6 +3513,7 @@ function ensureSyncIntervalOrchestrator() {
     }
 
     panelUi.applyPanelState("startBilingual_ready");
+
     scheduleInitialCueRecovery();
     scheduleControlSettlingBurst("startBilingual");
 
@@ -3705,8 +3522,11 @@ function ensureSyncIntervalOrchestrator() {
       contentKey: state.currentContentKey,
       primaryLang: state.contentSettings.primaryLang,
       secondaryLang: state.contentSettings.secondaryLang,
+      requestedSecondaryLang: state.requestedSecondaryLang || "",
       primaryTrackFound: !!state.primaryTrack,
       secondaryTrackFound: !!state.secondaryTrack,
+      secondaryTrackLanguage: state.secondaryTrack?.language || "",
+      secondaryTrackLabel: state.secondaryTrack?.label || "",
       ejdictLoaded: !!state.ejdictMap,
     });
   }
@@ -3755,6 +3575,25 @@ function ensureSyncIntervalOrchestrator() {
     childList: true,
     subtree: true,
   });
+
+  function boot() {
+    const found = getVideoAndDialog();
+    if (found?.video) {
+      state.video = found.video;
+      state.dialogEl = found.dialog;
+      attachTracks(found.video);
+      return;
+    }
+
+    waitForVideo((video) => {
+      const current = getVideoAndDialog();
+      state.video = video;
+      state.dialogEl = current?.dialog || null;
+      attachTracks(video);
+    });
+  }
+  
+  let startupCompletedLogged = false;
 
   function attachTracks(v) {
     state.video = v;

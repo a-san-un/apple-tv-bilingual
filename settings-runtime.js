@@ -1,3 +1,20 @@
+// =============================================================
+// Apple TV+ Bilingual Subtitles - settings-runtime.js
+//
+// 役割:
+// - content 側の settings load / merge / restart orchestration を担当する。
+// - requested settings と effective settings を分けて保持し、
+//   未設定状態と言語選択完了後の通常起動を切り替える。
+// - runtime message 経由の SETTINGS_CHANGED / GET_LANGUAGES を処理する。
+//
+// このファイルのメンテナンス方針:
+// - storage / settingsBridge から読んだ「requested」と、
+//   fallback 適用後の「effective」を明確に分けて扱う。
+// - secondaryLang の補完は applySecondaryLangFallback() に集約し、
+//   空値補完の条件を他関数へ分散させない。
+// - 問題切り分け時は requestedSecondaryLang と contentSettings.secondaryLang を
+//   同時にログへ出し、設定起因か resolver 起因かを見分けやすくする。
+// =============================================================
 (function (root) {
   function createSettingsRuntime(deps) {
     const {
@@ -19,6 +36,8 @@
       renderSecondarySubtitle,
     } = deps;
 
+    // secondaryLang が未設定のときだけ browser language を補う。
+    // 既に指定済みの secondaryLang はここで上書きしない。
     function applySecondaryLangFallback(settings) {
       const result = { ...settings };
       if (!result.secondaryLang) {
@@ -34,6 +53,8 @@
       return result;
     }
 
+    // SETTINGS_CHANGED を requested/effective の二段階で解釈する。
+    // bridge が処理済みなら bridge 結果を優先し、そうでなければ content 側で merge する。
     function resolveSettingsChangeNextSettings(updated, bridgeResult) {
       if (bridgeResult?.handled) {
         state.requestedContentSettings = {
@@ -68,6 +89,8 @@
       return { ...DEFAULT_SETTINGS };
     }
 
+    // requested / stored / effective の3層をスナップショットとして取得する。
+    // ここではまだ state へ反映せず、呼び出し側で適用する。
     function loadSettingsSnapshot(reason = "unknown") {
       const loadFromStorage = () =>
         new Promise((resolve, reject) => {
@@ -80,6 +103,7 @@
             const requestedSettings = { ...DEFAULT_SETTINGS, ...storedSettings };
             const effectiveSettings =
               applySecondaryLangFallback(requestedSettings);
+
             resolve({
               storedSettings: { ...storedSettings },
               requestedSettings,
@@ -108,6 +132,7 @@
           };
           const effectiveSettings =
             snapshot.effectiveSettings || snapshot.settings || requestedSettings;
+
           return {
             storedSettings,
             requestedSettings,
@@ -146,6 +171,7 @@
           if (hasCompleteRequestedSettings) {
             const effectiveSecondaryLanguage =
               state.requestedSecondaryLang || state.contentSettings.secondaryLang;
+
             if (state.video && effectiveSecondaryLanguage) {
               cueController.syncSecondarySubtitleTrack(
                 state.video,
@@ -161,6 +187,16 @@
           logContentSettings("Loaded settings from sync", {
             ...state.contentSettings,
             requestedSecondaryLang: state.requestedSecondaryLang,
+            hasCompleteRequestedSettings,
+          });
+
+          // requested と effective のズレ確認用ログ。
+          // secondaryLang の不具合切り分けで最初に見る観測点。
+          logContentSettings("settings snapshot applied", {
+            requestedSettings: { ...state.requestedContentSettings },
+            effectiveSettings: { ...state.contentSettings },
+            requestedSecondaryLang: state.requestedSecondaryLang,
+            effectiveSecondaryLang: state.contentSettings.secondaryLang || "",
             hasCompleteRequestedSettings,
           });
 
@@ -211,6 +247,7 @@
         panelVisible: state.panelVisible,
       });
       console.trace("restartBilingual trace");
+
       if (state.restarting) {
         logContent("restartBilingual skipped: already restarting", { reason });
         return;
@@ -241,6 +278,7 @@
           typeof options.keepPanelVisible === "boolean"
             ? options.keepPanelVisible
             : state.panelVisible;
+
         prepareForRestart();
         startBilingual({ keepPanelVisible: wasPanelVisible });
 
@@ -251,7 +289,10 @@
     }
 
     const onRuntimeMessage = (message, sender, sendResponse) => {
-      if (message.type === "SETTINGS_CHANGED") {
+      if (
+        message.type === "SETTINGS_CHANGED" ||
+        message.type === "APPLY_SETTINGS_TO_APPLE_TV"
+      ) {
         if (!isPlaybackPageReady()) {
           logContent("SETTINGS_CHANGED skipped: playback not ready", {
             ...getPlaybackContextLogPayload(),
@@ -261,56 +302,68 @@
           return true;
         }
 
-        const updated = { ...message.settings };
-        const bridgeResult = window.ATVB?.settingsBridge?.handleRuntimeMessage?.(
-          message,
-          { applyFallback: applySecondaryLangFallback },
-        );
-
-        const next = resolveSettingsChangeNextSettings(updated, bridgeResult);
-        const requestedSecondaryLang = state.requestedSecondaryLang;
-        const resolvedSecondaryLanguage = next.secondaryLang;
         const triggerReason = message.reason || "unknown";
-
-        logContentSettings("SETTINGS_CHANGED received", {
-          triggerReason,
-          settings: {
-            ...next,
-            requestedSecondaryLang,
-            resolvedSecondaryLanguage,
-          },
+        const incoming = { ...(message.settings || {}) };
+        const resolvedShowSidebar =
+          incoming.showSidebar ?? state.panelVisible;
+        const next = applySecondaryLangFallback({
+          ...state.contentSettings,
+          ...incoming,
+          showSidebar: resolvedShowSidebar,
         });
+
+        state.requestedSecondaryLang =
+          incoming.secondaryLang ?? state.requestedSecondaryLang ?? "";
+
+        state.requestedContentSettings = {
+          ...state.requestedContentSettings,
+          ...incoming,
+          showSidebar: resolvedShowSidebar,
+        };
 
         state.contentSettings = {
           ...state.contentSettings,
           ...next,
+          showSidebar: resolvedShowSidebar,
         };
 
-        state.panelVisible = state.contentSettings.showSidebar !== false;
+        state.panelVisible = resolvedShowSidebar !== false;
 
-        if (state.video && resolvedSecondaryLanguage) {
+        logContentSettings("SETTINGS_CHANGED received", {
+          triggerReason,
+          settings: {
+            ...incoming,
+            appliedSecondaryLang: state.contentSettings.secondaryLang,
+            requestedSecondaryLang: state.requestedSecondaryLang,
+          },
+        });
+
+        if (state.video && state.contentSettings.secondaryLang) {
           cueController.syncSecondarySubtitleTrack(
             state.video,
-            resolvedSecondaryLanguage,
+            state.contentSettings.secondaryLang,
             renderSecondarySubtitle,
           );
           state.secondaryTrack = cueController.getBoundSecondaryTrack();
+          cueController.onPrimaryCueChange?.();
         }
 
-        restartBilingual(next, "SETTINGS_CHANGED", {
-          keepPanelVisible: next.showSidebar !== false,
-        });
-
-        const appliedRequestedSecondaryLang = state.requestedSecondaryLang;
-        const appliedResolvedSecondaryLanguage = resolvedSecondaryLanguage;
+        restartBilingual(
+          {
+            ...state.contentSettings,
+          },
+          "SETTINGS_CHANGED",
+          {
+            keepPanelVisible: state.contentSettings.showSidebar !== false,
+          },
+        );
 
         logContentSettings("content applied settings to tracks", {
           triggerReason,
           hasVideo: !!state.video,
           primaryLang: state.contentSettings.primaryLang,
           secondaryLang: state.contentSettings.secondaryLang,
-          requestedSecondaryLang: appliedRequestedSecondaryLang,
-          resolvedSecondaryLanguage: appliedResolvedSecondaryLanguage,
+          requestedSecondaryLang: state.requestedSecondaryLang,
           selectedSecondaryTrackLanguage: state.secondaryTrack?.language || "",
           primaryTrackFound: !!state.primaryTrack,
           secondaryTrackFound: !!state.secondaryTrack,

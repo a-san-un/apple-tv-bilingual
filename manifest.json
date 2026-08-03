@@ -35,6 +35,7 @@
         "overlay-controller.js",
         "runtime-observers.js",
         "playback-controls-layout.js",
+        "modules/playback-controls-layout-controller.js",
         "settings-runtime.js",
         "modules/playback-context-controller.js",
         "reinitialize-coordinator.js",

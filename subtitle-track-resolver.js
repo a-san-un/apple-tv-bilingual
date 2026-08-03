@@ -1,8 +1,19 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - subtitle-track-resolver.js
 // version: 2.6.3
-// 役割: 字幕トラック選定（resolver）責務を担当する。
-// Phase B: content.js から resolver 関連関数を切り出して window.ATVB.resolver で公開する。
+//
+// 役割:
+// - 字幕トラック選定（resolver）責務を担当する。
+// - requested language と textTracks の照合・候補化・最終選定を一箇所へ集約する。
+// - content.js から resolver 関連関数を切り出して window.ATVB.resolver で公開する。
+//
+// このファイルのメンテナンス方針:
+// - 言語一致ロジックは matchesRequestedLanguage() に寄せる。
+// - track.language だけでなく track.label も補助情報として扱う。
+// - Apple TV+ 側の language 表記ゆれ（ko / ko-KR / kor / Korean など）を
+//   resolver 内で吸収し、呼び出し側に表記差異を漏らさない。
+// - forced 判定・候補列挙・スコアリング・最終選定を関数単位で分離し、
+//   問題発生時にログと比較条件を追いやすくする。
 // =============================================================
 (function () {
   "use strict";
@@ -26,6 +37,19 @@
     spa: "es",
   });
 
+  // label 側の自然言語表記から BCP47 の短い言語コードへ寄せる。
+  // resolver の比較では track.language を第一優先にしつつ、
+  // language が弱いケースの補助判定としてのみ使う。
+  const LABEL_LANGUAGE_ALIASES = Object.freeze([
+    { pattern: /\bkorean\b|한국어/i, lang: "ko" },
+    { pattern: /\bjapanese\b|日本語/i, lang: "ja" },
+    { pattern: /\benglish\b|英語/i, lang: "en" },
+    { pattern: /\bchinese\b|中文|汉语|漢語/i, lang: "zh" },
+    { pattern: /\bfrench\b|français/i, lang: "fr" },
+    { pattern: /\bspanish\b|español/i, lang: "es" },
+    { pattern: /\bgerman\b|deutsch/i, lang: "de" },
+  ]);
+
   function normalizeTrackLanguage(value) {
     const normalized = String(value || "")
       .trim()
@@ -42,44 +66,83 @@
     return `${mappedBase}-${parts.slice(1).join("-")}`;
   }
 
-  function matchesRequestedLanguage(track, requestedLang) {
-    const lang = normalizeTrackLanguage(track?.language);
-    const requested = normalizeTrackLanguage(requestedLang);
+  // language 属性が弱い / 空のときに備えて label から言語を補助推定する。
+  // ここで返す値は短い代表コード（ko, ja, en, zh ...）に揃える。
+  function inferLanguageFromLabel(label) {
+    const normalizedLabel = normalizeTrackLabel(label);
+    if (!normalizedLabel) return "";
 
-    if (!lang || !requested) return false;
-
-    // Chinese family handling:
-    // zh should match zh, zh-Hans, zh-Hant, zh-CN, zh-TW, etc.
-    if (requested === "zh") {
-      return lang === "zh" || lang.startsWith("zh-");
+    for (const entry of LABEL_LANGUAGE_ALIASES) {
+      if (entry.pattern.test(normalizedLabel)) {
+        return entry.lang;
+      }
     }
 
-    return lang === requested || lang.startsWith(`${requested}-`);
+    return "";
+  }
+
+  // requested language と track の一致判定を一箇所に集約する。
+  // 優先順位は以下:
+  // 1) track.language の正規化値
+  // 2) track.label からの補助推定値
+  //
+  // zh 系は zh-Hans / zh-Hant などの派生をまとめて扱う。
+  // それ以外も ko と ko-KR のような region 付き派生を prefix 一致で許容する。
+  function matchesRequestedLanguage(track, requestedLang) {
+    const requested = normalizeTrackLanguage(requestedLang);
+    const lang = normalizeTrackLanguage(track?.language);
+    const inferredFromLabel = inferLanguageFromLabel(track?.label);
+
+    if (!requested) return false;
+
+    const candidates = [lang, inferredFromLabel].filter(Boolean);
+    if (candidates.length === 0) return false;
+
+    if (requested === "zh") {
+      return candidates.some(
+        (candidate) => candidate === "zh" || candidate.startsWith("zh-"),
+      );
+    }
+
+    return candidates.some(
+      (candidate) =>
+        candidate === requested || candidate.startsWith(`${requested}-`),
+    );
   }
 
   function isForcedLikeTrack(track) {
     const label = normalizeTrackLabel(track?.label).toLowerCase();
-    return /\(forced\)|forced/.test(label);
+    return /\\(forced\\)|forced/.test(label);
   }
 
+  // GET_LANGUAGES 用の候補一覧は、resolver 内で正規化済みの lang / label を返す。
+  // UI 側が表記ゆれの生データに依存しないよう、ここでなるべく整える。
   function getUniqueTracks(textTracks) {
     const seen = new Set();
     const result = [];
+
     for (let i = 0; i < (textTracks?.length || 0); i++) {
       const t = textTracks[i];
       if (t.kind !== "subtitles" && t.kind !== "captions") continue;
       if (isForcedLikeTrack(t)) continue;
-      const key = `${t.language}::${normalizeTrackLabel(t.label)}`;
+
+      const normalizedLanguage = normalizeTrackLanguage(t.language);
+      const normalizedLabel = normalizeTrackLabel(t.label);
+      const inferredLanguage = inferLanguageFromLabel(normalizedLabel);
+      const displayLanguage = normalizedLanguage || inferredLanguage || "";
+      const key = `${displayLanguage}::${normalizedLabel}`;
+
       if (!seen.has(key)) {
         seen.add(key);
         result.push({
           index: i,
-          lang: t.language,
-          label: normalizeTrackLabel(t.label),
+          lang: displayLanguage,
+          label: normalizedLabel,
           track: t,
         });
       }
     }
+
     return result;
   }
 
@@ -165,6 +228,8 @@
     return score;
   }
 
+  // requested language に一致する track だけを候補化し、
+  // currentTime で読める候補があればそれを優先し、なければ score で最良候補を返す。
   function pickBestSubtitleTrack(textTracks, requestedLang, currentTime = null) {
     const tracks = Array.from(textTracks || []);
     const candidates = tracks
@@ -181,23 +246,31 @@
       return null;
     }
 
+    const readableCandidates = candidates.filter(
+      ({ track }) => getTrackCuesLength(track) > 0,
+    );
+
+    const effectiveCandidates =
+      readableCandidates.length > 0 ? readableCandidates : candidates;
+
     const overlapCandidate = Number.isFinite(currentTime)
-      ? candidates.find(({ track }) => hasCueOverlapAtTime(track, currentTime)) ||
-        null
+      ? effectiveCandidates.find(
+          ({ track }) => hasCueOverlapAtTime(track, currentTime),
+        ) || null
       : null;
 
     if (overlapCandidate) {
       return overlapCandidate.track;
     }
 
-    candidates.sort((a, b) => {
+    effectiveCandidates.sort((a, b) => {
       return (
         scoreSubtitleTrack(b.track, b.index) -
         scoreSubtitleTrack(a.track, a.index)
       );
     });
 
-    return candidates[0].track;
+    return effectiveCandidates[0].track;
   }
 
   function getSecondarySubtitleTrackCandidates(video, requestedLang) {
@@ -207,6 +280,8 @@
     return tracks.map((track, index) => ({
       index,
       language: track?.language || "",
+      normalizedLanguage: normalizeTrackLanguage(track?.language),
+      inferredLanguageFromLabel: inferLanguageFromLabel(track?.label),
       label: normalizeTrackLabel(track?.label),
       kind: track?.kind || "",
       mode: track?.mode || "",
@@ -224,6 +299,17 @@
     if (!video || !video.textTracks) return null;
 
     const currentTime = Number(video.currentTime ?? NaN);
+
+    window.ATVB?.logger?.logContent(
+      "subtitle",
+      "secondary resolver candidates",
+      {
+        requestedLang,
+        currentTime,
+        candidates: getSecondarySubtitleTrackCandidates(video, requestedLang),
+      },
+    );
+
     const selectedTrack = pickBestSubtitleTrack(
       video.textTracks,
       requestedLang,
@@ -231,12 +317,18 @@
     );
 
     if (!selectedTrack) {
+      window.ATVB?.logger?.logContent(
+        "subtitle",
+        "secondary resolver selected track",
+        {
+          requestedLang,
+          currentTime,
+          selectedTrackExists: false,
+        },
+      );
       return null;
     }
 
-    // secondary 用 track は「読める状態」を優先する。
-    // disabled だけは hidden に持ち上げるが、
-    // hidden / showing はトラック側の自然な状態を尊重する。
     try {
       if (selectedTrack.mode === "disabled") {
         selectedTrack.mode = "hidden";
@@ -259,19 +351,77 @@
       !hasCueOverlapAtCurrentTime &&
       currentCueTextLength === 0;
 
-    window.ATVB?.logger?.debug?.("secondary resolver selected track", {
-      requestedLang,
-      currentTime,
-      language: selectedTrack?.language ?? "",
-      label: normalizeTrackLabel(selectedTrack?.label),
-      kind: selectedTrack?.kind ?? "",
-      mode: selectedTrack?.mode ?? "",
-      cuesLength,
-      activeCuesLength,
-      hasCueOverlapAtCurrentTime,
-      currentCueTextLength,
-      sameTrackUnreadableNow,
-    });
+    const trackHasNoCues = cuesLength === 0;
+    const requestedTrackButEmpty =
+      matchesRequestedLanguage(selectedTrack, requestedLang) && trackHasNoCues;
+
+    window.ATVB?.logger?.logContent(
+      "subtitle",
+      "secondary resolver readability",
+      {
+        requestedLang,
+        currentTime,
+        language: selectedTrack?.language ?? "",
+        normalizedLanguage: normalizeTrackLanguage(selectedTrack?.language),
+        inferredLanguageFromLabel: inferLanguageFromLabel(selectedTrack?.label),
+        label: normalizeTrackLabel(selectedTrack?.label),
+        kind: selectedTrack?.kind ?? "",
+        mode: selectedTrack?.mode ?? "",
+        cuesLength,
+        activeCuesLength,
+        hasCueOverlapAtCurrentTime,
+        currentCueTextLength,
+        sameTrackUnreadableNow,
+        trackHasNoCues,
+        requestedTrackButEmpty,
+      },
+    );
+
+    if (requestedTrackButEmpty) {
+      window.ATVB?.logger?.logContent(
+        "subtitle",
+        "secondary resolver pending empty requested track",
+        {
+          requestedLang,
+          normalizedRequestedLang: normalizeTrackLanguage(requestedLang),
+          currentTime,
+          language: selectedTrack?.language ?? "",
+          normalizedLanguage: normalizeTrackLanguage(selectedTrack?.language),
+          inferredLanguageFromLabel: inferLanguageFromLabel(selectedTrack?.label),
+          label: normalizeTrackLabel(selectedTrack?.label),
+          kind: selectedTrack?.kind ?? "",
+          mode: selectedTrack?.mode ?? "",
+          cuesLength,
+          activeCuesLength,
+          hasCueOverlapAtCurrentTime,
+          currentCueTextLength,
+          sameTrackUnreadableNow,
+          trackHasNoCues,
+        },
+      );
+    }
+
+    window.ATVB?.logger?.logContent(
+      "subtitle",
+      "secondary resolver selected track",
+      {
+        requestedLang,
+        normalizedRequestedLang: normalizeTrackLanguage(requestedLang),
+        currentTime,
+        language: selectedTrack?.language ?? "",
+        normalizedLanguage: normalizeTrackLanguage(selectedTrack?.language),
+        inferredLanguageFromLabel: inferLanguageFromLabel(selectedTrack?.label),
+        label: normalizeTrackLabel(selectedTrack?.label),
+        kind: selectedTrack?.kind ?? "",
+        mode: selectedTrack?.mode ?? "",
+        cuesLength,
+        activeCuesLength,
+        hasCueOverlapAtCurrentTime,
+        currentCueTextLength,
+        sameTrackUnreadableNow,
+        selectedTrackExists: true,
+      },
+    );
 
     return selectedTrack;
   }
@@ -279,6 +429,7 @@
   window.ATVB.resolver = {
     normalizeTrackLabel,
     normalizeTrackLanguage,
+    inferLanguageFromLabel,
     matchesRequestedLanguage,
     isForcedLikeTrack,
     getUniqueTracks,

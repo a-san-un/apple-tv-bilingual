@@ -1,15 +1,16 @@
 // =============================================================
 // Apple TV Bilingual Subtitles - panel-ui.js
-// version: 1.0.1
+// version: 1.0.4
 // Issue #32 Round 11 後半: panel host / shell 責務へ限定し、
 // secondary subtitle DOM ensure は content.js caller 側へ戻す。
+// Debug panel は初期 mount のみ行い、applyPanelState では再 mount しない。
+// PR3: layout / playback controls orchestration は content.js の
+// applyLayout → layout controller 側へ寄せ、ここは薄い UI 配線に保つ。
 // =============================================================
 
 (function () {
   "use strict";
 
-  // panel-ui module の生成入口。
-  // panel host / shell / visibility だけを扱い、secondary DOM は扱わない。
   function createPanelUi(deps) {
     const {
       state,
@@ -21,8 +22,6 @@
       onClosePanel,
       applyLayout,
       persistPanelVisibility,
-      scheduleAdjustPlaybackControls,
-      scheduleControlSettlingBurst,
       logContent,
       renderCurrentSnapshot,
       renderPanel,
@@ -30,8 +29,6 @@
 
     const PANEL_SLOT_LAYER_STYLE_ID = "atv-panel-slot-layer-style";
 
-    // panel slot 内の hidden layer style を1回だけ注入する。
-    // secondary DOM 自体の生成責務はここに持たせない。
     function ensurePanelSlotLayerStyle() {
       if (document.getElementById(PANEL_SLOT_LAYER_STYLE_ID)) return;
       const style = document.createElement("style");
@@ -40,8 +37,6 @@
       document.head.appendChild(style);
     }
 
-    // debug section の shell HTML を返す。
-    // panel 本体の shadow DOM 内に差し込む静的 markup を組み立てる。
     function buildPanelDebugShellHTML() {
       return `
         <div id="debug-section" class="debug-section">
@@ -92,8 +87,6 @@
       `;
     }
 
-    // panel shell の HTML を返す。
-    // secondary subtitle slot は置くが、要素 ensure は caller 側に委ねる。
     function buildPanelShellHTML() {
       const panelCssUrl = chrome.runtime.getURL("panel.css");
       return `
@@ -108,15 +101,17 @@
           </div>
           ${buildPanelDebugShellHTML()}
           <div id="panel-scroll">
-            <slot name="secondary-subtitle-slot"></slot>
+            <div
+              data-secondary-subtitle
+              class="dual-subtitles-secondary"
+              data-language
+            ></div>
             <div id="subtitle-list"></div>
           </div>
         </div>
       `;
     }
 
-    // panel header のボタンイベントを接続する。
-    // 設定画面オープンと close 動作だけをここで束ねる。
     function wirePanelHeaderActions() {
       const root = state.panelShadowRoot;
       if (!root) return;
@@ -136,8 +131,6 @@
       });
     }
 
-    // panel host を作成または再利用する。
-    // ここでは host / shell 構築で止め、secondary DOM ensure は行わない。
     function createRightPanel() {
       const target = getTarget?.();
       if (!target) return null;
@@ -170,11 +163,10 @@
       return host;
     }
 
-    // debug panel mount を行う。
-    // panel shadow root がある前提で debugPanel module に委譲する。
     function createDebugPanel() {
       if (!state.panelShadowRoot) return;
       state.debugPanelRoot = state.panelShadowRoot;
+
       const debugPanel = window.ATVB?.debugPanel;
       if (!debugPanel?.mount) return;
 
@@ -196,8 +188,6 @@
       });
     }
 
-    // panel / overlay / toggle の実 DOM をまとめて取得する。
-    // visibility 制御や layout 適用の共通入口として使う。
     function getPanelUiElements() {
       const target = getTarget();
       return {
@@ -207,8 +197,6 @@
       };
     }
 
-    // panel の表示状態に応じて panel / overlay / toggle を切り替える。
-    // DOM の見た目反映だけを行い、永続化やログは持たない。
     function applyPanelVisibility(show) {
       const { panelHost, overlayHost, toggleBtn } = getPanelUiElements();
 
@@ -220,41 +208,20 @@
       if (toggleBtn) toggleBtn.style.display = show ? "none" : "block";
     }
 
-    // right panel を表示状態にする。
-    // 実際の DOM 更新は applyPanelVisibility に委譲する。
     function showRightPanel() {
       applyPanelVisibility(true);
     }
 
-    // right panel を非表示状態にする。
-    // 実際の DOM 更新は applyPanelVisibility に委譲する。
     function hideRightPanel() {
       applyPanelVisibility(false);
     }
 
-    // panelVisible を反転または明示設定し、関連 UI を同期する。
-    // playback controls の再調整や永続化もここでまとめて行う。
     function togglePanel(force) {
       if (typeof force === "boolean") state.panelVisible = force;
       else state.panelVisible = !state.panelVisible;
 
       applyLayout(state.panelVisible);
       applyPanelVisibility(state.panelVisible);
-
-      if (typeof scheduleAdjustPlaybackControls === "function") {
-        scheduleAdjustPlaybackControls(
-          "togglePanel",
-          state.panelVisible ? [700, 1600] : [],
-          { immediate: !state.panelVisible },
-        );
-      }
-
-      if (
-        state.panelVisible &&
-        typeof scheduleControlSettlingBurst === "function"
-      ) {
-        scheduleControlSettlingBurst("togglePanel", [180, 420, 900, 1500]);
-      }
 
       if (typeof persistPanelVisibility === "function") {
         persistPanelVisibility();
@@ -265,8 +232,6 @@
       }
     }
 
-    // panel state 反映の入口として snapshot / panel render を呼ぶ。
-    // secondary ensure 自体は行わず、caller 側の renderCurrentSnapshot に委ねる。
     function applyPanelState(reason = "unknown") {
       if (typeof renderCurrentSnapshot === "function") {
         renderCurrentSnapshot();
@@ -277,8 +242,9 @@
       }
 
       const panelHost = getTarget?.().querySelector("#atv-panel-host") || null;
+      const panelRoot = panelHost?.shadowRoot || state.panelShadowRoot || null;
       const secondaryEl =
-        panelHost?.querySelector("[data-secondary-subtitle]") || null;
+        panelRoot?.querySelector("[data-secondary-subtitle]") || null;
       const secondaryText = String(secondaryEl?.textContent || "").trim();
 
       if (typeof logContent === "function") {
@@ -287,6 +253,7 @@
           contentKey: state.currentContentKey,
           panelVisible: state.panelVisible,
           hasPanelHost: Boolean(panelHost),
+          hasPanelShadowRoot: Boolean(panelRoot),
           secondaryTextLength: secondaryText.length,
           historySize: state.subtitleHistory.length,
           panelPastCount: Array.isArray(state.panelPastBlocks)
@@ -296,8 +263,6 @@
       }
     }
 
-    // panel visibility 設定を storage から読む。
-    // 未保存時や取得失敗時は visible=true を既定値にする。
     function loadPanelVisibility() {
       return new Promise((resolve) => {
         chrome.storage.local.get("panelVisible", (result = {}) => {
