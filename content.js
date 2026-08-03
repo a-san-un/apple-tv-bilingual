@@ -2709,6 +2709,8 @@ function forwardContentLog(...args) {
         contentKey: state.currentContentKey || "",
       }),
     renderPanel,
+    matchesRequestedLanguage: resolverDeps.matchesRequestedLanguage,
+    isForcedLikeTrack: resolverDeps.isForcedLikeTrack,
   });
 
   panelUi = createPanelUi({
@@ -2953,14 +2955,9 @@ function ensureSyncIntervalOrchestrator() {
 
   state.video = video;
 
-  if (state.primaryTrack) {
-    try {
-      state.primaryTrack.removeEventListener("cuechange", onCueChange);
-    } catch (_) {}
-    state.primaryTrack = null;
-  }
-
+  cueController.unbindPrimarySubtitleTrack();
   cueController.unbindSecondarySubtitleTrack();
+  state.primaryTrack = null;
   state.secondaryTrack = null;
 
     // [attach: primary/secondary reset] 既存 bind を一度解除してから今回の track 選択に入る。
@@ -2968,21 +2965,24 @@ function ensureSyncIntervalOrchestrator() {
     const tracks = video.textTracks;
     let primaryListenerBound = false;
 
-    // [attach: primary] primary resolver → mode 設定 → cuechange bind
+    // [attach: primary] primary resolver → controller bind へ委譲する。
     state.primaryTrack = resolverDeps.pickBestSubtitleTrack(
       tracks,
       primaryLang,
     );
     if (state.primaryTrack) {
-      try {
-        // 非英語 primary track の cue 可用性を上げるため secondary と同じ showing にする。
-        // ネイティブ字幕表示は overlay.css の video::cue 非表示で抑止済み。
-        state.primaryTrack.mode = "showing";
-        state.primaryTrack.addEventListener("cuechange", onCueChange);
-        primaryListenerBound = true;
-      } catch (_) {
-        primaryListenerBound = false;
-      }
+      primaryListenerBound = cueController.bindPrimarySubtitleTrack(
+        state.primaryTrack,
+        onCueChange,
+        {
+          video,
+          requestedLang: primaryLang,
+          reason: "primary-bind",
+        },
+      );
+    } else {
+      cueController.unbindPrimarySubtitleTrack();
+      primaryListenerBound = false;
     }
 
     // [attach: secondary] secondary resolver / binder は sync helper 側へ委譲する。

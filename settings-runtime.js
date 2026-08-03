@@ -241,6 +241,34 @@
       });
     }
 
+    async function syncAppleTvNativeSubtitleToSecondaryLang(secondaryLang, reason = "unknown") {
+      // Best-effort only: the TextTrack-based bilingual pipeline is the source of truth.
+      // Do not open or drive the Apple TV+ native subtitle menu here.
+      // Native subtitle visibility/language alignment is intentionally out of the
+      // critical path because programmatic menu control is brittle and UI-disruptive.
+      if (!secondaryLang) {
+        logContentSettings("native subtitle sync skipped: empty secondaryLang", {
+          reason,
+          secondaryLang,
+          bestEffort: true,
+        });
+        return { ok: false, skipped: "empty_secondaryLang", bestEffort: true };
+      }
+
+      logContentSettings("native subtitle sync skipped: menu automation disabled", {
+        reason,
+        secondaryLang,
+        bestEffort: true,
+      });
+
+      return {
+        ok: false,
+        skipped: "menu_automation_disabled",
+        secondaryLang,
+        bestEffort: true,
+      };
+    }
+
     function restartBilingual(nextSettings = null, reason = "unknown", options = {}) {
       logContent("restartBilingual trace", {
         reason,
@@ -338,38 +366,57 @@
           },
         });
 
-        if (state.video && state.contentSettings.secondaryLang) {
-          cueController.syncSecondarySubtitleTrack(
-            state.video,
+        const applySettingsAsync = async () => {
+          await syncAppleTvNativeSubtitleToSecondaryLang(
             state.contentSettings.secondaryLang,
-            renderSecondarySubtitle,
+            triggerReason,
           );
-          state.secondaryTrack = cueController.getBoundSecondaryTrack();
-          cueController.onPrimaryCueChange?.();
-        }
 
-        restartBilingual(
-          {
-            ...state.contentSettings,
-          },
-          "SETTINGS_CHANGED",
-          {
-            keepPanelVisible: state.contentSettings.showSidebar !== false,
-          },
-        );
+          restartBilingual(
+            {
+              ...state.contentSettings,
+            },
+            "SETTINGS_CHANGED",
+            {
+              keepPanelVisible: state.contentSettings.showSidebar !== false,
+            },
+          );
 
-        logContentSettings("content applied settings to tracks", {
-          triggerReason,
-          hasVideo: !!state.video,
-          primaryLang: state.contentSettings.primaryLang,
-          secondaryLang: state.contentSettings.secondaryLang,
-          requestedSecondaryLang: state.requestedSecondaryLang,
-          selectedSecondaryTrackLanguage: state.secondaryTrack?.language || "",
-          primaryTrackFound: !!state.primaryTrack,
-          secondaryTrackFound: !!state.secondaryTrack,
+          if (state.video && state.contentSettings.secondaryLang) {
+            cueController.syncSecondarySubtitleTrack(
+              state.video,
+              state.contentSettings.secondaryLang,
+              renderSecondarySubtitle,
+            );
+            state.secondaryTrack = cueController.getBoundSecondaryTrack();
+            cueController.onPrimaryCueChange?.();
+          }
+
+          logContentSettings("content applied settings to tracks", {
+            triggerReason,
+            hasVideo: !!state.video,
+            primaryLang: state.contentSettings.primaryLang,
+            secondaryLang: state.contentSettings.secondaryLang,
+            requestedSecondaryLang: state.requestedSecondaryLang,
+            selectedSecondaryTrackLanguage: state.secondaryTrack?.language || "",
+            primaryTrackFound: !!state.primaryTrack,
+            secondaryTrackFound: !!state.secondaryTrack,
+          });
+
+          sendResponse({ ok: true });
+        };
+
+        applySettingsAsync().catch((error) => {
+          logContentError("SETTINGS_CHANGED apply failed", {
+            triggerReason,
+            message: error?.message || String(error),
+          });
+          sendResponse({
+            ok: false,
+            error: error?.message || String(error),
+          });
         });
 
-        sendResponse({ ok: true });
         return true;
       }
 

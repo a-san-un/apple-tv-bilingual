@@ -39,53 +39,90 @@
     updateOverlayFromView,
     updateOverlayFromBlock,
     renderPanel,
+    matchesRequestedLanguage,
+    isForcedLikeTrack,
   }) {
+    // 現在 bind されている primary listener の解除関数を保持する。
+    let primaryTrackCleanup = null;
+
+    // 現在 bind 済みの primary track を保持する。
+    let primaryTrackBound = null;
+
     // 現在 bind されている secondary listener の解除関数を保持する。
     let secondaryTrackCleanup = null;
 
     // 現在 bind 済みの secondary track を保持する。
     let secondaryTrackBound = null;
-    function primeSecondarySubtitleTrackActivation(video, requestedLang) {
-      if (!video?.textTracks || !requestedLang) return false;
 
-      const normalizedRequestedLang = String(requestedLang).trim().toLowerCase();
+    function getUsableTrackDebugPayload(track) {
+      return {
+        language: track?.language || "",
+        label: track?.label || "",
+        kind: track?.kind || "",
+        mode: track?.mode || "",
+        cuesLength: getTrackCuesLength(track),
+        activeCuesLength: getTrackActiveCuesLength(track),
+      };
+    }
+
+    function ensureSubtitleTracksUsable(video, requestedLang, options = {}) {
+      const finalMode = options.finalMode === "showing" ? "showing" : "hidden";
+      const reason = options.reason || "unknown";
+
+      if (!video?.textTracks || !requestedLang) {
+        const payload = {
+          reason,
+          requestedLang: requestedLang || "",
+          finalMode,
+          matchedTrackCount: 0,
+          activatedTrackCount: 0,
+          activated: false,
+          tracks: [],
+        };
+        logContent("subtitle track usability", payload);
+        return payload;
+      }
+
       const tracks = Array.from(video.textTracks || []);
       const targets = tracks.filter((track) => {
         if (!track) return false;
         const kind = String(track.kind || "").toLowerCase();
         if (kind !== "subtitles" && kind !== "captions") return false;
-        const language = String(track.language || "").trim().toLowerCase();
-        return language === normalizedRequestedLang;
+        if (isForcedLikeTrack?.(track)) return false;
+        return matchesRequestedLanguage?.(track, requestedLang);
       });
 
-      if (targets.length === 0) {
-        return false;
-      }
-
-      let activated = false;
+      let activatedTrackCount = 0;
       for (const track of targets) {
         try {
           track.mode = "showing";
-          activated = true;
+          activatedTrackCount += 1;
         } catch (_) {}
       }
 
-
-      if (!activated) {
-        return false;
+      if (finalMode === "hidden" && activatedTrackCount > 0) {
+        queueMicrotask(() => {
+          for (const track of targets) {
+            try {
+              track.mode = "hidden";
+            } catch (_) {}
+          }
+        });
       }
 
-      queueMicrotask(() => {
-        for (const track of targets) {
-          try {
-            track.mode = "hidden";
-          } catch (_) {}
-        }
-      });
+      const payload = {
+        reason,
+        requestedLang: requestedLang || "",
+        finalMode,
+        matchedTrackCount: targets.length,
+        activatedTrackCount,
+        activated: activatedTrackCount > 0,
+        tracks: targets.map((track) => getUsableTrackDebugPayload(track)),
+      };
 
-      return true;
+      logContent("subtitle track usability", payload);
+      return payload;
     }
-
 
     // 最新の merged subtitle health を観測・外部参照用に保持する。
     let lastMergedSubtitleHealth = null;
@@ -311,9 +348,23 @@
       };
     }
 
+    // 現在 bind 済みの primary track を返す。
+    function getBoundPrimaryTrack() {
+      return primaryTrackBound;
+    }
+
     // 現在 bind 済みの secondary track を返す。
     function getBoundSecondaryTrack() {
       return secondaryTrackBound;
+    }
+
+    // bind 済みの primary track listener を解除する。
+    function unbindPrimarySubtitleTrack() {
+      if (primaryTrackCleanup) {
+        primaryTrackCleanup();
+        primaryTrackCleanup = null;
+      }
+      primaryTrackBound = null;
     }
 
     // bind 済みの secondary track listener を解除する。
@@ -323,6 +374,36 @@
         secondaryTrackCleanup = null;
       }
       secondaryTrackBound = null;
+    }
+
+    // primary track を usable 化して cuechange 監視を始める。
+    function bindPrimarySubtitleTrack(track, onCueChange, options = {}) {
+      unbindPrimarySubtitleTrack();
+      if (!track) return false;
+
+      ensureSubtitleTracksUsable(options.video, options.requestedLang, {
+        finalMode: "showing",
+        reason: options.reason || "primary-bind",
+      });
+
+      try {
+        track.mode = "showing";
+      } catch (_) {}
+
+      try {
+        track.addEventListener("cuechange", onCueChange);
+        primaryTrackCleanup = () => {
+          try {
+            track.removeEventListener("cuechange", onCueChange);
+          } catch (_) {}
+        };
+        primaryTrackBound = track;
+        return true;
+      } catch (_) {
+        primaryTrackCleanup = null;
+        primaryTrackBound = null;
+        return false;
+      }
     }
 
     // secondary bind 時の mode を、実行文脈と readable snapshot から決定する。
@@ -607,7 +688,10 @@
         unbindSecondarySubtitleTrack();
       }
 
-      primeSecondarySubtitleTrackActivation(video, requestedLang);
+      ensureSubtitleTracksUsable(video, requestedLang, {
+        finalMode: "hidden",
+        reason: "secondary-sync",
+      });
 
       const track = resolveSecondarySubtitleTrack(video, requestedLang);
       const sameTrackRef = Boolean(track && previousBoundTrack === track);
@@ -739,20 +823,33 @@
         });
       }
 
+      const shouldPrimeEmptySelectedTrack =
+        requestedLanguageChanged &&
+        !sameTrackRef &&
+        Boolean(track) &&
+        resolvedTrackCuesLength === 0 &&
+        resolvedTrackActiveCuesLength === 0 &&
+        resolvedTrackCurrentCueText.length === 0;
+
       const modeDecision = resolveSecondaryTrackModePolicy({
         track,
-        reason: forceRebind
-          ? "forceRebind"
-          : shouldRebindBecauseUnreadable
-            ? "sameTrackUnreadable"
-            : "syncSecondarySubtitleTrack",
-        debugForceShowing: DEBUG_SECONDARY_SUBS,
+        reason: shouldPrimeEmptySelectedTrack
+          ? "primeEmptySelectedTrack"
+          : forceRebind
+            ? "forceRebind"
+            : shouldRebindBecauseUnreadable
+              ? "sameTrackUnreadable"
+              : "syncSecondarySubtitleTrack",
+        debugForceShowing: DEBUG_SECONDARY_SUBS || shouldPrimeEmptySelectedTrack,
         allowShowing: true,
         unreadableSnapshot,
       });
 
-      if (modeDecision.policy === "readability-promote") {
-        logContent("secondary-sync mode-policy readability-promote", {
+      if (
+        modeDecision.policy === "readability-promote" ||
+        modeDecision.policy === "debug-force-showing"
+      ) {
+        logContent("secondary-sync mode-policy force-showing", {
           requestedLang: requestedLang || "",
           normalizedRequestedLang,
           previousRequestedSecondaryLang,
@@ -760,6 +857,7 @@
           currentTime,
           sameTrackRef,
           forceRebind,
+          shouldPrimeEmptySelectedTrack,
           trackLanguage: track?.language || "",
           trackKind: track?.kind || "",
           trackModeBefore: track?.mode || "",
@@ -768,6 +866,12 @@
           rationale: modeDecision.rationale,
           decisionReason: modeDecision.reason,
           unreadableSnapshot,
+          selectedTrackSnapshot: {
+            cuesLength: resolvedTrackCuesLength,
+            activeCuesLength: resolvedTrackActiveCuesLength,
+            currentCueTextLength: resolvedTrackCurrentCueText.length,
+            hasCueOverlapAtCurrentTime: Boolean(resolvedTrackCurrentCue),
+          },
         });
       }
 
@@ -777,7 +881,12 @@
         resolvedTrackActiveCuesLength === 0 &&
         resolvedTrackCurrentCueText.length === 0;
 
-      if (!sameTrackRef && selectedTrackUnreadable && previousBoundTrack) {
+      if (
+        !requestedLanguageChanged &&
+        !sameTrackRef &&
+        selectedTrackUnreadable &&
+        previousBoundTrack
+      ) {
         logContent("secondary-sync keep-previous-track", {
           requestedLang: requestedLang || "",
           normalizedRequestedLang,
@@ -1450,6 +1559,10 @@
     }
 
     return {
+      ensureSubtitleTracksUsable,
+      getBoundPrimaryTrack,
+      unbindPrimarySubtitleTrack,
+      bindPrimarySubtitleTrack,
       getBoundSecondaryTrack,
       unbindSecondarySubtitleTrack,
       bindSecondarySubtitleTrack,

@@ -95,6 +95,19 @@
           <div id="panel-header">
             <span>📋 字幕履歴</span>
             <div class="panel-header-actions">
+              <label
+                class="panel-language-select-wrap"
+                title="第2字幕言語"
+                style="display:flex;align-items:center;gap:6px;margin-right:8px;"
+              >
+                <span style="font-size:12px;opacity:0.8;">第2字幕</span>
+                <select
+                  id="panel-secondary-lang"
+                  style="max-width:140px;padding:2px 6px;border-radius:6px;"
+                >
+                  <option value="">読み込み中...</option>
+                </select>
+              </label>
               <button id="settings-btn" type="button" title="設定">⚙️</button>
               <button id="close-btn" type="button">✕ 閉じる</button>
             </div>
@@ -112,13 +125,86 @@
       `;
     }
 
+    async function populateSecondaryLanguageSelect(root) {
+      const select = root.getElementById("panel-secondary-lang");
+      if (!select) return;
+
+      const currentValue = String(
+        state.requestedSecondaryLang ||
+          state.contentSettings?.secondaryLang ||
+          ""
+      ).trim();
+
+      const setOptions = (items = []) => {
+        const options = items
+          .filter((item) => item && item.lang)
+          .map((item) => {
+            const value = String(item.lang || "").trim();
+            const label = String(item.label || item.lang || "").trim();
+            return `<option value="${value}">${label || value}</option>`;
+          })
+          .join("");
+
+        select.innerHTML = `
+          <option value="">未選択</option>
+          ${options}
+        `;
+        select.value = currentValue;
+        if (select.value !== currentValue) {
+          select.value = "";
+        }
+      };
+
+      try {
+        chrome.runtime.sendMessage({ type: "GET_LANGUAGES" }, (response) => {
+          if (chrome.runtime.lastError) {
+            select.innerHTML = `<option value="">取得失敗</option>`;
+            return;
+          }
+          setOptions(Array.isArray(response) ? response : []);
+        });
+      } catch (_) {
+        select.innerHTML = `<option value="">取得失敗</option>`;
+      }
+    }
+
     function wirePanelHeaderActions() {
       const root = state.panelShadowRoot;
       if (!root) return;
 
+      populateSecondaryLanguageSelect(root);
+
       root.getElementById("settings-btn")?.addEventListener("click", () => {
         try {
           chrome.runtime.sendMessage({ type: "OPEN_OPTIONS_PAGE" });
+        } catch (_) {}
+      });
+
+      root.getElementById("panel-secondary-lang")?.addEventListener("change", (event) => {
+        const secondaryLang = String(event.target?.value || "").trim();
+        const nextSettings = {
+          ...state.contentSettings,
+          secondaryLang,
+          showSidebar: state.panelVisible !== false,
+        };
+
+        try {
+          chrome.runtime.sendMessage(
+            {
+              type: "APPLY_SETTINGS_TO_APPLE_TV",
+              reason: "panel_secondary_language_change",
+              settings: nextSettings,
+            },
+            () => {
+              if (chrome.runtime.lastError) return;
+              state.requestedSecondaryLang = secondaryLang;
+              state.requestedContentSettings = {
+                ...state.requestedContentSettings,
+                secondaryLang,
+                showSidebar: state.panelVisible !== false,
+              };
+            }
+          );
         } catch (_) {}
       });
 
