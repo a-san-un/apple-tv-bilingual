@@ -12,10 +12,7 @@
 
   const root = (window.ATVB = window.ATVB || {});
 
-  function createSubtitleSyncController({
-    state,
-    services = {},
-  }) {
+  function createSubtitleSyncController({ state, services = {} }) {
     const {
       logContent,
       resolver,
@@ -26,8 +23,6 @@
       activationTimeoutMs = 1500,
     } = services;
 
-    // cue が実際に読める track かを判定するため、
-    // 現在の読取可能性をまとめて返す。
     function getTrackReadability(track, currentTime = NaN) {
       if (!track) {
         return {
@@ -64,14 +59,10 @@
       };
     }
 
-    // ポーリングや mode 切り替えの間で短く待機するための
-    // 小さな sleep ユーティリティ。
     function wait(ms) {
       return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
-    // 指定言語に一致する secondary 候補を、
-    // resolver のスコア順で並べて返す。
     function getOrderedSecondaryCandidates(video, requestedLang) {
       const candidates = resolver?.getSecondarySubtitleTrackCandidates?.(
         video,
@@ -83,12 +74,13 @@
       }
 
       return [...candidates]
-        .filter((candidate) => candidate?.track && candidate?.matchesRequestedLanguage)
+        .filter(
+          (candidate) =>
+            candidate?.track && candidate?.matchesRequestedLanguage,
+        )
         .sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0));
     }
 
-    // 1 本の候補 track を一時的に showing にして、
-    // cue が載るかを一定時間だけ監視する。
     async function warmTrackWithShowing(track, context = {}) {
       if (!track) return null;
 
@@ -161,8 +153,6 @@
       return null;
     }
 
-    // secondary 候補を 1 本ずつ showing にして、
-    // cue が載る track を探索する。
     async function warmSecondaryCandidatesWithShowing(video, requestedLang) {
       if (!video || !requestedLang) return null;
 
@@ -192,13 +182,18 @@
       return null;
     }
 
-    // showing で温めたあと resolver で再選定し、
-    // secondary bind 用の track を最終確定する。
-    async function syncSecondarySubtitleTrack(video, requestedLang, options = {}) {
+    async function syncSecondarySubtitleTrack(
+      video,
+      requestedLang,
+      options = {},
+    ) {
       if (!video || !requestedLang) return null;
 
       const currentTime = Number(video.currentTime ?? NaN);
-      const warmed = await warmSecondaryCandidatesWithShowing(video, requestedLang);
+      const warmed = await warmSecondaryCandidatesWithShowing(
+        video,
+        requestedLang,
+      );
 
       if (warmed?.track) {
         await wait(activationHoldMs);
@@ -212,6 +207,8 @@
           requestedLang,
           reason: "secondary-sync-showing",
         });
+
+        state.secondaryTrack = selectedTrack || null;
 
         logContent?.("subtitle sync showing selected track", {
           requestedLang,
@@ -248,6 +245,8 @@
           reason: "secondary-sync-native-fallback",
         });
       }
+
+      state.secondaryTrack = fallbackTrack || null;
 
       return fallbackTrack;
     }

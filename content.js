@@ -763,7 +763,7 @@ function forwardContentLog(...args) {
     }
   }
 
-  function syncSecondarySubtitleTrack(
+  async function syncSecondarySubtitleTrack(
     video,
     requestedLang,
     renderSecondarySubtitle,
@@ -780,11 +780,15 @@ function forwardContentLog(...args) {
       );
     }
 
-    cueController.syncSecondarySubtitleTrack(
+    await subtitleSyncController.syncSecondarySubtitleTrack(
       video,
       requestedLang,
-      renderSecondarySubtitle,
+      {
+        primaryLang: state.contentSettings.primaryLang || "",
+        renderSecondarySubtitle,
+      },
     );
+
     state.secondaryTrack = cueController.getBoundSecondaryTrack();
   }
 
@@ -2528,6 +2532,7 @@ function forwardContentLog(...args) {
     }),
   } = subtitleBlockResolverApi;
   const createCueController = window.ATVB?.cueController?.createCueController;
+  const createSubtitleSyncController = window.ATVB?.createSubtitleSyncController;
 
 
   if (typeof createPanelRenderer !== "function") {
@@ -2536,6 +2541,10 @@ function forwardContentLog(...args) {
 
   if (typeof createCueController !== "function") {
     throw new Error("ATVB cueController.createCueController is not available");
+  }
+
+  if (typeof createSubtitleSyncController !== "function") {
+    throw new Error("ATVB createSubtitleSyncController is not available");
   }
 
   const root = (window.ATVB = window.ATVB || {});
@@ -2680,6 +2689,40 @@ function forwardContentLog(...args) {
     matchesRequestedLanguage: resolverDeps.matchesRequestedLanguage,
     isForcedLikeTrack: resolverDeps.isForcedLikeTrack,
   });
+
+  const subtitleSyncController = createSubtitleSyncController({
+    state,
+    services: {
+      logContent,
+      resolver: resolverDeps,
+      bindSecondaryTrack: (track, options = {}) => {
+        const modeDecision = {
+          requestedMode: options?.requestedMode || "hidden",
+          policy: options?.policy || "subtitle-sync-controller",
+          rationale: options?.reason || "subtitle_sync_controller_bind",
+          reason: options?.reason || "subtitle-sync-controller",
+          unreadableSnapshot: options?.unreadableSnapshot || null,
+        };
+
+        cueController.bindSecondarySubtitleTrack(track, modeDecision);
+      },
+      syncNativeSubtitleSelection: async ({
+        primaryLang = "",
+        secondaryLang = "",
+        preferredSource = "",
+      } = {}) => {
+        return await syncNativeSubtitleSelection(
+          primaryLang,
+          secondaryLang,
+          preferredSource,
+        );
+      },
+      pollIntervalMs: 100,
+      activationHoldMs: 500,
+      activationTimeoutMs: 1500,
+    },
+  });
+
 
   panelUi = createPanelUi({
     state,
@@ -2987,11 +3030,17 @@ function ensureSyncIntervalOrchestrator() {
 
     // [attach: secondary] secondary resolver / binder は sync helper 側へ委譲する。
     if (secondaryLang) {
-        cueController.syncSecondarySubtitleTrack(
+      void (async () => {
+        await subtitleSyncController.syncSecondarySubtitleTrack(
           video,
           secondaryLang,
-          renderSecondarySubtitle,
+          {
+            primaryLang,
+            renderSecondarySubtitle,
+          },
         );
+        state.secondaryTrack = cueController.getBoundSecondaryTrack();
+      })();
     } else {
       cueController.unbindSecondarySubtitleTrack();
       renderSecondarySubtitle("", null);
