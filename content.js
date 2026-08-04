@@ -2968,13 +2968,9 @@ function ensureSyncIntervalOrchestrator() {
     clearInitialCueRecoveryCleanup();
   }
 
-  // [binder/cue: attach] primary / secondary track の選択・bind・unbind を扱うセクション。
-  // attach 軸では track selection と listener binding の境界をコメントで追える状態に保つ。
-
-  // [binder/cue: attach] track selection
-  // [binder/cue: attach] primary / secondary track を選択し、listener bind の入口をまとめる。
-  // overlay / panel への描画更新は fan-out 側が担い、この関数では track attach の責務を読む。
-  function selectPrimaryAndSecondaryTracks(
+  // [binder/cue: attach] primary / secondary track の選択と bind 完了までをまとめて扱う。
+  // secondary は非同期同期を含むため、完了を待ってから state へ反映し startBilingual に返す。
+  async function selectPrimaryAndSecondaryTracks(
     video,
     primaryLang,
     secondaryLang,
@@ -2991,23 +2987,24 @@ function ensureSyncIntervalOrchestrator() {
       };
     }
 
-  state.video = video;
-
-  cueController.unbindPrimarySubtitleTrack();
-  cueController.unbindSecondarySubtitleTrack();
-  state.primaryTrack = null;
-  state.secondaryTrack = null;
+    state.video = video;
 
     // [attach: primary/secondary reset] 既存 bind を一度解除してから今回の track 選択に入る。
+    // 前回の再生状態を残したまま再初期化しないよう、state と listener を先に空にする。
+    cueController.unbindPrimarySubtitleTrack();
+    cueController.unbindSecondarySubtitleTrack();
+    state.primaryTrack = null;
+    state.secondaryTrack = null;
 
     const tracks = video.textTracks;
     let primaryListenerBound = false;
 
-    // [attach: primary] primary resolver → controller bind へ委譲する。
+    // [attach: primary] primary は同期的に最良候補を選び、その場で bind する。
     state.primaryTrack = resolverDeps.pickBestSubtitleTrack(
       tracks,
       primaryLang,
     );
+
     if (state.primaryTrack) {
       primaryListenerBound = cueController.bindPrimarySubtitleTrack(
         state.primaryTrack,
@@ -3023,29 +3020,28 @@ function ensureSyncIntervalOrchestrator() {
       primaryListenerBound = false;
     }
 
-    // [attach: secondary] secondary resolver / binder は sync helper 側へ委譲する。
+    // [attach: secondary] secondary は showing warmup / native fallback を含むため非同期。
+    // ここで await して bind 完了後の実トラックを state に反映する。
     if (secondaryLang) {
-      void (async () => {
-        await subtitleSyncController.syncSecondarySubtitleTrack(
-          video,
-          secondaryLang,
-          {
-            primaryLang,
-            renderSecondarySubtitle,
-          },
-        );
-        state.secondaryTrack = cueController.getBoundSecondaryTrack();
-      })();
+      await subtitleSyncController.syncSecondarySubtitleTrack(
+        video,
+        secondaryLang,
+        {
+          primaryLang,
+          renderSecondarySubtitle,
+        },
+      );
+
+      // sync helper が最終的に bind したトラックをここで確定値として読む。
+      state.secondaryTrack = cueController.getBoundSecondaryTrack();
     } else {
       cueController.unbindSecondarySubtitleTrack();
       renderSecondarySubtitle("", null);
+      state.secondaryTrack = null;
     }
 
-    state.secondaryTrack = cueController.getBoundSecondaryTrack();
-
-    // [debug: secondary sync failure] secondaryLang を指定したにもかかわらず
-    // track が bind できなかった場合、textTracks の全量を出して原因を切り分ける。
-    // resolver 側（言語一致条件）か、Apple TV+ 側の trackList 提供タイミングかを判別する材料にする。
+    // [debug: secondary sync failure] secondary 指定ありなのに bind できなかった場合だけ
+    // textTracks 全量を残し、初回起動タイミング問題か resolver 条件問題かを切り分ける。
     if (secondaryLang && !state.secondaryTrack) {
       try {
         const rawTracks = Array.from(video?.textTracks || []);
@@ -3102,12 +3098,14 @@ function ensureSyncIntervalOrchestrator() {
     };
   }
 
-  // [binder/cue: recovery] cue availability / recovery gate
-
-  // [binder/cue: recovery] 現在の primary / secondary track から初回 cue を回収できるか判定する。
+  // [binder/cue: recovery] 現在 bind されている track から初回 cue を回収できるかを判定する。
+  // activeCues と currentTime 周辺の cue text を見て、初回 recovery を進めてよい状態かを返す。
   function hasRecoverableInitialCue() {
     const currentTime = state.video?.currentTime ?? 0;
     const boundSecondaryTrack = cueController.getBoundSecondaryTrack();
+
+    // state 上の track と controller 側の bound track の両方を見る。
+    // secondary の bind 完了タイミング差で state 反映が一瞬遅れても recovery 判定を落とさない。
     const tracks = [
       state.primaryTrack,
       state.secondaryTrack,
@@ -3117,6 +3115,9 @@ function ensureSyncIntervalOrchestrator() {
     for (let i = 0; i < tracks.length; i++) {
       const track = tracks[i];
       if (!canReadCueFromTrack(track)) continue;
+
+      // まず activeCues を優先し、取れない場合は currentTime 基準の cue text を見る。
+      // Apple TV+ では activeCues 更新と text 参照可能化のタイミングがずれることがある。
       if (getTrackActiveCuesLength(track) > 0) return true;
       if (getCurrentCueText(track, currentTime)) return true;
     }
@@ -3480,13 +3481,14 @@ function ensureSyncIntervalOrchestrator() {
         "",
     });
 
-    selectPrimaryAndSecondaryTracks(
+    // secondary の同期完了を待ってから ready フェーズへ進む。
+    // 初回自動起動で secondary 未確定のまま UI 初期化が完了するのを防ぐ。
+    await selectPrimaryAndSecondaryTracks(
       state.video,
       state.contentSettings.primaryLang,
       state.contentSettings.secondaryLang,
       "startBilingual",
     );
-
 
     logContentSubtitle("secondary resolver snapshot", buildSecondaryResolverSnapshot("startBilingual"));
 
