@@ -38,6 +38,7 @@
         renderCurrentSnapshot,
         renderPanel,
         reloadSettingsAndReinitialize,
+        clearPlaybackSessionUiState,
         debugPanelProbe,
         getTrackActiveCuesLength,
         getCurrentCueText,
@@ -62,6 +63,7 @@
       void renderCurrentSnapshot;
       void renderPanel;
       void reloadSettingsAndReinitialize;
+      void clearPlaybackSessionUiState;
       void debugPanelProbe;
       void getTrackActiveCuesLength;
       void getCurrentCueText;
@@ -87,6 +89,17 @@
         const found = getVideoAndDialog();
         const nextVideo = found?.video || state.video;
         const nextVideoSrcKey = getCurrentVideoSrcKey(nextVideo);
+        const currentlyPlaybackReady = !!found?.video;
+        const wasPlaybackReady =
+          !!state.video && (state.video?.textTracks?.length ?? 0) > 0;
+
+        if (wasPlaybackReady && !currentlyPlaybackReady) {
+          clearPlaybackSessionUiState?.(
+            "playback ended or playback surface disappeared",
+          );
+          return;
+        }
+
         const hasCurrentSrcChanged =
           Boolean(nextVideoSrcKey) &&
           Boolean(state.lastVideoSrcKey) &&

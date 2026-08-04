@@ -18,6 +18,7 @@
       root[ROOT_STATE_KEY] = {
         deps: {},
         handlers: null,
+        refreshTimer: null,
       };
     }
     return root[ROOT_STATE_KEY];
@@ -141,6 +142,11 @@
     const section = root.getElementById("debug-section");
     if (section) delete section.dataset.bound;
 
+    if (state.refreshTimer) {
+      clearInterval(state.refreshTimer);
+      state.refreshTimer = null;
+    }
+
     state.handlers = null;
   }
 
@@ -262,6 +268,15 @@
 
     section.dataset.bound = "1";
     update(root);
+
+    if (state.refreshTimer) {
+      clearInterval(state.refreshTimer);
+      state.refreshTimer = null;
+    }
+
+    state.refreshTimer = setInterval(() => {
+      update(root).catch(() => {});
+    }, 500);
 
     return {
       root,

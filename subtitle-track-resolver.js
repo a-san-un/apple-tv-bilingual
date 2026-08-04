@@ -204,32 +204,41 @@
     return 0;
   }
 
-  function scoreSubtitleTrack(track, index) {
+  function scoreSubtitleTrack(track, index, currentTime = null) {
     const cuesLength = getTrackCuesLength(track);
     const activeCuesLength = getTrackActiveCuesLength(track);
+    const hasCueOverlap =
+      Number.isFinite(currentTime) && hasCueOverlapAtTime(track, currentTime);
+    const currentCueTextLength =
+      Number.isFinite(currentTime)
+        ? getCurrentCueTextLength(track, currentTime)
+        : 0;
 
     let score = 0;
 
     if (track.kind === "subtitles") score += 20;
+    if (track.kind === "captions") score += 10;
     if (track.mode !== "disabled") score += 10;
 
-    // Most important: avoid empty duplicate tracks.
+    // 最優先: いま実際に読める track。
+    if (activeCuesLength > 0) score += 5000;
+    if (hasCueOverlap) score += 3000;
+    if (currentCueTextLength > 0) score += 2000;
+
+    // 次点: cues を持つ実体 track。
     if (cuesLength > 0) score += 1000;
 
-    // Prefer tracks currently producing text.
-    if (activeCuesLength > 0) score += 200;
+    // tie-breaker: cues 数が多い方が本体 track であることが多い。
+    score += Math.min(cuesLength, 200);
 
-    // Small tie-breaker: more cues is usually the real content track.
-    score += Math.min(cuesLength, 100);
-
-    // Very small tie-breaker: later indices often looked more "real" in this Apple TV+ case.
+    // Apple TV+ の duplicate 対策として index は最後の微調整だけにする。
     score += index * 0.001;
 
     return score;
   }
 
   // requested language に一致する track だけを候補化し、
-  // currentTime で読める候補があればそれを優先し、なければ score で最良候補を返す。
+  // 「今読める候補」→「cues を持つ候補」→「全候補」の順で最良候補を返す。
   function pickBestSubtitleTrack(textTracks, requestedLang, currentTime = null) {
     const tracks = Array.from(textTracks || []);
     const candidates = tracks
@@ -246,31 +255,41 @@
       return null;
     }
 
-    const readableCandidates = candidates.filter(
+    const readableNowCandidates = candidates.filter(({ track }) => {
+      const activeCuesLength = getTrackActiveCuesLength(track);
+      const hasCueOverlap =
+        Number.isFinite(currentTime) && hasCueOverlapAtTime(track, currentTime);
+      const currentCueTextLength =
+        Number.isFinite(currentTime)
+          ? getCurrentCueTextLength(track, currentTime)
+          : 0;
+
+      return (
+        activeCuesLength > 0 ||
+        hasCueOverlap ||
+        currentCueTextLength > 0
+      );
+    });
+
+    const cuesBackedCandidates = candidates.filter(
       ({ track }) => getTrackCuesLength(track) > 0,
     );
 
     const effectiveCandidates =
-      readableCandidates.length > 0 ? readableCandidates : candidates;
-
-    const overlapCandidate = Number.isFinite(currentTime)
-      ? effectiveCandidates.find(
-          ({ track }) => hasCueOverlapAtTime(track, currentTime),
-        ) || null
-      : null;
-
-    if (overlapCandidate) {
-      return overlapCandidate.track;
-    }
+      readableNowCandidates.length > 0
+        ? readableNowCandidates
+        : cuesBackedCandidates.length > 0
+          ? cuesBackedCandidates
+          : candidates;
 
     effectiveCandidates.sort((a, b) => {
       return (
-        scoreSubtitleTrack(b.track, b.index) -
-        scoreSubtitleTrack(a.track, a.index)
+        scoreSubtitleTrack(b.track, b.index, currentTime) -
+        scoreSubtitleTrack(a.track, a.index, currentTime)
       );
     });
 
-    return effectiveCandidates[0].track;
+    return effectiveCandidates[0]?.track || null;
   }
 
   function getSecondarySubtitleTrackCandidates(video, requestedLang) {
@@ -291,7 +310,7 @@
       matchesRequestedLanguage: matchesRequestedLanguage(track, requestedLang),
       forcedLike: isForcedLikeTrack(track),
       hasCueOverlapAtCurrentTime: hasCueOverlapAtTime(track, currentTime),
-      score: scoreSubtitleTrack(track, index),
+      score: scoreSubtitleTrack(track, index, currentTime),
     }));
   }
 
@@ -426,6 +445,10 @@
     return selectedTrack;
   }
 
+  function resolveRequestedSubtitleTrack(textTracks, requestedLang, currentTime = null) {
+    return pickBestSubtitleTrack(textTracks, requestedLang, currentTime);
+  }
+
   window.ATVB.resolver = {
     normalizeTrackLabel,
     normalizeTrackLanguage,
@@ -441,5 +464,6 @@
     pickBestSubtitleTrack,
     getSecondarySubtitleTrackCandidates,
     resolveSecondarySubtitleTrack,
+    resolveRequestedSubtitleTrack,
   };
 })();

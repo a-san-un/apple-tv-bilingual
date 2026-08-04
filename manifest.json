@@ -39,6 +39,8 @@
         "settings-runtime.js",
         "modules/playback-context-controller.js",
         "reinitialize-coordinator.js",
+        "modules/playback-session-cleanup.js",
+        "modules/playback-startup-coordinator.js",
         "sync-interval-orchestrator.js",
         "content.js"
       ],
