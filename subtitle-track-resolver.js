@@ -296,7 +296,8 @@
     const tracks = Array.from(video?.textTracks || []);
     const currentTime = Number(video?.currentTime ?? NaN);
 
-    return tracks.map((track, index) => ({
+    const candidates = tracks.map((track, index) => ({
+      track,
       index,
       language: track?.language || "",
       normalizedLanguage: normalizeTrackLanguage(track?.language),
@@ -312,6 +313,21 @@
       hasCueOverlapAtCurrentTime: hasCueOverlapAtTime(track, currentTime),
       score: scoreSubtitleTrack(track, index, currentTime),
     }));
+
+    const subtitleCandidates = candidates.filter(
+      (candidate) =>
+        (candidate.kind === "subtitles" || candidate.kind === "captions") &&
+        !candidate.forcedLike,
+    );
+
+    const matchedCandidates = subtitleCandidates.filter(
+      (candidate) => candidate.matchesRequestedLanguage,
+    );
+
+    return (matchedCandidates.length > 0
+      ? matchedCandidates
+      : subtitleCandidates
+    ).sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0));
   }
 
   function resolveSecondarySubtitleTrack(video, requestedLang) {

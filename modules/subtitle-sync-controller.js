@@ -74,10 +74,7 @@
       }
 
       return [...candidates]
-        .filter(
-          (candidate) =>
-            candidate?.track && candidate?.matchesRequestedLanguage,
-        )
+        .filter((candidate) => candidate?.track)
         .sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0));
     }
 

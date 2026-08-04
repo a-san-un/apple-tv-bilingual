@@ -235,15 +235,10 @@ function forwardContentLog(...args) {
     );
 
   function getLiveDebugLogFilter() {
-    const filter = {
+    return {
       categories: CONTENT_DEFAULT_DEBUG_CATEGORIES,
       scopes: ["content"],
     };
-    const contentKey = String(state.currentContentKey || "").trim();
-    if (contentKey) {
-      filter.contentKey = contentKey;
-    }
-    return filter;
   }
 
   // logger の更新通知を Debug パネル更新へ接続する。
@@ -2711,11 +2706,11 @@ function forwardContentLog(...args) {
         secondaryLang = "",
         preferredSource = "",
       } = {}) => {
-        return await syncNativeSubtitleSelection(
+        return await resolverDeps.syncNativeSubtitleSelectionViaMenu?.({
           primaryLang,
           secondaryLang,
           preferredSource,
-        );
+        });
       },
       pollIntervalMs: 100,
       activationHoldMs: 500,
