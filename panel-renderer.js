@@ -79,12 +79,16 @@
       const { primary, secondary } = getBlockTexts(block);
       const pText = makeClickableSpans(primary, primary);
       const sText = makeClickableSpans(secondary, primary);
+      const seekTime = Array.isArray(block.cues) && block.cues[0]
+        ? Number(block.cues[0].startTime ?? block.startTime)
+        : Number(block.startTime ?? 0);
 
       return `
         <div
           class="${cls}"
           ${mid}
           data-time="${block.startTime}"
+          data-seek-time="${seekTime}"
           data-window-current="${isWindowCurrent ? "true" : "false"}"
           data-sequential-current="${isSequentialCurrent ? "true" : "false"}"
           data-panel-emphasized="${isPanelEmphasized ? "true" : "false"}"
@@ -140,7 +144,9 @@
           e.stopPropagation();
           e.preventDefault();
 
-          const t = parseFloat(blockEl.dataset.time);
+          const t = parseFloat(
+            blockEl.dataset.seekTime || blockEl.dataset.time,
+          );
           if (state.video && !Number.isNaN(t)) {
             state.video.currentTime = t;
             setTimeout(() => renderPanel(), 100);
@@ -251,11 +257,19 @@
     }
 
     // state.subtitleBlocks を panel 表示用 block 配列へ正規化する。
+    // 旧 Array 形式と、新しい { blocks, currentIndex, meta } 形式の両方を受ける。
     // strict current が無ければ currentTime 最寄り block を current 扱いにする。
     function getAllPanelBlocks(currentTime) {
-      const sourceBlocks = Array.isArray(state.subtitleBlocks)
-        ? state.subtitleBlocks.slice()
-        : [];
+      const subtitleBlocksState = state.subtitleBlocks;
+      const sourceBlocks = Array.isArray(subtitleBlocksState)
+        ? subtitleBlocksState.slice()
+        : Array.isArray(subtitleBlocksState?.blocks)
+          ? subtitleBlocksState.blocks.slice()
+          : [];
+
+      const sequenceCurrentIndex = Number.isInteger(subtitleBlocksState?.currentIndex)
+        ? subtitleBlocksState.currentIndex
+        : -1;
 
       const normalizedBlocks = sourceBlocks
         .filter((block) => block && typeof block === "object")
@@ -273,9 +287,10 @@
           return aStart - bStart;
         });
 
-      let currentIndex = normalizedBlocks.findIndex(
-        (block) => block.state === "current",
-      );
+      let currentIndex =
+        sequenceCurrentIndex >= 0 && sequenceCurrentIndex < normalizedBlocks.length
+          ? sequenceCurrentIndex
+          : normalizedBlocks.findIndex((block) => block.state === "current");
 
       if (currentIndex < 0 && normalizedBlocks.length > 0) {
         let closestIndex = 0;
@@ -338,6 +353,7 @@
 
       const currentTime = state.video ? state.video.currentTime : 0;
       const subtitleView = state.currentSubtitleView || null;
+      const subtitleViewCurrentBlock = subtitleView?.currentBlock || null;
       const { primary: subtitleViewPrimary, secondary: subtitleViewSecondary } =
         getSubtitleViewTexts(subtitleView);
 
@@ -347,9 +363,19 @@
         currentBlock: baseCurrentBlock,
       } = getAllPanelBlocks(currentTime);
 
-      // current 行だけ shared subtitle view を優先し、panel / overlay を揃えやすくする。
+      const resolvedCurrentBlock =
+        subtitleViewCurrentBlock ||
+        (currentIndex >= 0 ? basePanelBlocks[currentIndex] || null : null) ||
+        baseCurrentBlock ||
+        null;
+
       const panelBlocks = basePanelBlocks.map((block, index) => {
-        const isCurrent = index === currentIndex;
+        const isCurrent =
+          index === currentIndex ||
+          (resolvedCurrentBlock &&
+            block?.key &&
+            resolvedCurrentBlock?.key &&
+            block.key === resolvedCurrentBlock.key);
 
         if (!isCurrent) {
           return {
@@ -361,14 +387,14 @@
 
         const fallbackPrimary =
           subtitleViewPrimary ||
-          state.currentSubtitleBlock?.primaryText ||
+          resolvedCurrentBlock?.primaryText ||
           block.primaryText ||
           block.primary ||
           "";
 
         const fallbackSecondary =
           subtitleViewSecondary ||
-          state.currentSubtitleBlock?.secondaryText ||
+          resolvedCurrentBlock?.secondaryText ||
           block.secondaryText ||
           block.secondary ||
           "";
@@ -387,7 +413,9 @@
       });
 
       const currentBlock =
-        currentIndex >= 0 ? panelBlocks[currentIndex] || null : baseCurrentBlock;
+        resolvedCurrentBlock ||
+        (currentIndex >= 0 ? panelBlocks[currentIndex] || null : null) ||
+        null;
 
       const curPrimaryCue =
         currentBlock &&
@@ -413,6 +441,7 @@
               }
             : null,
           stateCurrentSubtitleBlock: state.currentSubtitleBlock || null,
+          subtitleViewCurrentBlock: subtitleViewCurrentBlock || null,
           subtitleViewPrimary,
           subtitleViewSecondary,
           panelBlocksPreview: panelBlocks

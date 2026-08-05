@@ -1,6 +1,6 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - secondary-subtitle-dom.js
-// version: 1.0.0
+// version: 1.0.1
 // Issue #32 Round 11: content.js の Section 3 から secondary subtitle DOM を分離
 //
 // Role（責務）
@@ -11,11 +11,11 @@
 //   から text / track / reason を渡してもらい、DOM に反映するだけの薄い module。
 //
 // API（既存呼び出し互換のため positional 引数を採用）
-// - ensure()                    : secondary subtitle 用 DOM ノードを確保して返す
-// - render(text, track, reason) : cue text を DOM に描画する（idle clear の保持判定を含む）
-//                                 reason は省略可能（ログ用途のみ）
+// - ensure()                     : secondary subtitle 用 DOM ノードを確保して返す
+// - render(text, track, reason)  : cue text を DOM に描画する（idle clear の保持判定を含む）
+//                                  reason は省略可能（ログ用途のみ）
 // - clear(reason)                : secondary subtitle DOM を明示的にクリアする
-//                                 reason は省略可能（ログ用途のみ）
+//                                  reason は省略可能（ログ用途のみ）
 // - cleanup()                    : 重複ノードなどの後始末整理（destroy ではない）
 // =============================================================
 
@@ -37,28 +37,21 @@
       panelSlotLayerStyleId = 'atv-panel-slot-layer-style',
     } = deps || {};
 
-    // --- DOM module 内部だけで使う「表示保持」用の状態 ---
-    // これは subtitle truth ではなく、あくまで「直前に描画した文字列を
-    // どこまで保持するか」という UI 表示上のグレースだけを管理する。
     let lastSecondaryText = '';
     let lastSecondaryTextAt = 0;
     let lastSecondarySignalAt = 0;
 
-    // ------------------------------------------------------
-    // ログ payload 生成（デバッグ用）
-    // ------------------------------------------------------
     function buildRenderLogPayload(text, track, elementCount) {
       return {
         textPreview: String(text || '').slice(0, 40),
         trackLanguage: track?.language || null,
-        activeCuesLength: getTrackActiveCuesLength ? getTrackActiveCuesLength(track) : null,
+        activeCuesLength: getTrackActiveCuesLength
+          ? getTrackActiveCuesLength(track)
+          : null,
         secondaryElementCount: elementCount,
       };
     }
 
-    // ------------------------------------------------------
-    // DOM ノード取得系
-    // ------------------------------------------------------
     function getSecondarySubtitleElements() {
       return document.querySelectorAll(
         '[data-secondary-subtitle], .dual-subtitles-secondary'
@@ -103,9 +96,6 @@
       return panel || null;
     }
 
-    // ------------------------------------------------------
-    // hidden layer style（Apple 標準字幕 UI と衝突しないための非表示スタイル）
-    // ------------------------------------------------------
     function ensurePanelSlotLayerStyle() {
       if (document.getElementById(panelSlotLayerStyleId)) return;
       const style = document.createElement('style');
@@ -119,15 +109,34 @@
       document.head.appendChild(style);
     }
 
-    // ------------------------------------------------------
-    // ensure: secondary subtitle 用 DOM ノードを確保する
-    // ------------------------------------------------------
+    function isInsidePanelHost(el, panelHost) {
+      if (!el || !panelHost) return false;
+      return panelHost.contains(el);
+    }
+
+    function removePanelSecondarySubtitleElements() {
+      const panelHost = getOrCreatePanelHost();
+      if (!panelHost) return;
+
+      panelHost
+        .querySelectorAll('[data-secondary-subtitle], .dual-subtitles-secondary')
+        .forEach((el) => el.remove());
+    }
+
+    function getNonPanelSecondarySubtitleElements() {
+      const panelHost = getOrCreatePanelHost();
+      return Array.from(getSecondarySubtitleElements()).filter(
+        (el) => !isInsidePanelHost(el, panelHost)
+      );
+    }
+
     function ensure() {
       if (!isSecondaryDomReady()) return null;
 
       ensurePanelSlotLayerStyle();
+      removePanelSecondarySubtitleElements();
 
-      const allExisting = getSecondarySubtitleElements();
+      const allExisting = getNonPanelSecondarySubtitleElements();
 
       if (allExisting.length > 1) {
         const keep = normalizeSecondarySubtitleElement(allExisting[0]);
@@ -150,14 +159,12 @@
       const panelHost = getOrCreatePanelHost();
       if (!panelHost) {
         if (isDebugEnabled()) {
-          logContentSubtitle('secondary element ensure skipped: panel host missing', {});
+          logContentSubtitle(
+            'secondary element ensure skipped: panel host missing',
+            {}
+          );
         }
         return null;
-      }
-
-      const ensuredAfterPanel = panelHost.querySelector('[data-secondary-subtitle]');
-      if (ensuredAfterPanel) {
-        return normalizeSecondarySubtitleElement(ensuredAfterPanel);
       }
 
       findSecondarySubtitlePanel(panelHost);
@@ -169,17 +176,14 @@
       panelHost.appendChild(el);
 
       if (isDebugEnabled()) {
-        logContentSubtitle('secondary element ensured', {});
+        logContentSubtitle('secondary element ensured', {
+          location: 'panelHost-slot',
+          note: 'panel-host descendants are hidden; runtime will avoid panel inline current row',
+        });
       }
       return el;
     }
 
-    // ------------------------------------------------------
-    // render: cue text を DOM に反映する（idle clear の保持判定込み）
-    // reason 例: 'attach' | 'rebind' | 'large-seek' | 'onPrimaryCueChange' |
-    //           'onCueChange' | 'nearbyRebuild' | 'syncSecondarySubtitleTrack'
-    // reason は省略可能（未指定時は 'unspecified'）
-    // ------------------------------------------------------
     function render(text, track, reason = 'unspecified') {
       let el = ensure();
       if (!el) return;
@@ -196,12 +200,17 @@
       }
       if (!el) return;
 
-      const activeCuesLength = getTrackActiveCuesLength ? getTrackActiveCuesLength(track) : 0;
+      const activeCuesLength = getTrackActiveCuesLength
+        ? getTrackActiveCuesLength(track)
+        : 0;
+
       let resolvedText = text;
       if (!resolvedText && activeCuesLength > 0 && getCurrentCueText) {
         resolvedText = getCurrentCueText(track);
       }
-      resolvedText = normalizeSubtitleText ? normalizeSubtitleText(resolvedText) : resolvedText;
+      resolvedText = normalizeSubtitleText
+        ? normalizeSubtitleText(resolvedText)
+        : resolvedText;
 
       const now = Date.now();
       if (activeCuesLength > 0 && resolvedText) {
@@ -223,13 +232,28 @@
         if (isDebugEnabled()) {
           logContentSubtitle(
             'secondary subtitle retained until next cue or idle clear',
-            { ...buildRenderLogPayload(finalText, track, countSecondarySubtitleElements()), reason }
+            {
+              ...buildRenderLogPayload(
+                finalText,
+                track,
+                countSecondarySubtitleElements()
+              ),
+              reason,
+            }
           );
         }
-      } else if (!finalText && lastSecondarySignalAt > 0 && now - lastSecondarySignalAt >= idleClearMs) {
+      } else if (
+        !finalText &&
+        lastSecondarySignalAt > 0 &&
+        now - lastSecondarySignalAt >= idleClearMs
+      ) {
         if (el.textContent && isDebugEnabled()) {
           logContentSubtitle('secondary subtitle cleared after idle timeout', {
-            ...buildRenderLogPayload('', track, countSecondarySubtitleElements()),
+            ...buildRenderLogPayload(
+              '',
+              track,
+              countSecondarySubtitleElements()
+            ),
             reason,
           });
         }
@@ -240,7 +264,11 @@
 
       if (isDebugEnabled()) {
         logContentSubtitle('secondary-dom render', {
-          ...buildRenderLogPayload(finalText, track, countSecondarySubtitleElements()),
+          ...buildRenderLogPayload(
+            finalText,
+            track,
+            countSecondarySubtitleElements()
+          ),
           reason,
         });
       }
@@ -249,10 +277,6 @@
       el.dataset.language = track?.language || '';
     }
 
-    // ------------------------------------------------------
-    // clear: 明示的にクリアする（idle clear とは別の即時クリア用）
-    // reason は省略可能（未指定時は 'unspecified'）
-    // ------------------------------------------------------
     function clear(reason = 'unspecified') {
       const el = ensure();
       if (!el) return;
@@ -265,12 +289,12 @@
       lastSecondarySignalAt = 0;
     }
 
-    // ------------------------------------------------------
-    // cleanup: 重複ノードの整理のみ（destroy はしない）
-    // ------------------------------------------------------
     function cleanup() {
-      const allExisting = getSecondarySubtitleElements();
+      removePanelSecondarySubtitleElements();
+
+      const allExisting = getNonPanelSecondarySubtitleElements();
       if (allExisting.length <= 1) return;
+
       for (let i = 1; i < allExisting.length; i++) {
         allExisting[i].remove();
       }

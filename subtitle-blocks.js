@@ -1,10 +1,13 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - subtitle-blocks.js
-// version: 1.1.0
+// version: 1.4.0
 // 役割: primary / secondary cues から panel / overlay 共通の
 // subtitle block sequence を構築する。
-// 同時間帯に並ぶ複数 primary cue は 1 block へ集約し、
-// overlay と panel が同じ表示単位を共有できるようにする。
+// sequence の正本は primary 基準とし、primary が空の間は
+// secondary だけでは current block を成立させない。
+// 追加: block 境界のすき間（cue 終了直後の一瞬）で current が
+// 見つからなくなる問題を避けるため、直前に終わった block を
+// 短時間だけ current として保持する grace-period フォールバックを追加。
 // =============================================================
 
 (() => {
@@ -46,17 +49,17 @@
       return "current";
     }
 
-    // 近い timing を持つ連続 primary cue 群を 1 block 用グループへ集約する。
-    // roll-up 的に同時間帯へ並ぶ短い cue 群を panel / overlay 共通の 1 表示単位にする。
-    function groupPrimaryCues(primaryCues, cleanCueText, mergeTolerance = 0.12) {
-      const primaryList = toArray(primaryCues);
+    // 近い timing を持つ連続 cue 群を 1 表示単位の group へ集約する。
+    // primary / secondary のどちらにも使える共通 group 化ロジックとする。
+    function groupCues(cues, cleanCueText, mergeTolerance = 0.12) {
+      const cueList = toArray(cues);
       const groups = [];
 
-      for (const cue of primaryList) {
-        const primaryText = normalizeText(
+      for (const cue of cueList) {
+        const text = normalizeText(
           cleanCueText ? cleanCueText(cue) : cue?.text,
         );
-        if (!primaryText) continue;
+        if (!text) continue;
 
         const startTime = Number(cue?.startTime ?? 0);
         const endTime = Number(cue?.endTime ?? 0);
@@ -69,7 +72,7 @@
 
         if (canMerge) {
           lastGroup.endTime = Math.max(lastGroup.endTime, endTime);
-          lastGroup.primarySegments.push(primaryText);
+          lastGroup.segments.push(text);
           lastGroup.cues.push(cue);
           continue;
         }
@@ -77,7 +80,7 @@
         groups.push({
           startTime,
           endTime,
-          primarySegments: [primaryText],
+          segments: [text],
           cues: [cue],
         });
       }
@@ -85,10 +88,61 @@
       return groups.map((group) => ({
         startTime: group.startTime,
         endTime: group.endTime,
-        primarySegments: group.primarySegments.slice(),
-        primaryText: group.primarySegments.join(" "),
+        segments: group.segments.slice(),
+        text: group.segments.join(" "),
         cues: group.cues.slice(),
       }));
+    }
+
+    // 後方互換のため primary 向け旧名も残す。
+    function groupPrimaryCues(primaryCues, cleanCueText, mergeTolerance = 0.12) {
+      return groupCues(primaryCues, cleanCueText, mergeTolerance).map(
+        (group) => ({
+          startTime: group.startTime,
+          endTime: group.endTime,
+          primarySegments: group.segments.slice(),
+          primaryText: group.text,
+          cues: group.cues.slice(),
+        }),
+      );
+    }
+
+    // block の最小共通 shape を primary / secondary group から組み立てる。
+    // sequence の正本は primary 基準とし、primary が空の block は作らない。
+    function buildSubtitleBlockFromGroups(primaryGroup, secondaryGroup) {
+      const primaryText = normalizeText(
+        primaryGroup?.text ?? primaryGroup?.primaryText,
+      );
+      const secondaryText = normalizeText(
+        secondaryGroup?.text ?? secondaryGroup?.secondaryText,
+      );
+
+      if (!primaryText) {
+        return null;
+      }
+
+      const primarySegments = Array.isArray(primaryGroup?.segments)
+        ? primaryGroup.segments.slice()
+        : Array.isArray(primaryGroup?.primarySegments)
+          ? primaryGroup.primarySegments.slice()
+          : [primaryText];
+
+      return {
+        startTime: Number(
+          primaryGroup?.startTime ?? secondaryGroup?.startTime ?? 0,
+        ),
+        endTime: Number(
+          primaryGroup?.endTime ?? secondaryGroup?.endTime ?? 0,
+        ),
+        primarySegments,
+        primaryText,
+        secondaryText,
+        cues: Array.isArray(primaryGroup?.cues)
+          ? primaryGroup.cues.slice()
+          : [],
+        hasPrimarySignal: true,
+        hasSecondarySignal: Boolean(secondaryText),
+      };
     }
 
     // primary block に最も近い secondary cue text を探索する。
@@ -133,6 +187,34 @@
       return normalizeText(
         cleanCueText ? cleanCueText(bestCue) : bestCue?.text,
       );
+    }
+
+    // 再生時刻近傍の cue group を 1 つ選ぶ。
+    // overlap を最優先し、無ければ start/end が最も近い group を返す。
+    function findNearestGroupAtTime(groups, now, matchWindow = 2.0) {
+      const list = Array.isArray(groups) ? groups : [];
+      if (!list.length) return null;
+
+      let bestGroup = null;
+      let bestScore = Number.POSITIVE_INFINITY;
+
+      for (const group of list) {
+        const startTime = Number(group?.startTime ?? 0);
+        const endTime = Number(group?.endTime ?? 0);
+        const overlaps = startTime <= now + 0.35 && now <= endTime + 0.35;
+        const score = overlaps
+          ? 0
+          : Math.min(Math.abs(startTime - now), Math.abs(endTime - now));
+
+        if (!overlaps && score > matchWindow) continue;
+
+        if (score < bestScore) {
+          bestScore = score;
+          bestGroup = group;
+        }
+      }
+
+      return bestGroup;
     }
 
     // sequence の current block と secondary の有無から health を診断する。
@@ -183,8 +265,63 @@
       };
     }
 
+    // block 配列から current index を1つ選ぶ。
+    // 通常は classifyBlockState で "current" になった block をそのまま使うが、
+    // block 境界のすき間（cue 終了直後の一瞬など）に now が落ちた場合、
+    // 直前に終わった block を GAP_HOLD_SECONDS の間だけ current として保持する。
+    // これにより cue 切り替わりの瞬間に current が -1 になり
+    // 字幕表示が一瞬途切れる／更新が止まって見える問題を避ける。
+    function resolveCurrentIndex(blocks, now, { gapHoldSeconds = 0.4 } = {}) {
+      const list = Array.isArray(blocks) ? blocks : [];
+      if (!list.length) return -1;
+
+      const currentCandidates = [];
+      list.forEach((block, index) => {
+        if (block.state === "current") {
+          currentCandidates.push(index);
+        }
+      });
+
+      if (currentCandidates.length === 1) {
+        return currentCandidates[0];
+      }
+
+      if (currentCandidates.length > 1) {
+        let bestIndex = currentCandidates[0];
+        let bestDelta = Number.POSITIVE_INFINITY;
+
+        for (const index of currentCandidates) {
+          const block = list[index];
+          const center = (block.startTime + block.endTime) / 2;
+          const delta = Math.abs(center - now);
+          if (delta < bestDelta) {
+            bestDelta = delta;
+            bestIndex = index;
+          }
+        }
+
+        return bestIndex;
+      }
+
+      let closestPastIndex = -1;
+      let closestPastGap = Number.POSITIVE_INFINITY;
+
+      list.forEach((block, index) => {
+        if (block.endTime <= now) {
+          const gap = now - block.endTime;
+          if (gap <= gapHoldSeconds && gap < closestPastGap) {
+            closestPastGap = gap;
+            closestPastIndex = index;
+          }
+        }
+      });
+
+      return closestPastIndex;
+    }
+
     // subtitle block sequence 全体を構築する。
     // primary cue 群をまず block 単位へ集約し、その後 secondary pairing と state 判定を行う。
+    // sequence の正本は primary 基準とし、primary が空の間は空 sequence を返す。
     function buildSubtitleBlockSequence({
       primaryCues,
       secondaryCues,
@@ -194,10 +331,16 @@
       matchWindow = 2.0,
       rebuildReason = "cuechange",
       primaryMergeTolerance = 0.12,
+      gapHoldSeconds = 0.4,
     }) {
       const secondaryList = toArray(secondaryCues);
-      const groupedPrimaryList = groupPrimaryCues(
+      const groupedPrimaryList = groupCues(
         primaryCues,
+        cleanCueText,
+        primaryMergeTolerance,
+      );
+      const groupedSecondaryList = groupCues(
+        secondaryCues,
         cleanCueText,
         primaryMergeTolerance,
       );
@@ -209,34 +352,23 @@
         ]),
       );
 
-      const blocks = groupedPrimaryList
+      let blocks = groupedPrimaryList
         .map((group) => {
-          const primaryText = normalizeText(group?.primaryText);
-          if (!primaryText) return null;
+          const block = buildSubtitleBlockFromGroups(group, null);
+          if (!block) return null;
 
-          const block = {
-            startTime: Number(group?.startTime ?? 0),
-            endTime: Number(group?.endTime ?? 0),
-            primaryText,
-            primarySegments: Array.isArray(group?.primarySegments)
-              ? group.primarySegments.slice()
-              : [primaryText],
-            secondaryText: "",
-            hasPrimarySignal: Boolean(primaryText),
-            hasSecondarySignal: false,
-            state: "future",
-            stable: false,
-          };
-
-          block.key = buildSubtitleBlockKey(block);
-          block.secondaryText = matchSecondaryText(
+          const secondaryText = matchSecondaryText(
             block,
             secondaryList,
             cleanCueText,
             matchWindow,
           );
-          block.hasSecondarySignal = Boolean(block.secondaryText);
+
+          block.secondaryText = secondaryText;
+          block.hasSecondarySignal = Boolean(secondaryText);
           block.state = classifyBlockState(block, now);
+          block.stable = false;
+          block.key = buildSubtitleBlockKey(block);
 
           const prev = previousMap.get(block.key);
           if (block.state === "past") {
@@ -248,17 +380,25 @@
             prev.stable === true
           ) {
             block.stable = true;
-          } else {
-            block.stable = false;
           }
 
           return block;
         })
         .filter(Boolean);
 
-      const currentIndex = blocks.findIndex(
-        (block) => block.state === "current",
-      );
+      const currentIndex = resolveCurrentIndex(blocks, now, {
+        gapHoldSeconds,
+      });
+
+      if (
+        currentIndex >= 0 &&
+        blocks[currentIndex] &&
+        blocks[currentIndex].state !== "current"
+      ) {
+        blocks[currentIndex].state = "current";
+        blocks[currentIndex].heldByGapFallback = true;
+      }
+
       const sequenceHealth = analyzeSequenceHealth(
         blocks,
         currentIndex,
@@ -273,7 +413,9 @@
           rebuildReason,
           blockCount: blocks.length,
           groupedPrimaryCount: groupedPrimaryList.length,
+          groupedSecondaryCount: groupedSecondaryList.length,
           primaryMergeTolerance,
+          gapHoldSeconds,
           sequenceHealth,
         },
       };
@@ -281,9 +423,13 @@
 
     root.subtitleBlocks = {
       buildSubtitleBlockKey,
+      groupCues,
       groupPrimaryCues,
+      buildSubtitleBlockFromGroups,
       buildSubtitleBlockSequence,
       analyzeSequenceHealth,
+      findNearestGroupAtTime,
+      resolveCurrentIndex,
     };
   } catch (error) {
     console.error("[ATVB] subtitle-blocks: failed", error);

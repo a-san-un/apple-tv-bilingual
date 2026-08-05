@@ -20,7 +20,7 @@
     preferredAiProvider: "auto",
   };
 
-  const DEBUG_SECONDARY_SUBS = false;
+  const DEBUG_SECONDARY_SUBS = true;
   // Optional probe logs for #19 regressions. Keep false in normal operation.
   const DEBUG_PANEL_PROBE = true;
   const LOG_CATEGORIES = Object.freeze({
@@ -88,7 +88,7 @@
     lastSecondaryText: "",
     lastSecondaryTextAt: 0,
     lastSecondarySignalAt: 0,
-    panelVisible: true,
+    panelVisible: false,
     ejdictMap: null,
     secondaryHideTimer: null,
     overlayRoot: null,
@@ -112,10 +112,12 @@
     // "要求した言語" ではなく "成功した言語" を保持する点に注意。
     lastNativeSubtitleSyncLang: "",
     lastNativeSubtitleSyncOk: false,
+    allowSecondaryOnlyUntil: 0,
   };
 
   let panelUi = null;
   let secondaryTrackSyncInterval = null;
+
 // =====================================================================
 // Section 1: Logger & Debug Bridge
 // Role:
@@ -551,179 +553,33 @@ function forwardContentLog(...args) {
   }
 
   function ensureSecondarySubtitleElement() {
-  const requestedSettings = state.requestedContentSettings || {};
-  const effectiveSettings = {
-    primaryLang:
-      requestedSettings.primaryLang ||
-      state.contentSettings.primaryLang ||
-      "",
-    secondaryLang:
-      requestedSettings.secondaryLang ||
-      state.requestedSecondaryLang ||
-      state.contentSettings.secondaryLang ||
-      "",
-  };
-
-  if (!isLanguageSelectionReady(effectiveSettings)) {
-    return null;
+    if (!secondarySubtitleDom?.ensure) return null;
+    return secondarySubtitleDom.ensure();
   }
 
-  let panelHost = getTarget().querySelector("#atv-panel-host");
-  if (!panelHost) {
-    panelUi?.createRightPanel?.();
-    panelHost = getTarget().querySelector("#atv-panel-host");
-  }
-  if (!panelHost) return null;
-
-  const shadowRoot = panelHost.shadowRoot || null;
-  if (!shadowRoot) return null;
-
-  let secondaryEl = shadowRoot.querySelector(
-    "[data-secondary-subtitle], .dual-subtitles-secondary",
-  );
-  if (secondaryEl) {
-    if (!secondaryEl.hasAttribute("data-secondary-subtitle")) {
-      secondaryEl.setAttribute("data-secondary-subtitle", "");
-    }
-    if (!secondaryEl.classList.contains("dual-subtitles-secondary")) {
-      secondaryEl.classList.add("dual-subtitles-secondary");
-    }
-    return secondaryEl;
-  }
-
-  let panelScroll = shadowRoot.getElementById("panel-scroll");
-  if (!panelScroll) {
-    const panel = shadowRoot.querySelector(
-      "[data-dual-subtitles-panel], .dual-subtitles-panel",
-    );
-    panelScroll = panel || null;
-  }
-  if (!panelScroll) return null;
-
-  secondaryEl = document.createElement("div");
-  secondaryEl.setAttribute("data-secondary-subtitle", "");
-  secondaryEl.className = "dual-subtitles-secondary";
-  secondaryEl.dataset.language = "";
-  panelScroll.insertBefore(secondaryEl, panelScroll.firstChild || null);
-
-  if (DEBUG_SECONDARY_SUBS) {
-    logContent("secondary element ensured");
-  }
-  return secondaryEl;
-}
   function ensurePanelSlotLayerStyle() {
-    if (document.getElementById(PANEL_SLOT_LAYER_STYLE_ID)) return;
-
-    const style = document.createElement("style");
-    style.id = PANEL_SLOT_LAYER_STYLE_ID;
-    style.textContent = `
-      #atv-panel-host > .dual-subtitles-secondary,
-      #atv-panel-host > [data-secondary-subtitle] {
-        display: none !important;
-      }
-    `;
-    document.head.appendChild(style);
+    if (!secondarySubtitleDom?.ensure) return;
+    secondarySubtitleDom.ensure();
   }
 
-  // [render: panel shell apply]
-  function renderSecondarySubtitle(text, track) {
-    let el = ensureSecondarySubtitleElement();
-    if (!el) return;
-
-    const elementCountBefore = document.querySelectorAll(
-      "[data-secondary-subtitle], .dual-subtitles-secondary",
-    ).length;
-    if (elementCountBefore > 1) {
-      if (DEBUG_SECONDARY_SUBS) {
-        logContent(
-          "secondary duplicate elements cleaned",
-          getSecondaryRenderLogPayload(text, track, elementCountBefore),
-        );
-      }
-      el = ensureSecondarySubtitleElement();
-    }
-
-    if (!el) {
-      if (DEBUG_SECONDARY_SUBS) {
-        logContent("secondary element missing, recreating");
-      }
-      el = ensureSecondarySubtitleElement();
-    }
-    if (!el) return;
-
-    const activeCuesLength = getTrackActiveCuesLength(track);
-    let resolvedText = text || "";
-    if (!resolvedText && activeCuesLength > 0) {
-      resolvedText = getCurrentCueText(track) || "";
-      const elementCount = document.querySelectorAll(
-        "[data-secondary-subtitle], .dual-subtitles-secondary",
-      ).length;
-      if (DEBUG_SECONDARY_SUBS) {
-        logContent(
-          "secondary cue text resolved",
-          getSecondaryRenderLogPayload(resolvedText, track, elementCount),
-        );
-      }
-    }
-
-    const elementCount = document.querySelectorAll(
-      "[data-secondary-subtitle], .dual-subtitles-secondary",
-    ).length;
-
-    resolvedText = normalizeSubtitleText(resolvedText);
-
-    let finalText = resolvedText;
-    const now = Date.now();
-
-    if (finalText) {
-      state.lastSecondaryText = finalText;
-      state.lastSecondaryTextAt = now;
-    } else if (
-      !finalText &&
-      activeCuesLength === 0 &&
-      state.lastSecondaryText &&
-      now - state.lastSecondaryTextAt <= SECONDARY_SUBTITLE_GRACE_MS
-    ) {
-      finalText = state.lastSecondaryText;
-      if (DEBUG_SECONDARY_SUBS) {
-        logContent(
-          "secondary subtitle retained during grace period",
-          getSecondaryRenderLogPayload(finalText, track, elementCount),
-        );
-      }
-    } else if (
-      !finalText &&
-      now - state.lastSecondaryTextAt > SECONDARY_SUBTITLE_GRACE_MS
-    ) {
-      if (el.textContent) {
-        if (DEBUG_SECONDARY_SUBS) {
-          logContent(
-            "secondary subtitle cleared after grace period",
-            getSecondaryRenderLogPayload("", track, elementCount),
-          );
-        }
-      }
-      state.lastSecondaryText = "";
-      state.lastSecondaryTextAt = 0;
-    }
-
-    if (DEBUG_SECONDARY_SUBS) {
-      logContent(
-        "secondary render called",
-        getSecondaryRenderLogPayload(finalText, track, elementCount),
-      );
-    }
-
-    el.textContent = finalText;
-    el.dataset.language = track?.language || "";
+  // [render: secondary subtitle dom]
+  function renderSecondarySubtitle(text, track, reason = "unspecified") {
+    if (!secondarySubtitleDom?.render) return;
+    secondarySubtitleDom.render(text, track, reason);
     logSubtitlePanelState("after-renderSecondarySubtitle");
   }
 
   function logSubtitlePanelState(tag) {
     try {
       const panelHost = getTarget().querySelector("#atv-panel-host");
-      const secondaryEl =
-        panelHost?.shadowRoot?.querySelector("[data-secondary-subtitle]") || null;
+      const secondaryEls = Array.from(
+        document.querySelectorAll("[data-secondary-subtitle], .dual-subtitles-secondary"),
+      );
+      const nonPanelSecondaryEls = secondaryEls.filter(
+        (el) => !panelHost || !panelHost.contains(el),
+      );
+      const secondaryEl = nonPanelSecondaryEls[0] || null;
+
       const snapshot = state.lastPanelRenderSnapshot || {};
       const currentSubtitleBlock = snapshot.currentSubtitleBlock || null;
       const payload = {
@@ -734,6 +590,7 @@ function forwardContentLog(...args) {
         currentPrimary: currentSubtitleBlock?.primaryText || "",
         currentSecondary: currentSubtitleBlock?.secondaryText || "",
         secondaryElText: secondaryEl?.textContent || "",
+        secondaryElCount: nonPanelSecondaryEls.length,
       };
 
       if (tag === "after-renderSecondarySubtitle") {
@@ -744,6 +601,7 @@ function forwardContentLog(...args) {
           currentPrimary: payload.currentPrimary,
           currentSecondary: payload.currentSecondary,
           secondaryElText: payload.secondaryElText,
+          secondaryElCount: payload.secondaryElCount,
         });
         if (signature === state.lastAfterRenderSecondarySnapshotSignature) {
           return;
@@ -757,6 +615,7 @@ function forwardContentLog(...args) {
       });
     }
   }
+
 
   async function syncSecondarySubtitleTrack(
     video,
@@ -817,8 +676,7 @@ function forwardContentLog(...args) {
       } else if (found && state.video) {
         const switched = syncHistoryContextWithPlayback("content_key_changed");
         if (switched) {
-          renderCurrentSnapshot();
-          renderPanel();
+          requestSnapshotRefresh("content_key_changed");
         }
       }
 
@@ -834,6 +692,7 @@ function forwardContentLog(...args) {
 
       if (largeSeekDetected) {
         applyCurrentStateToPanel("sync_interval_large_seek_resync");
+        requestSnapshotRefresh("sync_interval_large_seek_resync");
       }
 
       const effectiveSecondaryLanguage =
@@ -1547,8 +1406,6 @@ function forwardContentLog(...args) {
 
     applyLayoutToTargets(getLayoutTargets(), show);
 
-    overlayController.setOverlayVisible(!show);
-
     layoutController.onPanelVisibilityChanged(show, {
       reason: "applyLayout",
       retryDelays: show ? [1200] : [],
@@ -1570,7 +1427,6 @@ function forwardContentLog(...args) {
     if (panelHost) panelHost.style.display = "";
     if (overlayHost) {
       overlayHost.style.width = "70%";
-      overlayHost.style.display = "none";
     }
     if (toggleBtn) toggleBtn.style.display = "none";
   }
@@ -1587,7 +1443,6 @@ function forwardContentLog(...args) {
     if (panelHost) panelHost.style.display = "none";
     if (overlayHost) {
       overlayHost.style.width = "100%";
-      overlayHost.style.display = "";
     }
     if (toggleBtn) toggleBtn.style.display = "block";
   }
@@ -2546,6 +2401,7 @@ function forwardContentLog(...args) {
   const vttDeps = window.ATVB?.vtt || {};
   const resolverDeps = window.ATVB?.resolver || {};
   const subtitleBlocksDeps = window.ATVB?.subtitleBlocks || {};
+  const createSecondarySubtitleDom = root.createSecondarySubtitleDom || null;
   const { buildSubtitleBlockSequence } = subtitleBlocksDeps;
 
   function getTrackCuesLength(track) {
@@ -2559,13 +2415,66 @@ function forwardContentLog(...args) {
   function normalizeSubtitleText(text) {
     return vttDeps.normalizeSubtitleText?.(text) ?? "";
   }
+  const secondarySubtitleDom = createSecondarySubtitleDom
+  ? createSecondarySubtitleDom({
+      getTarget,
+      isSecondaryDomReady: () => true,
+      getTrackActiveCuesLength,
+      getCurrentCueText,
+      normalizeSubtitleText,
+      logContentSubtitle,
+      isDebugEnabled: () => DEBUG_SECONDARY_SUBS,
+      idleClearMs: SECONDARY_SUBTITLE_IDLE_CLEAR_MS,
+      panelSlotLayerStyleId: PANEL_SLOT_LAYER_STYLE_ID,
+    })
+  : null;
 
-  function setSubtitleBlocks(blocks) {
-    state.subtitleBlocks = Array.isArray(blocks) ? blocks : [];
+  function setSubtitleBlocks(blocksOrSequence) {
+    if (Array.isArray(blocksOrSequence)) {
+      state.subtitleBlocks = {
+        blocks: blocksOrSequence,
+        currentIndex: -1,
+        meta: null,
+      };
+      return;
+    }
+
+    if (blocksOrSequence && typeof blocksOrSequence === "object") {
+      state.subtitleBlocks = {
+        blocks: Array.isArray(blocksOrSequence.blocks)
+          ? blocksOrSequence.blocks
+          : [],
+        currentIndex: Number.isInteger(blocksOrSequence.currentIndex)
+          ? blocksOrSequence.currentIndex
+          : -1,
+        meta: blocksOrSequence.meta || null,
+      };
+      return;
+    }
+
+    state.subtitleBlocks = {
+      blocks: [],
+      currentIndex: -1,
+      meta: null,
+    };
   }
 
   function getSubtitleBlockSequence() {
-    return Array.isArray(state.subtitleBlocks) ? state.subtitleBlocks : [];
+    if (state.subtitleBlocks && typeof state.subtitleBlocks === "object") {
+      return state.subtitleBlocks;
+    }
+    if (Array.isArray(state.subtitleBlocks)) {
+      return {
+        blocks: state.subtitleBlocks,
+        currentIndex: -1,
+        meta: null,
+      };
+    }
+    return {
+      blocks: [],
+      currentIndex: -1,
+      meta: null,
+    };
   }
 
   function getCurrentSubtitleBlockFromSequence() {
@@ -2661,6 +2570,7 @@ function forwardContentLog(...args) {
     getCurrentCue,
     cleanCueText: vttDeps.cleanCueText,
     getCurrentTime: () => state.video?.currentTime ?? 0,
+    getVideoElement: () => state.video ?? null,
     getPrimaryTrackCues: () => state.primaryTrack?.cues || [],
     getSecondaryTrackCues: () => state.secondaryTrack?.cues || [],
     getPreviousSubtitleBlocks: () => getSubtitleBlockSequence() || [],
@@ -2671,6 +2581,7 @@ function forwardContentLog(...args) {
     setCurrentSubtitleBlock,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
+    renderCurrentSnapshot,
     updateOverlay: (...args) => overlayController.updateOverlay(...args),
     updateOverlayFromView: (view) =>
       overlayController.updateOverlayFromView(view, {
@@ -2718,6 +2629,33 @@ function forwardContentLog(...args) {
     },
   });
 
+  function rebuildSubtitleBlocksForPanelOpen(reason = "panel_open") {
+    const sequence = getSubtitleBlockSequence();
+    const blocks = Array.isArray(sequence?.blocks) ? sequence.blocks : [];
+    const currentIndex = Number.isInteger(sequence?.currentIndex)
+      ? sequence.currentIndex
+      : -1;
+    const shouldRebuild = blocks.length === 0 || currentIndex < 0;
+
+    logContent("panel open rebuild check", {
+      reason,
+      blockCount: blocks.length,
+      currentIndex,
+      shouldRebuild,
+    });
+
+    if (!shouldRebuild) return null;
+
+    const rebuildResult =
+      cueController?.rebuildCurrentSceneSubtitleBlocks?.() || null;
+
+    logContent("panel open rebuild result", {
+      reason,
+      rebuildResult,
+    });
+
+    return rebuildResult;
+  }
 
   panelUi = createPanelUi({
     state,
@@ -2733,6 +2671,7 @@ function forwardContentLog(...args) {
     logContent,
     renderCurrentSnapshot,
     renderPanel,
+    rebuildSubtitleBlocksForPanelOpen,
   });
 
 
@@ -2808,11 +2747,8 @@ function forwardContentLog(...args) {
       getTrackActiveCuesLength: resolverDeps.getTrackActiveCuesLength,
       getCurrentCueText,
       renderSecondarySubtitle,
-      clearInitialCueRecovery,
-      hasRecoverableInitialCue,
-      tryCompleteInitialCueRecovery,
-      bindInitialCueRecoveryListeners,
-      scheduleInitialCueRecoveryRetries,
+      requestSnapshotRefresh,
+      getCurrentSubtitleView: () => state.currentSubtitleView || null,
       getRequestedSecondaryLang: () =>
         state.requestedSecondaryLang || state.contentSettings.secondaryLang,
     },
@@ -3034,6 +2970,7 @@ function ensureSyncIntervalOrchestrator() {
 
       // sync helper が最終的に bind したトラックをここで確定値として読む。
       state.secondaryTrack = cueController.getBoundSecondaryTrack();
+      requestSnapshotRefresh("secondary_sync_completed");
     } else {
       cueController.unbindSecondarySubtitleTrack();
       renderSecondarySubtitle("", null);
@@ -3098,33 +3035,6 @@ function ensureSyncIntervalOrchestrator() {
     };
   }
 
-  // [binder/cue: recovery] 現在 bind されている track から初回 cue を回収できるかを判定する。
-  // activeCues と currentTime 周辺の cue text を見て、初回 recovery を進めてよい状態かを返す。
-  function hasRecoverableInitialCue() {
-    const currentTime = state.video?.currentTime ?? 0;
-    const boundSecondaryTrack = cueController.getBoundSecondaryTrack();
-
-    // state 上の track と controller 側の bound track の両方を見る。
-    // secondary の bind 完了タイミング差で state 反映が一瞬遅れても recovery 判定を落とさない。
-    const tracks = [
-      state.primaryTrack,
-      state.secondaryTrack,
-      boundSecondaryTrack,
-    ];
-
-    for (let i = 0; i < tracks.length; i++) {
-      const track = tracks[i];
-      if (!canReadCueFromTrack(track)) continue;
-
-      // まず activeCues を優先し、取れない場合は currentTime 基準の cue text を見る。
-      // Apple TV+ では activeCues 更新と text 参照可能化のタイミングがずれることがある。
-      if (getTrackActiveCuesLength(track) > 0) return true;
-      if (getCurrentCueText(track, currentTime)) return true;
-    }
-
-    return false;
-  }
-
   function clearInternalSubtitleState(reason = "unknown") {
     state.lastSecondaryText = "";
     state.lastSecondaryTextAt = 0;
@@ -3149,109 +3059,6 @@ function ensureSyncIntervalOrchestrator() {
     });
   }
 
-  // -----------------------------------------------------------------------------
-  // Subtitle Pipeline: Flow Coordinator
-  // 再初期化フロー本体。状態クリアから track 再解決、listener 再接続、
-  // panel 反映までの手順を束ねるが、判定本体や retry policy 自体は持たない。
-  // 個別の resolver / binder / render 詳細は下位 helper へ委譲する。
-  // -----------------------------------------------------------------------------
-
-  // [binder/cue: recovery] attach / recovery の再初期化入口。
-  // track 再選択・listener 再接続・panel 反映を最小差分でまとめて行う。
-  // clearInternalSubtitleState / selectPrimaryAndSecondaryTracks は
-  // coordinator 自身の責務ではなく、将来分離可能な implementation detail として扱う。
-  function runInitialCueRecoveryRender(reason = "unknown") {
-    if (!hasRecoverableInitialCue()) return false;
-
-    panelUi.applyPanelState(`initial_recovery:${reason}`);
-    logContent("initial cue recovery render", {
-      reason,
-      primaryActiveCues: getTrackActiveCuesLength(state.primaryTrack),
-      secondaryActiveCues: getTrackActiveCuesLength(state.secondaryTrack),
-    });
-    return true;
-  }
-
-  function tryCompleteInitialCueRecovery(reason, completeRecovery) {
-    if (!runInitialCueRecoveryRender(reason)) return false;
-    completeRecovery();
-    return true;
-  }
-
-  function bindInitialCueRecoveryListeners(completeRecovery) {
-    // [initial cue recovery: event-driven path]
-    // cuechange / timeupdate を一時的に監視し、初回 cue が取れた瞬間に
-    // render を再試行して recovery を完了させる。
-    const attachRecoveryListener = (target, eventName, label) => {
-      if (!target || typeof target.addEventListener !== "function") return;
-
-      const onRecoveryEvent = () => {
-        tryCompleteInitialCueRecovery(
-          `${eventName}:${label}`,
-          completeRecovery,
-        );
-      };
-
-      target.addEventListener(eventName, onRecoveryEvent);
-      state.initialCueRecoveryCleanup.push(() => {
-        target.removeEventListener(eventName, onRecoveryEvent);
-      });
-    };
-
-    // 初回 cue 到着時は delay ではなくイベントで回復描画を確定させる。
-    attachRecoveryListener(state.primaryTrack, "cuechange", "primary");
-    attachRecoveryListener(state.secondaryTrack, "cuechange", "secondary");
-    const secondaryBoundTrack = cueController.getBoundSecondaryTrack();
-    if (secondaryBoundTrack && secondaryBoundTrack !== state.secondaryTrack) {
-      attachRecoveryListener(
-        secondaryBoundTrack,
-        "cuechange",
-        "secondaryBound",
-      );
-    }
-    attachRecoveryListener(state.video, "timeupdate", "video");
-  }
-
-  function scheduleInitialCueRecoveryRetries(completeRecovery, isRecovered) {
-    // [initial cue recovery: delayed retry path]
-    // イベントだけでは初回 cue を拾えないケースに備えて、
-    // 短い遅延で数回だけ render を再試行する。
-    const delays = [220, 650, 1300];
-    delays.forEach((delayMs) => {
-      const timerId = window.setTimeout(() => {
-        if (!state.video || !state.primaryTrack) return;
-        if (isRecovered()) return;
-
-        if (!hasRecoverableInitialCue()) return;
-        tryCompleteInitialCueRecovery(`delay:${delayMs}`, completeRecovery);
-      }, delayMs);
-      state.initialCueRecoveryTimers.push(timerId);
-    });
-  }
-
-  // [binder/cue: recovery] 初回 cue recovery の event-driven / delayed retry を束ねる。
-  function scheduleInitialCueRecovery() {
-    clearInitialCueRecovery();
-
-    let recovered = false;
-    const completeRecovery = () => {
-      if (recovered) return;
-      recovered = true;
-      clearInitialCueRecovery();
-    };
-    const isRecovered = () => recovered;
-
-    bindInitialCueRecoveryListeners(completeRecovery);
-
-    logContent("initial cue recovery scheduled", {
-      primaryMode: state.primaryTrack?.mode || "",
-      secondaryMode: state.secondaryTrack?.mode || "",
-      primaryActiveCues: getTrackActiveCuesLength(state.primaryTrack),
-      secondaryActiveCues: getTrackActiveCuesLength(state.secondaryTrack),
-    });
-
-    scheduleInitialCueRecoveryRetries(completeRecovery, isRecovered);
-  }
 
   function refreshSettingsOnPanelOpen() {
     if (!state.panelVisible) return;
@@ -3323,10 +3130,21 @@ function ensureSyncIntervalOrchestrator() {
     };
   }
 
+  function requestSnapshotRefresh(reason = "") {
+    logContentSubtitle("snapshot refresh requested", {
+      contentKey: state.currentContentKey || "",
+      reason: String(reason || ""),
+      currentTime: Number(state.video?.currentTime ?? 0),
+      hasPrimaryTrack: Boolean(state.primaryTrack),
+      hasSecondaryTrack: Boolean(state.secondaryTrack),
+    });
 
+    renderCurrentSnapshot();
+    renderPanel();
+  }
 
   // [binder/cue: recovery] initial snapshot apply
-  // [binder/cue: recovery] 起動時に取得済み cue を即時適用し、未取得なら recovery 経路へ委譲する。
+  // 起動直後に取得済み cue を即時適用し、current block 未確定時は failure ではなく waiting 状態として扱う。
   function renderCurrentSnapshot() {
     const sequence = getSubtitleBlockSequence();
     const blocks = Array.isArray(sequence?.blocks) ? sequence.blocks : [];
@@ -3337,33 +3155,122 @@ function ensureSyncIntervalOrchestrator() {
 
     const subtitleViewResolver = window.ATVB?.subtitleViewResolver || null;
 
+    const currentBlockFromSequence =
+      currentIndex >= 0 && currentIndex < blocks.length
+        ? blocks[currentIndex] || null
+        : null;
+
+    logContentSubtitle("current subtitle view snapshot input", {
+      contentKey: state.currentContentKey || "",
+      totalBlockCount: blocks.length,
+      currentIndex,
+      sequenceMeta: meta || null,
+      currentBlockFromSequence: currentBlockFromSequence
+        ? {
+            key: currentBlockFromSequence.key || "",
+            startTime: Number(currentBlockFromSequence.startTime ?? 0),
+            endTime: Number(currentBlockFromSequence.endTime ?? 0),
+            state: currentBlockFromSequence.state || "",
+            primaryText: String(currentBlockFromSequence.primaryText || ""),
+            secondaryText: String(currentBlockFromSequence.secondaryText || ""),
+            hasPrimarySignal: Boolean(currentBlockFromSequence.hasPrimarySignal),
+            hasSecondarySignal: Boolean(currentBlockFromSequence.hasSecondarySignal),
+          }
+        : null,
+      holdBlockCandidate:
+        state.nearbyRebuildHoldView?.currentBlock ||
+        state.currentSubtitleView?.currentBlock ||
+        state.currentSubtitleBlock ||
+        null,
+      blocksPreview: blocks
+        .slice(
+          Math.max(0, currentIndex - 2),
+          currentIndex >= 0 ? currentIndex + 3 : Math.min(blocks.length, 5),
+        )
+        .map((block) => ({
+          key: block?.key || "",
+          startTime: Number(block?.startTime ?? 0),
+          endTime: Number(block?.endTime ?? 0),
+          state: block?.state || "",
+          primaryText: String(block?.primaryText || ""),
+          secondaryText: String(block?.secondaryText || ""),
+          hasPrimarySignal: Boolean(block?.hasPrimarySignal),
+          hasSecondarySignal: Boolean(block?.hasSecondarySignal),
+        })),
+    });
+
     const view =
       subtitleViewResolver &&
       typeof subtitleViewResolver.resolveUiSubtitleView === "function"
-        ? subtitleViewResolver.resolveUiSubtitleView(blocks, currentIndex, {
-            ...(meta || {}),
-            contentKey: state.currentContentKey || "",
-          })
+      ? subtitleViewResolver.resolveUiSubtitleView(blocks, currentIndex, {
+          ...(meta || {}),
+          now: state.video?.currentTime ?? 0,
+          currentTime: state.video?.currentTime ?? 0,
+          contentKey: state.currentContentKey || "",
+          holdView: state.nearbyRebuildHoldView || null,
+          holdBlock:
+            state.nearbyRebuildHoldView?.currentBlock ||
+            state.currentSubtitleView?.currentBlock ||
+            state.currentSubtitleBlock ||
+            null,
+          holdBlockTotalBlockCount: Array.isArray(
+            state.nearbyRebuildHoldView?.blocks,
+          )
+            ? state.nearbyRebuildHoldView.blocks.length
+            : Array.isArray(blocks)
+            ? blocks.length
+            : 0,
+        })
         : {
             primary: "",
             secondary: "",
             isVisible: false,
             currentBlock: null,
-            meta: meta || null,
+            meta: {
+              ...(meta || {}),
+              viewStatus: "waiting",
+              waitingReason: blocks.length === 0
+                ? "empty_sequence"
+                : "waiting_for_current_cue",
+              totalBlockCount: blocks.length,
+              currentIndex: Number.isInteger(currentIndex) ? currentIndex : null,
+            },
           };
 
     const primaryText = String(view?.primary || "");
     const secondaryText = String(view?.secondary || "");
+    const viewMeta =
+      view?.meta && typeof view.meta === "object" ? view.meta : null;
+    const viewStatus = String(viewMeta?.viewStatus || "");
+    const waitingReason = String(viewMeta?.waitingReason || "");
 
     state.subtitleViewPrimary = primaryText;
     state.subtitleViewSecondary = secondaryText;
     state.currentSubtitleView = view || null;
+
+    // panel / overlay 以外の observer でも参照できるよう、view meta の状態を state に残す。
+    state.currentSubtitleViewStatus = viewStatus;
+    state.currentSubtitleViewWaitingReason = waitingReason;
 
     // panel 側が別名 state を見ていても値が渡るように同期しておく
     state.currentPrimaryText = primaryText;
     state.currentSecondaryText = secondaryText;
     state.lastPrimaryText = primaryText;
     state.lastSecondaryText = secondaryText;
+
+    // 空 view は異常ではなく「まだ現在位置の cue が来ていない待機状態」。
+    // 起動直後の観測で waiting / ready を見分けやすいよう snapshot ログを残す。
+    logContentSubtitle("current subtitle view snapshot", {
+      contentKey: state.currentContentKey || "",
+      totalBlockCount: blocks.length,
+      currentIndex,
+      subtitleViewPrimary: primaryText,
+      subtitleViewSecondary: secondaryText,
+      isVisible: Boolean(view?.isVisible),
+      hasCurrentBlock: Boolean(view?.currentBlock),
+      viewStatus,
+      waitingReason,
+    });
 
     overlayController.updateOverlayFromView?.(view, {
       contentKey: state.currentContentKey || "",
@@ -3529,7 +3436,7 @@ function ensureSyncIntervalOrchestrator() {
     if (typeof options.keepPanelVisible === "boolean") {
       state.panelVisible = options.keepPanelVisible;
     } else {
-      state.panelVisible = sidebarEnabledSetting;
+      state.panelVisible = false;
     }
 
     logContent("startBilingual panelVisible applied", {
@@ -3567,9 +3474,10 @@ function ensureSyncIntervalOrchestrator() {
       );
     }
 
+    state.allowSecondaryOnlyUntil = Date.now() + 3000;
     panelUi.applyPanelState("startBilingual_ready");
 
-    scheduleInitialCueRecovery();
+    initialCueRecovery?.schedule?.("attach");
     scheduleControlSettlingBurst("startBilingual");
 
     logContentSubtitle("startBilingual ready", {

@@ -197,6 +197,9 @@
 
         panelUi.applyPanelState("sync_interval_large_seek_resync");
 
+        renderCurrentSnapshot?.();
+        renderPanel?.();
+
         initialCueRecovery?.dispatch("large-seek", {
           video: state.video,
           requestedSecondaryLang: getRequestedSecondaryLang?.(),

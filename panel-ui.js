@@ -1,8 +1,9 @@
 // =============================================================
 // Apple TV Bilingual Subtitles - panel-ui.js
-// version: 1.0.4
+// version: 1.0.5
 // Issue #32 Round 11 後半: panel host / shell 責務へ限定し、
-// secondary subtitle DOM ensure は content.js caller 側へ戻す。
+// shared view を正本とする現在の構成に合わせて、panel header の
+// secondary language selector と旧 secondary subtitle DOM 依存を除去。
 // Debug panel は初期 mount のみ行い、applyPanelState では再 mount しない。
 // PR3: layout / playback controls orchestration は content.js の
 // applyLayout → layout controller 側へ寄せ、ここは薄い UI 配線に保つ。
@@ -25,6 +26,7 @@
       logContent,
       renderCurrentSnapshot,
       renderPanel,
+      rebuildSubtitleBlocksForPanelOpen,
     } = deps;
 
     const PANEL_SLOT_LAYER_STYLE_ID = "atv-panel-slot-layer-style";
@@ -95,116 +97,25 @@
           <div id="panel-header">
             <span>📋 字幕履歴</span>
             <div class="panel-header-actions">
-              <label
-                class="panel-language-select-wrap"
-                title="第2字幕言語"
-                style="display:flex;align-items:center;gap:6px;margin-right:8px;"
-              >
-                <span style="font-size:12px;opacity:0.8;">第2字幕</span>
-                <select
-                  id="panel-secondary-lang"
-                  style="max-width:140px;padding:2px 6px;border-radius:6px;"
-                >
-                  <option value="">読み込み中...</option>
-                </select>
-              </label>
               <button id="settings-btn" type="button" title="設定">⚙️</button>
               <button id="close-btn" type="button">✕ 閉じる</button>
             </div>
           </div>
           ${buildPanelDebugShellHTML()}
           <div id="panel-scroll">
-            <div
-              data-secondary-subtitle
-              class="dual-subtitles-secondary"
-              data-language
-            ></div>
             <div id="subtitle-list"></div>
           </div>
         </div>
       `;
     }
 
-    async function populateSecondaryLanguageSelect(root) {
-      const select = root.getElementById("panel-secondary-lang");
-      if (!select) return;
-
-      const currentValue = String(
-        state.requestedSecondaryLang ||
-          state.contentSettings?.secondaryLang ||
-          ""
-      ).trim();
-
-      const setOptions = (items = []) => {
-        const options = items
-          .filter((item) => item && item.lang)
-          .map((item) => {
-            const value = String(item.lang || "").trim();
-            const label = String(item.label || item.lang || "").trim();
-            return `<option value="${value}">${label || value}</option>`;
-          })
-          .join("");
-
-        select.innerHTML = `
-          <option value="">未選択</option>
-          ${options}
-        `;
-        select.value = currentValue;
-        if (select.value !== currentValue) {
-          select.value = "";
-        }
-      };
-
-      try {
-        chrome.runtime.sendMessage({ type: "GET_LANGUAGES" }, (response) => {
-          if (chrome.runtime.lastError) {
-            select.innerHTML = `<option value="">取得失敗</option>`;
-            return;
-          }
-          setOptions(Array.isArray(response) ? response : []);
-        });
-      } catch (_) {
-        select.innerHTML = `<option value="">取得失敗</option>`;
-      }
-    }
-
     function wirePanelHeaderActions() {
       const root = state.panelShadowRoot;
       if (!root) return;
 
-      populateSecondaryLanguageSelect(root);
-
       root.getElementById("settings-btn")?.addEventListener("click", () => {
         try {
           chrome.runtime.sendMessage({ type: "OPEN_OPTIONS_PAGE" });
-        } catch (_) {}
-      });
-
-      root.getElementById("panel-secondary-lang")?.addEventListener("change", (event) => {
-        const secondaryLang = String(event.target?.value || "").trim();
-        const nextSettings = {
-          ...state.contentSettings,
-          secondaryLang,
-          showSidebar: state.panelVisible !== false,
-        };
-
-        try {
-          chrome.runtime.sendMessage(
-            {
-              type: "APPLY_SETTINGS_TO_APPLE_TV",
-              reason: "panel_secondary_language_change",
-              settings: nextSettings,
-            },
-            () => {
-              if (chrome.runtime.lastError) return;
-              state.requestedSecondaryLang = secondaryLang;
-              state.requestedContentSettings = {
-                ...state.requestedContentSettings,
-                secondaryLang,
-                showSidebar: state.panelVisible !== false,
-              };
-            }
-          );
         } catch (_) {}
       });
 
@@ -319,6 +230,10 @@
     }
 
     function applyPanelState(reason = "unknown") {
+      if (typeof rebuildSubtitleBlocksForPanelOpen === "function") {
+        rebuildSubtitleBlocksForPanelOpen(reason);
+      }
+
       if (typeof renderCurrentSnapshot === "function") {
         renderCurrentSnapshot();
       }
@@ -327,21 +242,16 @@
         renderPanel();
       }
 
-      const panelHost = getTarget?.().querySelector("#atv-panel-host") || null;
-      const panelRoot = panelHost?.shadowRoot || state.panelShadowRoot || null;
-      const secondaryEl =
-        panelRoot?.querySelector("[data-secondary-subtitle]") || null;
-      const secondaryText = String(secondaryEl?.textContent || "").trim();
-
       if (typeof logContent === "function") {
         logContent("panel state applied", {
           reason,
           contentKey: state.currentContentKey,
           panelVisible: state.panelVisible,
-          hasPanelHost: Boolean(panelHost),
-          hasPanelShadowRoot: Boolean(panelRoot),
-          secondaryTextLength: secondaryText.length,
-          historySize: state.subtitleHistory.length,
+          hasPanelHost: Boolean(getTarget?.().querySelector("#atv-panel-host")),
+          hasPanelShadowRoot: Boolean(state.panelShadowRoot),
+          historySize: Array.isArray(state.subtitleHistory)
+            ? state.subtitleHistory.length
+            : 0,
           panelPastCount: Array.isArray(state.panelPastBlocks)
             ? state.panelPastBlocks.length
             : 0,
@@ -353,14 +263,14 @@
       return new Promise((resolve) => {
         chrome.storage.local.get("panelVisible", (result = {}) => {
           if (chrome.runtime.lastError) {
-            resolve(true);
+            resolve(false);
             return;
           }
           if (Object.prototype.hasOwnProperty.call(result, "panelVisible")) {
             resolve(result.panelVisible !== false);
             return;
           }
-          resolve(true);
+          resolve(false);
         });
       });
     }
