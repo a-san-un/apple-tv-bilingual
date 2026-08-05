@@ -1,15 +1,28 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - debug-panel.js
-// version: 2.6.3
+// version: 2.6.6
 // 役割: 右字幕パネル下部の Debug UI 入口を提供する。
 // Phase C: mount/update/clear/unmount の API スケルトンのみを固定する。
+// Fix: VM/world をまたいでも shadow root 単位で handler/state を管理する。
 // =============================================================
 (function () {
   "use strict";
 
   window.ATVB = window.ATVB || {};
 
-  let activeEntry = null;
+  const ROOT_STATE_KEY = "__atvbDebugPanelState";
+
+  function getRootState(root) {
+    if (!root) return null;
+    if (!root[ROOT_STATE_KEY]) {
+      root[ROOT_STATE_KEY] = {
+        deps: {},
+        handlers: null,
+        refreshTimer: null,
+      };
+    }
+    return root[ROOT_STATE_KEY];
+  }
 
   function readUiFilters(root) {
     if (!root) return {};
@@ -43,41 +56,58 @@
     return merged;
   }
 
-  async function readLogText(entry) {
-    if (!entry || typeof entry.deps.getLogText !== "function") return "";
+  async function readLogText(root) {
+    const state = getRootState(root);
+    if (!state || typeof state.deps.getLogText !== "function") return "";
+
     const baseFilter =
-      typeof entry.deps.getFilter === "function" ? entry.deps.getFilter() : {};
-    const uiFilter = readUiFilters(entry.root);
+      typeof state.deps.getFilter === "function" ? state.deps.getFilter() : {};
+    const uiFilter = readUiFilters(root);
     const filter = mergeDebugFilters(baseFilter, uiFilter);
-    return (await entry.deps.getLogText(filter)) || "";
+    return (await state.deps.getLogText(filter)) || "";
   }
 
-  async function update() {
-    if (!activeEntry?.root) return;
+  async function update(root) {
+    if (!root) return;
 
-    const textarea = activeEntry.root.getElementById("debug-log");
+    const textarea = root.getElementById("debug-log");
     if (!textarea) return;
 
-    const text = await readLogText(activeEntry);
+    const text = await readLogText(root);
     textarea.value = text;
     textarea.scrollTop = textarea.scrollHeight;
   }
 
-  async function clear() {
-    if (!activeEntry) return;
-    if (typeof activeEntry.deps.clearLogs === "function") {
-      await activeEntry.deps.clearLogs();
+  async function clear(root) {
+    const state = getRootState(root);
+    if (!state) return;
+
+    if (typeof state.deps.clearLogs === "function") {
+      await state.deps.clearLogs();
     }
-    await update();
+    await update(root);
   }
 
-  function unmount() {
-    if (!activeEntry?.root) {
-      activeEntry = null;
-      return;
-    }
+  function readExpandedState(section) {
+    return section?.dataset?.expanded === "1";
+  }
 
-    const { root, handlers } = activeEntry;
+  function writeExpandedState(section, expanded) {
+    if (!section) return;
+    section.dataset.expanded = expanded ? "1" : "0";
+  }
+
+  function syncExpandedUi(section, toggleBtn, body, expanded) {
+    if (!toggleBtn || !body) return;
+    body.hidden = !expanded;
+    toggleBtn.textContent = expanded ? "▼" : "▶";
+    toggleBtn.setAttribute("aria-expanded", String(expanded));
+    writeExpandedState(section, expanded);
+  }
+
+  function detachHandlers(root, handlers) {
+    if (!root || !handlers) return;
+
     root
       .getElementById("debugSectionToggle")
       ?.removeEventListener("click", handlers.onToggle);
@@ -99,66 +129,83 @@
     root
       .getElementById("debugFilterText")
       ?.removeEventListener("input", handlers.onFilterInput);
+  }
+
+  function unmount(root) {
+    if (!root) return;
+
+    const state = getRootState(root);
+    if (!state?.handlers) return;
+
+    detachHandlers(root, state.handlers);
 
     const section = root.getElementById("debug-section");
     if (section) delete section.dataset.bound;
-    activeEntry = null;
+
+    if (state.refreshTimer) {
+      clearInterval(state.refreshTimer);
+      state.refreshTimer = null;
+    }
+
+    state.handlers = null;
   }
 
-  // [wiring: debug panel] debug shell の UI イベントを root に接続し、初期表示を同期する。
-  // shell の構造は content.js / buildPanelDebugShellHTML が担い、ここでは debug UI の wiring と update の起動を行う。
   function mount(root, deps = {}) {
     if (!root) return null;
-    if (activeEntry?.root && activeEntry.root !== root) {
-      unmount();
-    }
 
     const section = root.getElementById("debug-section");
     if (!section) return null;
 
-    if (activeEntry?.root === root && section.dataset.bound === "1") {
-      update();
-      return activeEntry;
-    }
-
     const toggleBtn = root.getElementById("debugSectionToggle");
     const body = root.getElementById("debugSectionBody");
+    const state = getRootState(root);
+
+    if (!section.dataset.expanded) {
+      section.dataset.expanded = "0";
+    }
+
+    if (state.handlers) {
+      detachHandlers(root, state.handlers);
+      state.handlers = null;
+    }
+
+    state.deps = deps;
 
     const handlers = {
       onToggle: () => {
         if (!toggleBtn || !body) return;
-        const isHidden = body.hidden;
-        body.hidden = !isHidden;
-        toggleBtn.textContent = isHidden ? "▼" : "▶";
-        toggleBtn.setAttribute("aria-expanded", String(isHidden));
+        const nextExpanded = body.hidden;
+        syncExpandedUi(section, toggleBtn, body, nextExpanded);
       },
       onCopy: async () => {
-        const text = await readLogText(activeEntry);
+        const text = await readLogText(root);
         try {
-          if (typeof deps.copyText === "function") {
-            await deps.copyText(text);
+          if (typeof state.deps.copyText === "function") {
+            await state.deps.copyText(text);
           } else {
             await navigator.clipboard.writeText(text);
           }
-          if (typeof deps.logInfo === "function") {
-            deps.logInfo("Debug panel copied logs", {
+          if (typeof state.deps.logInfo === "function") {
+            state.deps.logInfo("Debug panel copied logs", {
               lineCount: text ? text.split("\n").length : 0,
             });
           }
         } catch (error) {
-          if (typeof deps.logError === "function") {
-            deps.logError("Debug panel copy failed", { error: String(error) });
+          if (typeof state.deps.logError === "function") {
+            state.deps.logError("Debug panel copy failed", {
+              error: String(error),
+            });
           }
         }
       },
       onDownload: async () => {
-        const text = await readLogText(activeEntry);
-        if (typeof deps.downloadLogs !== "function") return;
+        const text = await readLogText(root);
+        if (typeof state.deps.downloadLogs !== "function") return;
 
-        deps.downloadLogs(text, (result = {}) => {
+        state.deps.downloadLogs(text, (result = {}) => {
           if (result.ok) {
-            if (typeof deps.logInfo === "function") {
-              deps.logInfo("Debug panel downloaded logs", {
+            if (typeof state.deps.logInfo === "function") {
+              state.deps.logInfo("Debug panel downloaded logs", {
                 lineCount: text ? text.split("\n").length : 0,
                 downloadId: result.downloadId ?? null,
               });
@@ -166,8 +213,8 @@
             return;
           }
 
-          if (typeof deps.logError === "function") {
-            deps.logError("Debug panel download failed", {
+          if (typeof state.deps.logError === "function") {
+            state.deps.logError("Debug panel download failed", {
               error: result.error ?? "unknown",
             });
           }
@@ -175,31 +222,28 @@
       },
       onClear: async () => {
         try {
-          await clear();
+          await clear(root);
         } catch (error) {
-          if (typeof deps.logError === "function") {
-            deps.logError("Debug panel clear failed", { error: String(error) });
+          if (typeof state.deps.logError === "function") {
+            state.deps.logError("Debug panel clear failed", {
+              error: String(error),
+            });
           }
         }
       },
       onFilterChange: async () => {
-        await update();
+        await update(root);
       },
       onFilterInput: async () => {
-        await update();
+        await update(root);
       },
     };
 
-    activeEntry = {
-      root,
-      deps,
-      handlers,
-    };
+    state.handlers = handlers;
 
     if (toggleBtn && body) {
-      body.hidden = true;
-      toggleBtn.textContent = "▶";
-      toggleBtn.setAttribute("aria-expanded", "false");
+      const expanded = readExpandedState(section);
+      syncExpandedUi(section, toggleBtn, body, expanded);
       toggleBtn.addEventListener("click", handlers.onToggle);
     }
 
@@ -223,14 +267,31 @@
       ?.addEventListener("input", handlers.onFilterInput);
 
     section.dataset.bound = "1";
-    update();
-    return activeEntry;
+    update(root);
+
+    if (state.refreshTimer) {
+      clearInterval(state.refreshTimer);
+      state.refreshTimer = null;
+    }
+
+    state.refreshTimer = setInterval(() => {
+      update(root).catch(() => {});
+    }, 500);
+
+    return {
+      root,
+      handlers,
+    };
   }
 
   window.ATVB.debugPanel = {
     mount,
-    update,
-    clear,
+    update(root) {
+      return update(root);
+    },
+    clear(root) {
+      return clear(root);
+    },
     unmount,
   };
 })();

@@ -35,9 +35,13 @@
         "overlay-controller.js",
         "runtime-observers.js",
         "playback-controls-layout.js",
+        "modules/playback-controls-layout-controller.js",
         "settings-runtime.js",
         "modules/playback-context-controller.js",
         "reinitialize-coordinator.js",
+        "modules/playback-session-cleanup.js",
+        "modules/playback-startup-coordinator.js",
+        "modules/subtitle-sync-controller.js",
         "sync-interval-orchestrator.js",
         "content.js"
       ],
@@ -46,11 +50,11 @@
     }
   ],
   "web_accessible_resources": [
-  {
-    "resources": ["dict/ejdict.json", "panel.css"],
-    "matches": ["https://tv.apple.com/*"]
-  }
-],
+    {
+      "resources": ["dict/ejdict.json", "panel.css"],
+      "matches": ["https://tv.apple.com/*"]
+    }
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "ATV Bilingual"

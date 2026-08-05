@@ -26,25 +26,157 @@
     getCurrentCue,
     cleanCueText,
     getCurrentTime,
+    getVideoElement,
     getPrimaryTrackCues,
     getSecondaryTrackCues,
     getPreviousSubtitleBlocks,
+    buildSubtitleBlockSequence,
     setSubtitleBlocks,
     getSubtitleBlockSequence,
     getCurrentSubtitleBlockFromSequence,
     setCurrentSubtitleBlock,
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
+    renderCurrentSnapshot,
     updateOverlay,
     updateOverlayFromView,
     updateOverlayFromBlock,
     renderPanel,
+    matchesRequestedLanguage,
+    isForcedLikeTrack,
   }) {
+    // 現在 bind されている primary listener の解除関数を保持する。
+    let primaryTrackCleanup = null;
+
+    // 現在 bind 済みの primary track を保持する。
+    let primaryTrackBound = null;
+
     // 現在 bind されている secondary listener の解除関数を保持する。
     let secondaryTrackCleanup = null;
 
     // 現在 bind 済みの secondary track を保持する。
     let secondaryTrackBound = null;
+
+    function getUsableTrackDebugPayload(track) {
+      return {
+        language: track?.language || "",
+        label: track?.label || "",
+        kind: track?.kind || "",
+        mode: track?.mode || "",
+        cuesLength: getTrackCuesLength(track),
+        activeCuesLength: getTrackActiveCuesLength(track),
+      };
+    }
+
+    function ensureSubtitleTracksUsable(video, requestedLang, options = {}) {
+      const finalMode = options.finalMode === "showing" ? "showing" : "hidden";
+      const reason = options.reason || "unknown";
+      const activationHoldMs = Math.max(0, Number(options.activationHoldMs) || 800);
+      const cuePollIntervalMs = Math.max(50, Number(options.cuePollIntervalMs) || 100);
+      const cuePollTimeoutMs = Math.max(
+        activationHoldMs,
+        Number(options.cuePollTimeoutMs) || 1500,
+      );
+
+      if (!video?.textTracks || !requestedLang) {
+        const payload = {
+          reason,
+          requestedLang: requestedLang || "",
+          finalMode,
+          matchedTrackCount: 0,
+          activatedTrackCount: 0,
+          activated: false,
+          activationHoldMs,
+          cuePollIntervalMs,
+          cuePollTimeoutMs,
+          tracks: [],
+        };
+        logContent("subtitle track usability", payload);
+        return payload;
+      }
+
+      const tracks = Array.from(video.textTracks || []);
+      const targets = tracks.filter((track) => {
+        if (!track) return false;
+        const kind = String(track.kind || "").toLowerCase();
+        if (kind !== "subtitles" && kind !== "captions") return false;
+        if (isForcedLikeTrack?.(track)) return false;
+        return matchesRequestedLanguage?.(track, requestedLang);
+      });
+
+      let activatedTrackCount = 0;
+      for (const track of targets) {
+        try {
+          track.mode = "showing";
+          activatedTrackCount += 1;
+        } catch (_) {}
+      }
+
+      if (finalMode === "hidden" && activatedTrackCount > 0) {
+        const startedAt = Date.now();
+        const shouldFinalizeNow = () => Date.now() - startedAt >= activationHoldMs;
+
+        const restoreHidden = (restoreReason) => {
+          for (const track of targets) {
+            try {
+              track.mode = "hidden";
+            } catch (_) {}
+          }
+
+          logContent("subtitle track usability restore", {
+            reason,
+            requestedLang: requestedLang || "",
+            restoreReason,
+            activationHoldMs,
+            cuePollIntervalMs,
+            cuePollTimeoutMs,
+            elapsedMs: Date.now() - startedAt,
+            tracks: targets.map((track) => getUsableTrackDebugPayload(track)),
+          });
+        };
+
+        const pollUntilReady = () => {
+          const elapsedMs = Date.now() - startedAt;
+          const hasLoadedCues = targets.some((track) => {
+            try {
+              return (track?.cues?.length || 0) > 0;
+            } catch (_) {
+              return false;
+            }
+          });
+
+          if (hasLoadedCues && shouldFinalizeNow()) {
+            restoreHidden("cues-loaded");
+            return;
+          }
+
+          if (elapsedMs >= cuePollTimeoutMs) {
+            restoreHidden(hasLoadedCues ? "timeout-after-cues" : "timeout-no-cues");
+            return;
+          }
+
+          setTimeout(pollUntilReady, cuePollIntervalMs);
+        };
+
+        setTimeout(pollUntilReady, cuePollIntervalMs);
+      }
+
+      const payload = {
+        reason,
+        requestedLang: requestedLang || "",
+        finalMode,
+        matchedTrackCount: targets.length,
+        activatedTrackCount,
+        activated: activatedTrackCount > 0,
+        activationHoldMs,
+        cuePollIntervalMs,
+        cuePollTimeoutMs,
+        tracks: targets.map((track) => getUsableTrackDebugPayload(track)),
+      };
+
+      logContent("subtitle track usability", payload);
+      return payload;
+    }
 
     // 最新の merged subtitle health を観測・外部参照用に保持する。
     let lastMergedSubtitleHealth = null;
@@ -166,6 +298,144 @@
     // secondary lane の runtime missing が一定時間続き、
     // merged assists も recovery 対象と示したときだけ recover / force-rebind / terminated を判定する。
     // 主に large seek 後の secondary missing を対象とし、通常再生での短い gap はここでは扱わない。
+    function evaluateLaneHealth({
+      laneName,
+      now,
+      healthy,
+      isMissing,
+    }) {
+      const laneState = updateLaneState(laneStates[laneName], {
+        now,
+        healthy,
+        isMissing,
+      });
+
+      if (healthy) {
+        resetLaneState(laneState);
+      }
+
+      logContent?.("laneHealthUpdated", {
+        laneName,
+        healthy: laneState.healthy,
+        isMissing: laneState.isMissing,
+        missingDurationMs: laneState.missingDurationMs,
+        missCount: laneState.missCount,
+        terminated: laneState.terminated,
+      });
+
+      return laneState;
+    }
+
+    function evaluateLaneRecovery({
+      laneName,
+      laneState,
+      shouldRecover = false,
+      shouldForceRebind = false,
+      missingReason = "lane_not_missing",
+      waitingReason = "lane_missing_waiting_window",
+      terminatedReason = "lane_recovery_terminated",
+      missLimitReason = "lane_recovery_miss_limit",
+      recoverReason = "lane_current_missing",
+      forceRebindReason = "lane_force_rebind_after_repeated_miss",
+      observationOnly = false,
+    }) {
+      if (!laneState.isMissing) {
+        laneState.lastDecision = "idle";
+        const result = {
+          lane: laneName,
+          laneState,
+          action: "idle",
+          reason: missingReason,
+        };
+        logContent?.("laneRecoveryDecision", {
+          laneName,
+          action: result.action,
+          reason: result.reason,
+          missingDurationMs: laneState.missingDurationMs,
+          missCount: laneState.missCount,
+        });
+        return result;
+      }
+
+      if (laneState.terminated) {
+        laneState.lastDecision = "terminated";
+        const result = {
+          lane: laneName,
+          laneState,
+          action: observationOnly ? "idle" : "terminated",
+          reason: terminatedReason,
+        };
+        logContent?.("laneRecoveryDecision", {
+          laneName,
+          action: result.action,
+          reason: result.reason,
+          missingDurationMs: laneState.missingDurationMs,
+          missCount: laneState.missCount,
+        });
+        return result;
+      }
+
+      if (!shouldRecover) {
+        laneState.lastDecision = "idle";
+        const result = {
+          lane: laneName,
+          laneState,
+          action: "idle",
+          reason: waitingReason,
+        };
+        logContent?.("laneRecoveryDecision", {
+          laneName,
+          action: result.action,
+          reason: result.reason,
+          missingDurationMs: laneState.missingDurationMs,
+          missCount: laneState.missCount,
+        });
+        return result;
+      }
+
+      laneState.missCount += 1;
+
+      if (laneState.missCount >= SECONDARY_RECOVERY_MISS_LIMIT) {
+        laneState.terminated = true;
+        laneState.lastDecision = "terminated";
+        const result = {
+          lane: laneName,
+          laneState,
+          action: observationOnly ? "idle" : "terminated",
+          reason: missLimitReason,
+        };
+        logContent?.("laneRecoveryDecision", {
+          laneName,
+          action: result.action,
+          reason: result.reason,
+          missingDurationMs: laneState.missingDurationMs,
+          missCount: laneState.missCount,
+        });
+        return result;
+      }
+
+      laneState.lastDecision = shouldForceRebind ? "force-rebind" : "recover";
+
+      const result = {
+        lane: laneName,
+        laneState,
+        action: observationOnly
+          ? "idle"
+          : (shouldForceRebind ? "force-rebind" : "recover"),
+        reason: shouldForceRebind ? forceRebindReason : recoverReason,
+      };
+
+      logContent?.("laneRecoveryDecision", {
+        laneName,
+        action: result.action,
+        reason: result.reason,
+        missingDurationMs: laneState.missingDurationMs,
+        missCount: laneState.missCount,
+      });
+
+      return result;
+    }
+
     function evaluateSecondaryRecovery({
       now,
       runtime,
@@ -270,9 +540,23 @@
       };
     }
 
+    // 現在 bind 済みの primary track を返す。
+    function getBoundPrimaryTrack() {
+      return primaryTrackBound;
+    }
+
     // 現在 bind 済みの secondary track を返す。
     function getBoundSecondaryTrack() {
       return secondaryTrackBound;
+    }
+
+    // bind 済みの primary track listener を解除する。
+    function unbindPrimarySubtitleTrack() {
+      if (primaryTrackCleanup) {
+        primaryTrackCleanup();
+        primaryTrackCleanup = null;
+      }
+      primaryTrackBound = null;
     }
 
     // bind 済みの secondary track listener を解除する。
@@ -282,6 +566,72 @@
         secondaryTrackCleanup = null;
       }
       secondaryTrackBound = null;
+    }
+
+    // primary track を usable 化し、cuechange だけでなく playback 側イベントでも再評価できるようにする。
+    // 初回 resume 時に cuechange が来ないケースでも、timeupdate / seeked / playing で onCueChange を補助発火させる。
+    function bindPrimarySubtitleTrack(track, onCueChange, options = {}) {
+      unbindPrimarySubtitleTrack();
+      if (!track) return false;
+
+      ensureSubtitleTracksUsable(options.video, options.requestedLang, {
+        finalMode: "showing",
+        reason: options.reason || "primary-bind",
+      });
+
+      try {
+        track.mode = "showing";
+      } catch (_) {}
+
+      const video = options.video || null;
+
+      try {
+        track.addEventListener("cuechange", onCueChange);
+
+        const onPlaybackSignal = () => {
+          try {
+            onCueChange();
+          } catch (_) {}
+        };
+
+        if (video && typeof video.addEventListener === "function") {
+          video.addEventListener("timeupdate", onPlaybackSignal);
+          video.addEventListener("seeked", onPlaybackSignal);
+          video.addEventListener("playing", onPlaybackSignal);
+        }
+
+        primaryTrackCleanup = () => {
+          try {
+            track.removeEventListener("cuechange", onCueChange);
+          } catch (_) {}
+
+          if (video && typeof video.removeEventListener === "function") {
+            try {
+              video.removeEventListener("timeupdate", onPlaybackSignal);
+            } catch (_) {}
+            try {
+              video.removeEventListener("seeked", onPlaybackSignal);
+            } catch (_) {}
+            try {
+              video.removeEventListener("playing", onPlaybackSignal);
+            } catch (_) {}
+          }
+        };
+
+        primaryTrackBound = track;
+
+        requestAnimationFrame(() => {
+          try {
+            onCueChange();
+          } catch (_) {}
+        });
+
+        return true;
+      } catch (_) {
+        primaryTrackCleanup = null;
+        primaryTrackBound = null;
+        return false;
+      }
     }
 
     // secondary bind 時の mode を、実行文脈と readable snapshot から決定する。
@@ -384,34 +734,126 @@
       const previousMode = track?.mode || "";
       const requestedMode = modeDecision?.requestedMode || "hidden";
 
-      try {
-        track.mode = requestedMode;
-      } catch (error) {
-        logContent("secondary-sync mode-apply failed", {
+      const getReadableSnapshot = () => {
+        const currentTime = getCurrentTime();
+        const cuesLength = getTrackCuesLength(track);
+        const activeCuesLength = getTrackActiveCuesLength(track);
+        const overlapCue = getCurrentCue(track, currentTime);
+        const currentCueText = getCurrentCueText(track, currentTime);
+
+        return {
+          currentTime,
+          cuesLength,
+          activeCuesLength,
+          hasCueOverlapAtCurrentTime: Boolean(overlapCue),
+          currentCueTextLength: currentCueText?.length ?? 0,
+          readableNow:
+            activeCuesLength > 0 ||
+            Boolean(overlapCue) ||
+            (currentCueText?.length ?? 0) > 0,
+        };
+      };
+
+      const applyTrackMode = (nextMode, reason = "direct-apply") => {
+        try {
+          track.mode = nextMode;
+        } catch (error) {
+          logContent("secondary-sync mode-apply failed", {
+            trackLanguage: track?.language || "",
+            trackKind: track?.kind || "",
+            requestedMode: nextMode,
+            previousMode: track?.mode || previousMode,
+            policy: modeDecision?.policy || "",
+            rationale: modeDecision?.rationale || "",
+            decisionReason: modeDecision?.reason || "",
+            applyReason: reason,
+            message: String(error?.message || error || ""),
+          });
+        }
+
+        logContent("secondary-sync mode-applied", {
           trackLanguage: track?.language || "",
           trackKind: track?.kind || "",
-          requestedMode,
-          previousMode,
+          requestedMode: nextMode,
+          appliedMode: track?.mode || "",
           policy: modeDecision?.policy || "",
           rationale: modeDecision?.rationale || "",
           decisionReason: modeDecision?.reason || "",
-          message: String(error?.message || error || ""),
+          applyReason: reason,
+          cuesLength: getTrackCuesLength(track),
+          activeCuesLength: getTrackActiveCuesLength(track),
+          sameAsPreviousBound: previousBoundTrack === track,
+          currentTime: getCurrentTime(),
         });
-      }
+      };
 
-      logContent("secondary-sync mode-applied", {
-        trackLanguage: track?.language || "",
-        trackKind: track?.kind || "",
-        requestedMode,
-        appliedMode: track?.mode || "",
-        policy: modeDecision?.policy || "",
-        rationale: modeDecision?.rationale || "",
-        decisionReason: modeDecision?.reason || "",
-        cuesLength: getTrackCuesLength(track),
-        activeCuesLength: getTrackActiveCuesLength(track),
-        sameAsPreviousBound: previousBoundTrack === track,
-        currentTime: getCurrentTime(),
-      });
+      const maybePromoteTrackReadability = () => {
+        if (requestedMode !== "hidden") return;
+
+        const initialSnapshot = getReadableSnapshot();
+        const shouldPromote =
+          initialSnapshot.cuesLength > 0 && !initialSnapshot.readableNow;
+
+        logContent("secondary-sync post-bind readability-check", {
+          trackLanguage: track?.language || "",
+          trackKind: track?.kind || "",
+          requestedMode,
+          policy: modeDecision?.policy || "",
+          rationale: modeDecision?.rationale || "",
+          decisionReason: modeDecision?.reason || "",
+          ...initialSnapshot,
+          shouldPromote,
+        });
+
+        if (!shouldPromote) return;
+
+        const startedAt = Date.now();
+        const holdMs = 800;
+        const pollIntervalMs = 100;
+        const timeoutMs = 1500;
+
+        applyTrackMode("showing", "post-bind-readability-promote");
+
+        const finalize = (finalMode, restoreReason) => {
+          if (secondaryTrackBound !== track) return;
+
+          applyTrackMode(finalMode, restoreReason);
+
+          logContent("secondary-sync post-bind readability-finalized", {
+            trackLanguage: track?.language || "",
+            trackKind: track?.kind || "",
+            requestedMode,
+            finalMode,
+            restoreReason,
+            elapsedMs: Date.now() - startedAt,
+            ...getReadableSnapshot(),
+          });
+        };
+
+        const poll = () => {
+          if (secondaryTrackBound !== track) return;
+
+          const snapshot = getReadableSnapshot();
+          const elapsedMs = Date.now() - startedAt;
+          const holdSatisfied = elapsedMs >= holdMs;
+
+          if (snapshot.readableNow && holdSatisfied) {
+            finalize("showing", "post-bind-readable");
+            return;
+          }
+
+          if (elapsedMs >= timeoutMs) {
+            finalize(snapshot.readableNow ? "showing" : "hidden", "post-bind-timeout");
+            return;
+          }
+
+          setTimeout(poll, pollIntervalMs);
+        };
+
+        setTimeout(poll, pollIntervalMs);
+      };
+
+      applyTrackMode(requestedMode, "bind-initial");
 
       if (DEBUG_SECONDARY_SUBS) {
         logContent("secondary track bind", {
@@ -486,19 +928,8 @@
               }
             })(),
             overlapCueExists: Boolean(overlapCue),
-            overlapCueStartTime: overlapCue?.startTime ?? null,
-            overlapCueEndTime: overlapCue?.endTime ?? null,
             overlapCueTextLength: overlapCueText.length,
             currentCueTextLength: currentCueText?.length ?? 0,
-            cueReadableByActiveCues: (() => {
-              try {
-                return (track?.activeCues?.length ?? 0) > 0;
-              } catch (_) {
-                return false;
-              }
-            })(),
-            cueReadableByOverlap: Boolean(overlapCue),
-            cueReadableByText: Boolean(currentCueText),
           });
         }
 
@@ -507,39 +938,20 @@
 
       try {
         track.addEventListener("cuechange", handler);
-      } catch (error) {
-        logContent("secondary track bind failed", {
-          trackLanguage: track?.language || "",
-          trackKind: track?.kind || "",
-          trackMode: track?.mode || "",
-          policy: modeDecision?.policy || "",
-          rationale: modeDecision?.rationale || "",
-          decisionReason: modeDecision?.reason || "",
-          message: String(error?.message || error || ""),
-        });
-        return;
-      }
+      } catch (_) {}
 
+      secondaryTrackBound = track;
       secondaryTrackCleanup = () => {
         try {
           track.removeEventListener("cuechange", handler);
         } catch (_) {}
       };
 
-      secondaryTrackBound = track;
+      maybePromoteTrackReadability();
 
-      logContent("secondary-sync bind-result", {
-        trackLanguage: track?.language || "",
-        trackKind: track?.kind || "",
-        trackMode: track?.mode || "",
-        policy: modeDecision?.policy || "",
-        rationale: modeDecision?.rationale || "",
-        decisionReason: modeDecision?.reason || "",
-        cuesLength: getTrackCuesLength(track),
-        activeCuesLength: getTrackActiveCuesLength(track),
-        boundTrackExists: Boolean(secondaryTrackBound),
-        hasCleanup: typeof secondaryTrackCleanup === "function",
-      });
+      if (!modeDecision || modeDecision.requestedMode === "showing") {
+        onCueChange(track);
+      }
     }
 
     // secondary track の再解決と再同期を行い、必要なら nearby rebuild まで進める。
@@ -566,9 +978,39 @@
         unbindSecondarySubtitleTrack();
       }
 
+      ensureSubtitleTracksUsable(video, requestedLang, {
+        finalMode: "hidden",
+        reason: "secondary-sync",
+      });
+
       const track = resolveSecondarySubtitleTrack(video, requestedLang);
       const sameTrackRef = Boolean(track && previousBoundTrack === track);
       const currentTime = getCurrentTime();
+
+      // selection と bind のズレを診断するための差分観測。
+      // rebind 条件には影響させず、ログのみに使う。
+      const selectedTrackLanguage = track?.language || "";
+      const boundTrackLanguageBeforeSync = previousBoundTrack?.language || "";
+      const selectedTrackId = track?.id || "";
+      const boundTrackIdBeforeSync = previousBoundTrack?.id || "";
+
+      logContent("secondary-sync track-diff", {
+        requestedLang: requestedLang || "",
+        selectedTrackLanguage,
+        boundTrackLanguageBeforeSync,
+        selectedTrackId,
+        boundTrackIdBeforeSync,
+        sameTrackRef,
+        sameLanguageButDifferentTrackRef:
+          Boolean(selectedTrackLanguage) &&
+          Boolean(boundTrackLanguageBeforeSync) &&
+          selectedTrackLanguage === boundTrackLanguageBeforeSync &&
+          !sameTrackRef,
+        differentLanguage:
+          Boolean(selectedTrackLanguage) &&
+          Boolean(boundTrackLanguageBeforeSync) &&
+          selectedTrackLanguage !== boundTrackLanguageBeforeSync,
+      });
       const resolvedTrackActiveCuesLength = (() => {
         try {
           return track?.activeCues?.length ?? 0;
@@ -627,6 +1069,17 @@
         return;
       }
 
+      const normalizedRequestedLang = String(requestedLang || "")
+        .trim()
+        .toLowerCase();
+      const previousRequestedSecondaryLang = String(
+        previousBoundTrack?.language || "",
+      )
+        .trim()
+        .toLowerCase();
+      const requestedLanguageChanged =
+        normalizedRequestedLang !== previousRequestedSecondaryLang;
+
       const unreadableSnapshot = {
         cuesLength: resolvedTrackCuesLength,
         activeCuesLength: resolvedTrackActiveCuesLength,
@@ -645,6 +1098,9 @@
         logContent("secondary-sync rebind-required", {
           reason: "sameTrackButUnreadableAtCurrentTime",
           requestedLang: requestedLang || "",
+          normalizedRequestedLang,
+          previousRequestedSecondaryLang,
+          requestedLanguageChanged,
           currentTime,
           sameTrackRef,
           forceRebind,
@@ -657,24 +1113,42 @@
         });
       }
 
+      const shouldPrimeUnreadableSelectedTrack =
+        requestedLanguageChanged &&
+        !sameTrackRef &&
+        Boolean(track) &&
+        resolvedTrackCuesLength > 0 &&
+        resolvedTrackActiveCuesLength === 0 &&
+        !resolvedTrackCurrentCue &&
+        resolvedTrackCurrentCueText.length === 0;
+
       const modeDecision = resolveSecondaryTrackModePolicy({
         track,
-        reason: forceRebind
-          ? "forceRebind"
-          : shouldRebindBecauseUnreadable
-            ? "sameTrackUnreadable"
-            : "syncSecondarySubtitleTrack",
+        reason: shouldPrimeUnreadableSelectedTrack
+          ? "primeUnreadableSelectedTrack"
+          : forceRebind
+            ? "forceRebind"
+            : shouldRebindBecauseUnreadable
+              ? "sameTrackUnreadable"
+              : "syncSecondarySubtitleTrack",
         debugForceShowing: DEBUG_SECONDARY_SUBS,
         allowShowing: true,
         unreadableSnapshot,
       });
 
-      if (modeDecision.policy === "readability-promote") {
-        logContent("secondary-sync mode-policy readability-promote", {
+      if (
+        modeDecision.policy === "readability-promote" ||
+        modeDecision.policy === "debug-force-showing"
+      ) {
+        logContent("secondary-sync mode-policy force-showing", {
           requestedLang: requestedLang || "",
+          normalizedRequestedLang,
+          previousRequestedSecondaryLang,
+          requestedLanguageChanged,
           currentTime,
           sameTrackRef,
           forceRebind,
+          shouldPrimeUnreadableSelectedTrack,
           trackLanguage: track?.language || "",
           trackKind: track?.kind || "",
           trackModeBefore: track?.mode || "",
@@ -683,7 +1157,49 @@
           rationale: modeDecision.rationale,
           decisionReason: modeDecision.reason,
           unreadableSnapshot,
+          selectedTrackSnapshot: {
+            cuesLength: resolvedTrackCuesLength,
+            activeCuesLength: resolvedTrackActiveCuesLength,
+            currentCueTextLength: resolvedTrackCurrentCueText.length,
+            hasCueOverlapAtCurrentTime: Boolean(resolvedTrackCurrentCue),
+          },
         });
+      }
+
+      const selectedTrackUnreadable =
+        Boolean(track) &&
+        resolvedTrackCuesLength === 0 &&
+        resolvedTrackActiveCuesLength === 0 &&
+        resolvedTrackCurrentCueText.length === 0;
+
+      if (
+        !requestedLanguageChanged &&
+        !sameTrackRef &&
+        selectedTrackUnreadable &&
+        previousBoundTrack
+      ) {
+        logContent("secondary-sync keep-previous-track", {
+          requestedLang: requestedLang || "",
+          normalizedRequestedLang,
+          previousRequestedSecondaryLang,
+          requestedLanguageChanged,
+          previousBoundTrackLanguage: previousBoundTrack?.language || "",
+          selectedTrackLanguage: track?.language || "",
+          selectedTrackMode: track?.mode || "",
+          selectedTrackCuesLength: resolvedTrackCuesLength,
+          selectedTrackActiveCuesLength: resolvedTrackActiveCuesLength,
+          selectedTrackCurrentCueTextLength: resolvedTrackCurrentCueText.length,
+        });
+
+        if (!suppressRender) {
+          (renderSecondarySubtitleOverride || renderSecondarySubtitle)(
+            getCurrentCueText(previousBoundTrack),
+            previousBoundTrack,
+          );
+        }
+
+        rebuildCurrentSceneSubtitleBlocks();
+        return;
       }
 
       if (
@@ -841,408 +1357,229 @@
     // 現在時刻近傍の cue だけで subtitle blocks を組み直し、current view / current block を更新する。
     function rebuildCurrentSceneSubtitleBlocks() {
       const currentTime = getCurrentTime();
-      const primaryTrack = getPrimaryTrack();
-      const secondaryTrack = getSecondaryTrack();
 
-      const allPrimaryCues = getPrimaryTrackCues();
-      const allSecondaryCues = getSecondaryTrackCues();
+      const primaryTrack = getBoundPrimaryTrack();
+      const secondaryTrack = getBoundSecondaryTrack();
 
-      const pCue = getCurrentCue(primaryTrack, currentTime);
-      const pText = cleanCueText(pCue);
-      const sCue = getCurrentCue(secondaryTrack, currentTime);
-      const sText = cleanCueText(sCue);
+      const primaryCue = getCurrentCue(primaryTrack, currentTime);
+      const secondaryCue = getCurrentCue(secondaryTrack, currentTime);
 
-      // truth の一覧がまだ空のときは、現在の view を short-lived に hold するだけに留める。
-      if (!Array.isArray(allPrimaryCues) || allPrimaryCues.length === 0) {
-        const previousView = state.currentSubtitleView || null;
-        const previousBlock = state.currentSubtitleBlock || null;
+      const primaryText = cleanCueText(primaryCue);
+      const secondaryText = cleanCueText(secondaryCue);
 
-        // hold 用の current block を直前 view / block と現在 cue から補完して作る。
-        const holdBlock = {
-          startTime:
-            pCue?.startTime ??
-            previousView?.currentBlock?.startTime ??
-            previousBlock?.startTime ??
-            null,
-          endTime:
-            pCue?.endTime ??
-            previousView?.currentBlock?.endTime ??
-            previousBlock?.endTime ??
-            null,
-          primaryText:
-            pText ||
-            previousView?.currentBlock?.primaryText ||
-            previousBlock?.primaryText ||
-            "",
-          secondaryText:
-            sText ||
-            previousView?.currentBlock?.secondaryText ||
-            previousBlock?.secondaryText ||
-            "",
-          hasPrimarySignal: Boolean(
-            pText ||
-              previousView?.currentBlock?.primaryText ||
-              previousBlock?.primaryText,
-          ),
-          hasSecondarySignal: Boolean(
-            sText ||
-              previousView?.currentBlock?.secondaryText ||
-              previousBlock?.secondaryText,
-          ),
-          sourceReason: "nearbyRebuildHold",
-          updatedAt: Date.now(),
-        };
+      const primaryCues = getPrimaryTrackCues();
+      const secondaryCues = getSecondaryTrackCues();
 
-        // overlay / panel が参照する hold view を current block 付きで組み立てる。
-        const holdView = {
-          currentBlock: holdBlock,
-          sourceReason: "nearbyRebuildHold",
-          mainLines: holdBlock?.primaryText ? [holdBlock.primaryText] : [],
-          subLines: holdBlock?.secondaryText ? [holdBlock.secondaryText] : [],
-          isStable: false,
-          shouldKeepVisible: true,
-          isEmpty: !holdBlock?.primaryText && !holdBlock?.secondaryText,
-        };
+      const previousSequence = getPreviousSubtitleBlocks();
+      const previousBlocks = Array.isArray(previousSequence?.blocks)
+        ? previousSequence.blocks
+        : Array.isArray(previousSequence)
+          ? previousSequence
+          : [];
 
-        state.nearbyRebuildHoldView = holdView;
-        armNearbyRebuildGuard(holdBlock);
-
-        logContent("current subtitle view hold updated", {
-          reason: "nearbyRebuildHold",
-          source: "nearbyRebuild",
-          sourceReason: holdBlock?.sourceReason ?? null,
-          guardActive: Boolean(
-            nearbyRebuildGuard?.consumeOnNextPrimaryCueChange,
-          ),
-          withinSeekWindow: isWithinNearbyRebuildSeekWindow(),
-          startTime: holdBlock?.startTime ?? null,
-          endTime: holdBlock?.endTime ?? null,
-          hasPrimarySignal: Boolean(holdBlock?.hasPrimarySignal),
-          hasSecondarySignal: Boolean(holdBlock?.hasSecondarySignal),
-        });
-
-        // truth 台帳は触らず、current shared UI と overlay だけを短時間支える。
-        state.currentSubtitleView = holdView;
-        updateOverlayFromView(holdView);
-
-        if (secondaryTrack) {
-          renderSecondarySubtitle(holdBlock.secondaryText || "", secondaryTrack);
-        }
-
-        renderPanel();
-
-        return;
-      }
-
-      // primary cue 一覧から現在時刻に最も近い cue index を求める。
-      let closestIndex = 0;
-      let closestDelta = Number.POSITIVE_INFINITY;
-      for (let i = 0; i < allPrimaryCues.length; i++) {
-        const cue = allPrimaryCues[i];
-        const start = Number(cue?.startTime ?? 0);
-        const end = Number(cue?.endTime ?? 0);
-        const center = (start + end) / 2;
-        const delta = Math.abs(center - currentTime);
-        if (delta < closestDelta) {
-          closestDelta = delta;
-          closestIndex = i;
-        }
-      }
-
-      // current 近傍だけを切り出した primary window を nearby rebuild 入力として使う。
-      const windowStart = Math.max(0, closestIndex - 1);
-      const windowEnd = Math.min(allPrimaryCues.length, closestIndex + 2);
-      const windowPrimaryCues = allPrimaryCues.slice(windowStart, windowEnd);
-
-      // secondary は full cues を使い、pairing 側に探索余地を残す。
-      const windowSecondaryCues = allSecondaryCues;
-
-      // subtitle blocks API の有無を nearby rebuild 前に確認する。
-      const blockApi = window.ATVB?.subtitleBlocks || {};
-      const hasBuildSubtitleBlockSequence =
-        typeof blockApi.buildSubtitleBlockSequence === "function";
-
-      if (!hasBuildSubtitleBlockSequence) {
-        logContent("nearby rebuild skipped", {
-          reason: "subtitle_blocks_api_missing",
-          primaryTrackFound: Boolean(primaryTrack),
-          primaryCuesLength: allPrimaryCues.length,
-          secondaryTrackFound: Boolean(secondaryTrack),
-          secondaryCuesLength: Array.isArray(allSecondaryCues)
-            ? allSecondaryCues.length
-            : -1,
-        });
-        return;
-      }
-
-      // nearby rebuild 用の入力から SubtitleBlockSequence を再構成する。
-      const blockResult = blockApi.buildSubtitleBlockSequence({
-        primaryCues: windowPrimaryCues,
-        secondaryCues: windowSecondaryCues,
+      const sequence = buildSubtitleBlockSequence({
+        primaryCues,
+        secondaryCues,
         now: currentTime,
-        previousBlocks: getPreviousSubtitleBlocks(),
+        previousBlocks,
         cleanCueText,
-        rebuildReason: "rebuildCurrentScene",
+        rebuildReason: "rebuildCurrentSceneSubtitleBlocks",
       });
 
-      setSubtitleBlocks(blockResult, "rebuildCurrentScene");
+      const blocks = Array.isArray(sequence?.blocks) ? sequence.blocks : [];
+      setSubtitleBlocks(sequence);
 
-      const sequenceHealth = blockResult?.meta?.sequenceHealth || null;
+      const currentIndex = Number.isInteger(sequence?.currentIndex)
+        ? sequence.currentIndex
+        : -1;
 
-      const mergedSubtitleHealth = buildMergedSubtitleHealth({
-        primaryTrack,
-        secondaryTrack,
-        pCue,
-        pText,
-        sCue,
-        sText,
-        sequenceHealth,
-      });
-
-      lastMergedSubtitleHealth = mergedSubtitleHealth;
-
-      // sequence current が取れない場合でも最低限の fallback block を作る。
-      const currentBlock = getCurrentSubtitleBlockFromSequence(blockResult) || {
-        startTime: pCue?.startTime ?? null,
-        endTime: pCue?.endTime ?? null,
-        primaryText: pText || "",
-        secondaryText: sText || "",
-        hasPrimarySignal: Boolean(pText),
-        hasSecondarySignal: Boolean(sText),
-        sourceReason: "nearbyRebuild:fallback",
-        updatedAt: Date.now(),
-      };
-
-      currentBlock.sourceReason = "nearbyRebuild";
-
-      setCurrentSubtitleBlock(currentBlock, "nearbyRebuild");
-      armNearbyRebuildGuard(currentBlock);
-
-      logContent("current subtitle block updated", {
-        reason: "nearbyRebuild",
-        source: "nearbyRebuild",
-        sourceReason: currentBlock?.sourceReason ?? null,
-        guardActive: Boolean(nearbyRebuildGuard?.consumeOnNextPrimaryCueChange),
-        withinSeekWindow: isWithinNearbyRebuildSeekWindow(),
-        startTime: currentBlock?.startTime ?? null,
-        endTime: currentBlock?.endTime ?? null,
-        hasPrimarySignal: Boolean(currentBlock?.hasPrimarySignal),
-        hasSecondarySignal: Boolean(currentBlock?.hasSecondarySignal),
-      });
-
-      // panel / overlay 共通 view を sequence から解決する。
-      const overlaySequence = getSubtitleBlockSequence();
-      const subtitleViewResolver = root.subtitleViewResolver || null;
-      const subtitleView =
-        subtitleViewResolver &&
-        typeof subtitleViewResolver.resolveUiSubtitleView === "function"
-          ? subtitleViewResolver.resolveUiSubtitleView(
-              overlaySequence?.blocks,
-              overlaySequence?.currentIndex,
-              overlaySequence?.meta,
-            )
+      const currentBlock =
+        currentIndex >= 0 && currentIndex < blocks.length
+          ? blocks[currentIndex] || null
           : null;
 
-      state.currentSubtitleView = subtitleView;
+      setCurrentSubtitleBlock(currentBlock, sequence?.meta || null);
 
-      if (subtitleView) {
-        updateOverlayFromView(subtitleView);
-      } else {
-        updateOverlayFromBlock(currentBlock);
+      const sequenceHealth = sequence?.meta?.sequenceHealth || null;
+
+      if (DEBUG_SECONDARY_SUBS) {
+        logContent("subtitle-blocks rebuild", {
+          reason: "rebuildCurrentSceneSubtitleBlocks",
+          currentTime,
+          primaryTrackFound: Boolean(primaryTrack),
+          secondaryTrackFound: Boolean(secondaryTrack),
+          primaryTextLength: primaryText.length,
+          secondaryTextLength: secondaryText.length,
+          hasPrimaryCue: Boolean(primaryCue),
+          hasSecondaryCue: Boolean(secondaryCue),
+          hasCurrentBlock: Boolean(currentBlock),
+          hasCurrentPrimary: Boolean(currentBlock?.primaryText),
+          hasCurrentSecondary: Boolean(currentBlock?.secondaryText),
+          currentPairAligned: Boolean(sequenceHealth?.currentPairAligned),
+          currentPairMissingSecondary: Boolean(
+            sequenceHealth?.currentPairMissingSecondary,
+          ),
+          previousPairMissingSecondary: Boolean(
+            sequenceHealth?.previousPairMissingSecondary,
+          ),
+          consecutiveCurrentMissingSecondary: Boolean(
+            sequenceHealth?.consecutiveCurrentMissingSecondary,
+          ),
+          totalBlockCount: blocks.length,
+          currentIndex,
+          sequenceMeta: sequence?.meta || null,
+        });
       }
 
-      if (secondaryTrack) {
-        renderSecondarySubtitle(sText, secondaryTrack);
-      }
-
-      renderPanel();
+      return {
+        sequence,
+        currentBlock,
+        sequenceHealth,
+        primaryCue,
+        secondaryCue,
+        primaryText,
+        secondaryText,
+        primaryTrack,
+        secondaryTrack,
+      };
     }
 
     // primary cue change を基準に full rebuild を行い、必要なら 1 回だけ nearby current / hold view を優先する。
     function onPrimaryCueChange() {
-      logContent("cue-controller onPrimaryCueChange entered", {
-        hasATVB: !!window.ATVB,
-      });
-
       const currentTime = getCurrentTime();
-      const primaryTrack = getPrimaryTrack();
-      const secondaryTrack = getSecondaryTrack();
-      const pCue = getCurrentCue(primaryTrack, currentTime);
-      const pText = cleanCueText(pCue);
-      const sCue = getCurrentCue(secondaryTrack, currentTime);
-      const sText = cleanCueText(sCue);
 
-      if (DEBUG_PANEL_PROBE) {
-        logContent("cuechange track probe", {
-          primaryTrackLanguage: primaryTrack?.language,
-          secondaryTrackLanguage: secondaryTrack?.language,
-          pText: pText.slice(0, 40),
-          sText: sText.slice(0, 40),
-        });
-      }
+      const primaryTrack = getBoundPrimaryTrack();
+      const secondaryTrack = getBoundSecondaryTrack();
 
-      // full rebuild に使う subtitle blocks API の有無を確認する。
-      const blockApi = window.ATVB?.subtitleBlocks || {};
-      const hasBuildSubtitleBlockSequence =
-        typeof blockApi.buildSubtitleBlockSequence === "function";
+      const primaryCue = getCurrentCue(primaryTrack, currentTime);
+      const secondaryCue = getCurrentCue(secondaryTrack, currentTime);
 
-      if (DEBUG_PANEL_PROBE) {
-        logContent("subtitle blocks api snapshot", {
-          hasATVB: !!window.ATVB,
-          atvbKeys: Object.keys(window.ATVB || {}),
-          hasSubtitleBlocks: !!window.ATVB?.subtitleBlocks,
-          hasBuildSubtitleBlockSequence,
-        });
-      }
+      const primaryText = cleanCueText(primaryCue);
+      const secondaryText = cleanCueText(secondaryCue);
 
-      let blockResult = null;
+      const sequenceApi =
+        (typeof subtitleBlockSequence !== "undefined" && subtitleBlockSequence) ||
+        (typeof window !== "undefined" && window.subtitleBlockSequence) ||
+        null;
 
-      if (hasBuildSubtitleBlockSequence) {
-        blockResult = blockApi.buildSubtitleBlockSequence({
-          primaryCues: getPrimaryTrackCues(),
-          secondaryCues: getSecondaryTrackCues(),
-          now: currentTime,
-          previousBlocks: getPreviousSubtitleBlocks(),
-          cleanCueText,
-          rebuildReason: "onPrimaryCueChange",
-        });
+      const rebuildResult = rebuildCurrentSceneSubtitleBlocks();
 
-        setSubtitleBlocks(blockResult, "onPrimaryCueChange");
-      } else {
-        logContent("subtitle blocks api missing", {
+      renderCurrentSnapshot?.();
+      renderPanel?.();
+
+      if (DEBUG_SECONDARY_SUBS) {
+        logContent("primary cuechange rebuild result", {
           reason: "onPrimaryCueChange",
-          hasATVB: !!window.ATVB,
-          atvbKeys: Object.keys(window.ATVB || {}),
+          currentTime,
+          rebuildResult: rebuildResult
+            ? {
+                hasSequence: Boolean(rebuildResult.sequence),
+                blockCount:
+                  Array.isArray(rebuildResult.sequence?.blocks)
+                    ? rebuildResult.sequence.blocks.length
+                    : null,
+                currentIndex: Number.isInteger(rebuildResult.sequence?.currentIndex)
+                  ? rebuildResult.sequence.currentIndex
+                  : null,
+                currentBlock: rebuildResult.currentBlock
+                  ? {
+                      key: rebuildResult.currentBlock.key || "",
+                      startTime: Number(rebuildResult.currentBlock.startTime ?? 0),
+                      endTime: Number(rebuildResult.currentBlock.endTime ?? 0),
+                      state: rebuildResult.currentBlock.state || "",
+                      primaryText: String(rebuildResult.currentBlock.primaryText || ""),
+                      secondaryText: String(rebuildResult.currentBlock.secondaryText || ""),
+                    }
+                  : null,
+                sequenceMeta: rebuildResult.sequence?.meta || null,
+              }
+            : null,
         });
       }
 
-      const sequenceHealth = blockResult?.meta?.sequenceHealth || null;
-      const mergedSubtitleHealth = buildMergedSubtitleHealth({
+      const sequenceHealth =
+        rebuildResult?.sequenceHealth ||
+        sequenceApi?.getHealth?.() ||
+        null;
+
+      const mergedHealth = buildMergedSubtitleHealth({
         primaryTrack,
         secondaryTrack,
-        pCue,
-        pText,
-        sCue,
-        sText,
+        pCue: primaryCue,
+        pText: primaryText,
+        sCue: secondaryCue,
+        sText: secondaryText,
         sequenceHealth,
       });
 
-      lastMergedSubtitleHealth = mergedSubtitleHealth;
-
-      if (DEBUG_PANEL_PROBE) {
-        logContent("merged subtitle health snapshot", {
-          primaryHealthy: mergedSubtitleHealth.derived.primaryHealthy,
-          secondaryHealthy: mergedSubtitleHealth.derived.secondaryHealthy,
-          shouldRecoverSecondary:
-            mergedSubtitleHealth.derived.shouldRecoverSecondary,
-          shouldForceSecondaryRebind:
-            mergedSubtitleHealth.derived.shouldForceSecondaryRebind,
-        });
-      }
-
-      if (mergedSubtitleHealth.derived.shouldRecoverSecondary && state.video) {
-        if (DEBUG_PANEL_PROBE) {
-          logContent("cue-controller secondary recovery observed", {
-            hasVideo: Boolean(state.video),
-            forceRebind:
-              mergedSubtitleHealth.derived.shouldForceSecondaryRebind,
-            note: "sync interval handles execution",
-          });
-        }
-      }
-
-      // current sequence block が取れない場合でも current UI 更新用の fallback block を作る。
-      const currentBlock = getCurrentSubtitleBlockFromSequence(blockResult) || {
-        startTime: pCue?.startTime ?? null,
-        endTime: pCue?.endTime ?? null,
-        primaryText: pText || "",
-        secondaryText: sText || "",
-        hasPrimarySignal: Boolean(pText),
-        hasSecondarySignal: Boolean(sText),
-        sourceReason: "onPrimaryCueChange:fallback",
-        updatedAt: Date.now(),
-      };
-
-      // nearby rebuild 保護を使うかどうかを現在の guard / seek window から判定する。
-      const preserveNearbyCurrent = shouldPreserveNearbyRebuildCurrentBlock();
-
-      // nearby rebuild 直後の hold view を current UI 保護用に参照する。
-      const holdView = state.nearbyRebuildHoldView || null;
-
-      // panel / overlay 共通 view を sequence から解決する。
-      const overlaySequence = getSubtitleBlockSequence();
-      const subtitleViewResolver = root.subtitleViewResolver || null;
-      const subtitleView =
-        subtitleViewResolver &&
-        typeof subtitleViewResolver.resolveUiSubtitleView === "function"
-          ? subtitleViewResolver.resolveUiSubtitleView(
-              overlaySequence?.blocks,
-              overlaySequence?.currentIndex,
-              overlaySequence?.meta,
-            )
-          : null;
-
-      // current subtitleView が空に近い場合だけ hold view を優先して UI 空白を避ける。
-      const shouldUseHoldView =
-        preserveNearbyCurrent &&
-        holdView &&
-        (!subtitleView ||
-          (!subtitleView.currentBlock?.hasPrimarySignal &&
-            !subtitleView.currentBlock?.hasSecondarySignal));
-
-      if (shouldUseHoldView) {
-        logContent("current subtitle view hold used", {
-          reason: "onPrimaryCueChange:preserveNearbyRebuildHold",
-          source: "nearbyRebuild",
-          sourceReason: holdView.currentBlock?.sourceReason ?? null,
-          guardActive: Boolean(
-            nearbyRebuildGuard?.consumeOnNextPrimaryCueChange,
-          ),
-          withinSeekWindow: isWithinNearbyRebuildSeekWindow(),
-          startTime: holdView.currentBlock?.startTime ?? null,
-          endTime: holdView.currentBlock?.endTime ?? null,
-          hasPrimarySignal: Boolean(holdView.currentBlock?.hasPrimarySignal),
-          hasSecondarySignal: Boolean(
-            holdView.currentBlock?.hasSecondarySignal,
-          ),
-        });
-        consumeNearbyRebuildGuard();
-      } else {
-        clearNearbyRebuildGuard();
-        setCurrentSubtitleBlock(currentBlock, "onPrimaryCueChange");
-        logContent("current subtitle block updated", {
+      if (DEBUG_SECONDARY_SUBS) {
+        logContent("primary cuechange merged-health", {
           reason: "onPrimaryCueChange",
-          source: "primaryCueChange",
-          sourceReason: currentBlock?.sourceReason ?? null,
-          guardActive: Boolean(
-            nearbyRebuildGuard?.consumeOnNextPrimaryCueChange,
-          ),
-          withinSeekWindow: isWithinNearbyRebuildSeekWindow(),
-          startTime: currentBlock?.startTime ?? null,
-          endTime: currentBlock?.endTime ?? null,
-          hasPrimarySignal: Boolean(currentBlock?.hasPrimarySignal),
-          hasSecondarySignal: Boolean(currentBlock?.hasSecondarySignal),
+          currentTime,
+          runtime: mergedHealth?.runtime || null,
+          currentCue: mergedHealth?.currentCue || null,
+          sequence: mergedHealth?.sequence || null,
+          derived: mergedHealth?.derived || null,
+          hasCurrentBlock: Boolean(rebuildResult?.currentBlock),
+          currentPrimaryTextLength:
+            rebuildResult?.currentBlock?.primaryText?.length ?? 0,
+          currentSecondaryTextLength:
+            rebuildResult?.currentBlock?.secondaryText?.length ?? 0,
+          sequenceApiFound: Boolean(sequenceApi),
         });
       }
 
-      if (shouldUseHoldView) {
-        state.currentSubtitleView = holdView;
-        updateOverlayFromView(holdView);
-      } else if (subtitleView) {
-        state.currentSubtitleView = subtitleView;
-        updateOverlayFromView(subtitleView);
-      } else {
-        updateOverlayFromBlock(currentBlock);
+      const recoveryDecision = evaluateSecondaryRecovery({
+        now: Date.now(),
+        runtime: mergedHealth?.runtime || null,
+        currentCue: mergedHealth?.currentCue || null,
+        sequence: mergedHealth?.sequence || null,
+        derived: mergedHealth?.derived || null,
+      });
+
+      if (DEBUG_SECONDARY_SUBS) {
+        logContent("secondary recovery evaluation", {
+          reason: "onPrimaryCueChange",
+          currentTime,
+          action: recoveryDecision?.action || "idle",
+          reasonCode: recoveryDecision?.reason || "",
+          primaryLane: recoveryDecision?.primaryLane || null,
+          secondaryLane: recoveryDecision?.secondaryLane || null,
+        });
       }
 
-      if (secondaryTrack) {
-        renderSecondarySubtitle(sText, secondaryTrack);
+      if (recoveryDecision?.action === "recover") {
+        syncSecondarySubtitleTrack(
+          getVideoElement(),
+          getRequestedSecondaryLanguage(),
+          null,
+          {
+            suppressRender: false,
+            forceRebind: false,
+          },
+        );
+        return;
       }
 
-      renderPanel();
+      if (recoveryDecision?.action === "force-rebind") {
+        syncSecondarySubtitleTrack(
+          getVideoElement(),
+          getRequestedSecondaryLanguage(),
+          null,
+          {
+            suppressRender: false,
+            forceRebind: true,
+          },
+        );
+        return;
+      }
     }
 
     return {
+      ensureSubtitleTracksUsable,
+      getBoundPrimaryTrack,
+      unbindPrimarySubtitleTrack,
+      bindPrimarySubtitleTrack,
       getBoundSecondaryTrack,
       unbindSecondarySubtitleTrack,
       bindSecondarySubtitleTrack,

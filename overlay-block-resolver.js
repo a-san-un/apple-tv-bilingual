@@ -69,6 +69,7 @@
 
     return {
       groupKey: buildOverlayGroupKey(startTime, endTime),
+      currentBlock,
       startTime,
       endTime,
       mainLines,
