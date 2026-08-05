@@ -496,7 +496,6 @@ function forwardContentLog(...args) {
       nextContentKey: resolvedContentKey,
       historySize: state.subtitleHistory.length,
     });
-
     return true;
   }
 
@@ -616,6 +615,161 @@ function forwardContentLog(...args) {
     }
   }
 
+  function ensureSecondaryTrackSyncInterval() {
+    if (secondaryTrackSyncInterval) return;
+
+    secondaryTrackSyncInterval = window.setInterval(() => {
+      if (state.restarting) return;
+
+      const found = getVideoAndDialog();
+      const nextVideo = found?.video || state.video;
+      const nextVideoSrcKey = getCurrentVideoSrcKey(nextVideo);
+      const hasCurrentSrcChanged =
+        Boolean(nextVideoSrcKey) &&
+        Boolean(state.lastVideoSrcKey) &&
+        nextVideoSrcKey !== state.lastVideoSrcKey;
+
+      if (hasCurrentSrcChanged) {
+        logContent("currentSrc changed", {
+          previousVideoSrcKey: state.lastVideoSrcKey,
+          nextVideoSrcKey,
+        });
+      }
+
+      if (found && (found.video !== state.video || hasCurrentSrcChanged)) {
+        state.video = found.video;
+        state.dialogEl = found.dialog;
+        state.lastVideoSrcKey = nextVideoSrcKey;
+        state.lastObservedVideoTime = null;
+        reloadSettingsAndReinitialize("video_changed");
+      } else if (found && state.video) {
+        const switched = syncHistoryContextWithPlayback("content_key_changed");
+        if (switched) {
+          renderCurrentSnapshot();
+          renderPanel();
+        }
+      }
+
+      const currentVideoTime = Number(state.video?.currentTime ?? 0);
+      const previousObservedTime = Number(state.lastObservedVideoTime);
+      const largeSeekDetected =
+        Number.isFinite(previousObservedTime) &&
+        Number.isFinite(currentVideoTime) &&
+        Math.abs(currentVideoTime - previousObservedTime) > 6;
+      state.lastObservedVideoTime = Number.isFinite(currentVideoTime)
+        ? currentVideoTime
+        : null;
+
+      if (largeSeekDetected) {
+        applyCurrentStateToPanel("sync_interval_large_seek_resync");
+      }
+
+      const effectiveSecondaryLanguage =
+        state.requestedSecondaryLang || state.contentSettings.secondaryLang;
+      if (!state.video || !effectiveSecondaryLanguage) return;
+
+      const previousSecondaryTrack = state.secondaryTrack;
+      syncSecondarySubtitleTrack(
+        state.video,
+        effectiveSecondaryLanguage,
+        renderSecondarySubtitle,
+      );
+      state.secondaryTrack = secondaryTrackBound;
+
+      const secondaryActiveCues = getTrackActiveCuesLength(
+        state.secondaryTrack,
+      );
+      const primaryActiveCues = getTrackActiveCuesLength(state.primaryTrack);
+      const secondaryCueText = normalizeSubtitleText(
+        getCurrentCueText(state.secondaryTrack),
+      );
+      const primaryCueText = normalizeSubtitleText(
+        getCurrentCueText(state.primaryTrack),
+      );
+      const snapshotPrimaryText = normalizeSubtitleText(
+        state.lastPanelRenderSnapshot?.currentSubtitleBlock?.primaryText || "",
+      );
+      const hasPrimaryLiveSignal =
+        primaryActiveCues > 0 || Boolean(primaryCueText);
+      const now = Date.now();
+      const hasFreshPrimarySnapshot =
+        Boolean(snapshotPrimaryText) &&
+        state.lastPrimarySnapshotAt > 0 &&
+        now - state.lastPrimarySnapshotAt <= 3000;
+      const hasSecondarySignal =
+        secondaryActiveCues > 0 || Boolean(secondaryCueText);
+      const hasPrimarySignal = hasPrimaryLiveSignal || hasFreshPrimarySnapshot;
+
+      const syncContextSummary = JSON.stringify({
+        trackCount: state.video?.textTracks?.length ?? 0,
+        primaryTrackFound: Boolean(state.primaryTrack),
+        secondaryTrackFound: Boolean(state.secondaryTrack),
+        secondaryTrackLanguage: state.secondaryTrack?.language || "",
+        secondaryActiveCues,
+        primaryActiveCues,
+        primaryCueTextLength: primaryCueText.length,
+        snapshotPrimaryTextLength: snapshotPrimaryText.length,
+        hasFreshPrimarySnapshot,
+      });
+      const shouldLogSyncContext =
+        previousSecondaryTrack !== state.secondaryTrack ||
+        syncContextSummary !== state.lastSecondarySyncContext;
+      if (shouldLogSyncContext) {
+        state.lastSecondarySyncContext = syncContextSummary;
+        logContent("secondary track sync context", {
+          reason: "sync_interval",
+          effectiveSecondaryLanguage,
+          trackCount: state.video?.textTracks?.length ?? 0,
+          primaryTrackFound: Boolean(state.primaryTrack),
+          secondaryTrackFound: Boolean(state.secondaryTrack),
+          secondaryTrackLanguage: state.secondaryTrack?.language || "",
+          secondaryActiveCues,
+          primaryActiveCues,
+          primaryCueTextLength: primaryCueText.length,
+          snapshotPrimaryTextLength: snapshotPrimaryText.length,
+          hasFreshPrimarySnapshot,
+        });
+      }
+
+      const trackCount = state.video?.textTracks?.length ?? 0;
+      const shouldAttemptPrimaryRecovery =
+        hasSecondarySignal && !hasPrimarySignal && trackCount > 1;
+
+      // [binder/cue: recovery - sync interval path]
+      // secondary signal はあるが primary signal が無い場合、
+      // sync interval 経由で primary recovery を試行する。
+
+      if (!shouldAttemptPrimaryRecovery) {
+        if (hasPrimarySignal) {
+          state.lastPrimaryRecoveryAttemptAt = 0;
+        }
+        return;
+      }
+
+      if (
+        state.lastPrimaryRecoveryAttemptAt &&
+        now - state.lastPrimaryRecoveryAttemptAt < 4000
+      ) {
+        return;
+      }
+
+      state.lastPrimaryRecoveryAttemptAt = now;
+      const recoveryResult = reinitializeSubtitlePipeline(
+        "sync_interval_primary_recovery",
+      );
+      logContent("sync interval primary recovery", {
+        trackCount,
+        primaryTrackFound: recoveryResult.primaryTrackFound,
+        secondaryTrackFound: recoveryResult.secondaryTrackFound,
+        primaryListenerBound: recoveryResult.primaryListenerBound,
+        secondaryListenerBound: recoveryResult.secondaryListenerBound,
+      });
+
+      if (recoveryResult.primaryTrackFound) {
+        state.lastPrimaryRecoveryAttemptAt = 0;
+      }
+    }, 2000);
+  }
 
   async function syncSecondarySubtitleTrack(
     video,
@@ -1343,7 +1497,6 @@ function forwardContentLog(...args) {
         document.querySelector(".video-container.svelte-1psbnd5.is-opaque") ||
         document.querySelector(".video-container.is-opaque") ||
         document.querySelector(".video-container");
-
       return {
         vc: document.querySelector(".video-player__video-container"),
         content: document.querySelector(".video-player__content"),
