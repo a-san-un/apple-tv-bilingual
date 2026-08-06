@@ -4,6 +4,7 @@
 // 役割: 右字幕パネル下部の Debug UI 入口を提供する。
 // Phase C: mount/update/clear/unmount の API スケルトンのみを固定する。
 // Fix: VM/world をまたいでも shadow root 単位で handler/state を管理する。
+// Fix: Extension context invalidated を防ぐ chrome context guard を追加。
 // =============================================================
 (function () {
   "use strict";
@@ -11,6 +12,15 @@
   window.ATVB = window.ATVB || {};
 
   const ROOT_STATE_KEY = "__atvbDebugPanelState";
+
+  // Chrome 拡張コンテキストが有効かどうかを確認する
+  function isChromeContextAlive() {
+    try {
+      return !!chrome?.runtime?.id;
+    } catch {
+      return false;
+    }
+  }
 
   function getRootState(root) {
     if (!root) return null;
@@ -275,6 +285,15 @@
     }
 
     state.refreshTimer = setInterval(() => {
+      // 拡張コンテキストが無効化されていたらタイマーを自己停止する
+      if (!isChromeContextAlive()) {
+        const s = getRootState(root);
+        if (s?.refreshTimer) {
+          clearInterval(s.refreshTimer);
+          s.refreshTimer = null;
+        }
+        return;
+      }
       update(root).catch(() => {});
     }, 500);
 

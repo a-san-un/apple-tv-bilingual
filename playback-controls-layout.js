@@ -24,52 +24,51 @@
   const PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR = "data-atvb-base-transform";
   const PLAYBACK_CONTROLS_MANAGED_ATTR = "data-atvb-layout-managed";
   const PLAYBACK_CONTROLS_SHIFT_X_ATTR = "data-atvb-shift-x";
-
-  function getPlaybackControlsLayoutTargets() {
-    return {
-      panel:
-        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.panelSelector) ||
-        document.querySelector(".dual-subtitles-secondary") ||
-        document.querySelector("[data-secondary-subtitle]"),
-      header: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.headerSelector),
-      controls: document.querySelector(
-        PLAYBACK_CONTROLS_LAYOUT.controlsSelector,
-      ),
-      progress: document.querySelector(
-        PLAYBACK_CONTROLS_LAYOUT.progressSelector,
-      ),
-      skipOverlay: document.querySelector(
-        PLAYBACK_CONTROLS_LAYOUT.skipOverlaySelector,
-      ),
-      footer:
-        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerSelector) ||
-        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerFallbackSelector),
-      unified: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.unifiedSelector),
-      volume:
-        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.volumeSelector) ||
-        document.querySelector(PLAYBACK_CONTROLS_LAYOUT.volumeFallbackSelector),
-      video: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.videoSelector),
-    };
-  }
+  const PLAYBACK_SKIP_BASE_RIGHT_ATTR = "data-atvb-playback-skip-base-right";
+  const PLAYBACK_SKIP_BASE_TRANSFORM_ATTR = "data-atvb-playback-skip-base-transform";
+  const PLAYBACK_HEADER_BASE_WIDTH_ATTR = "data-atvb-header-base-width";
+  const PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR = "data-atvb-header-base-max-width";
+  const PLAYBACK_FOOTER_BASE_WIDTH_ATTR = "data-atvb-footer-base-width";
+  const PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR = "data-atvb-footer-base-max-width";
+  const PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR =
+    "data-atvb-progress-base-min-width";
+  const PLAYBACK_PROGRESS_BASE_WIDTH_ATTR = "data-atvb-progress-base-width";
+  const PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR =
+    "data-atvb-progress-base-max-width";
+  const PLAYBACK_SKIP_BASE_LEFT_ATTR = "data-atvb-playback-skip-base-left";
 
   function createPlaybackControlsLayout(deps) {
     const {
-      PLAYBACK_HEADER_BASE_WIDTH_ATTR,
-      PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR,
-      PLAYBACK_FOOTER_BASE_WIDTH_ATTR,
-      PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR,
-      PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR,
-      PLAYBACK_PROGRESS_BASE_WIDTH_ATTR,
-      PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR,
-      PLAYBACK_SKIP_BASE_LEFT_ATTR,
-      PLAYBACK_SKIP_BASE_RIGHT_ATTR,
-      PLAYBACK_SKIP_BASE_TRANSFORM_ATTR,
       DEBUG_SECONDARY_SUBS,
       logContent,
+      secondarySubtitleDom,
     } = deps;
 
-    // この関数群は、content.js から少しずつ移設する。
-    // いまは空の器だけを用意しておく。
+    function getPlaybackControlsLayoutTargets() {
+      return {
+        panel:
+          document.querySelector(PLAYBACK_CONTROLS_LAYOUT.panelSelector) ||
+          secondarySubtitleDom?.getElement(),
+        header: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.headerSelector),
+        controls: document.querySelector(
+          PLAYBACK_CONTROLS_LAYOUT.controlsSelector,
+        ),
+        progress: document.querySelector(
+          PLAYBACK_CONTROLS_LAYOUT.progressSelector,
+        ),
+        skipOverlay: document.querySelector(
+          PLAYBACK_CONTROLS_LAYOUT.skipOverlaySelector,
+        ),
+        footer:
+          document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerSelector) ||
+          document.querySelector(PLAYBACK_CONTROLS_LAYOUT.footerFallbackSelector),
+        unified: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.unifiedSelector),
+        volume:
+          document.querySelector(PLAYBACK_CONTROLS_LAYOUT.volumeSelector) ||
+          document.querySelector(PLAYBACK_CONTROLS_LAYOUT.volumeFallbackSelector),
+        video: document.querySelector(PLAYBACK_CONTROLS_LAYOUT.videoSelector),
+      };
+    }
 
     function isVisibleElement(el) {
       if (!el) return false;
@@ -479,8 +478,7 @@
     function getPlaybackPanelLayoutAnchor() {
       return (
         document.querySelector(PLAYBACK_CONTROLS_LAYOUT.panelSelector) ||
-        document.querySelector(".dual-subtitles-secondary") ||
-        document.querySelector("[data-secondary-subtitle]")
+        secondarySubtitleDom?.getElement()
       );
     }
 
@@ -808,7 +806,6 @@
   const root = (window.ATVB = window.ATVB || {});
   root.playbackControlsLayout = {
     PLAYBACK_CONTROLS_LAYOUT,
-    getPlaybackControlsLayoutTargets,
     createPlaybackControlsLayout,
   };
 })();

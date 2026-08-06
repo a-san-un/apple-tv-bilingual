@@ -196,6 +196,12 @@
     // recovery 試行を打ち切って terminated に入る missCount 上限を定義する。
     const SECONDARY_RECOVERY_MISS_LIMIT = 8;
 
+    // terminated 後に再試行を許可するまでの待機時間を定義する。
+    const SECONDARY_TERMINATED_RETRY_MS = 10_000;
+
+    // 同一 cuechange の重複発火を missCount++ から除外する最小間隔を定義する。
+    const SECONDARY_RECOVERY_DEBOUNCE_MS = 200;
+
     // large seek 直後として nearby rebuild を許可する時間窓を定義する。
     const NEARBY_REBUILD_SEEK_WINDOW_MS = 4000;
 
@@ -210,6 +216,7 @@
         missCount: 0,
         terminated: false,
         lastDecision: "idle",
+        lastDecisionAt: 0,
       };
     }
 
@@ -227,6 +234,7 @@
       laneState.missCount = 0;
       laneState.terminated = false;
       laneState.lastDecision = "idle";
+      laneState.lastDecisionAt = 0;
     }
 
     function resetSecondaryRecoveryLane(reason = "manual-reset") {
@@ -474,6 +482,7 @@
 
       if (!secondaryLane.isMissing) {
         secondaryLane.lastDecision = "idle";
+        secondaryLane.lastDecisionAt = now;
         return {
           primaryLane,
           secondaryLane,
@@ -482,8 +491,29 @@
         };
       }
 
+      // terminated 後も secondaryRuntimeMissing が続いている場合、
+      // SECONDARY_TERMINATED_RETRY_MS 経過後にリセットして再試行を許可する。
+      if (secondaryLane.terminated && secondaryRuntimeMissing) {
+        const msSinceLastDecision =
+          secondaryLane.lastDecisionAt > 0
+            ? now - secondaryLane.lastDecisionAt
+            : Infinity;
+        if (msSinceLastDecision >= SECONDARY_TERMINATED_RETRY_MS) {
+          resetLaneState(secondaryLane);
+          secondaryLane.lastDecision = "idle";
+          secondaryLane.lastDecisionAt = now;
+          return {
+            primaryLane,
+            secondaryLane,
+            action: "idle",
+            reason: "secondary_terminated_retry_reset",
+          };
+        }
+      }
+
       if (secondaryLane.terminated) {
         secondaryLane.lastDecision = "terminated";
+        secondaryLane.lastDecisionAt = now;
         return {
           primaryLane,
           secondaryLane,
@@ -498,11 +528,30 @@
 
       if (!shouldRecoverSecondary) {
         secondaryLane.lastDecision = "idle";
+        secondaryLane.lastDecisionAt = now;
         return {
           primaryLane,
           secondaryLane,
           action: "idle",
           reason: "secondary_missing_waiting_window",
+        };
+      }
+
+      // 同一 cuechange の重複発火による missCount の多重加算を防ぐ。
+      // lastDecisionAt から SECONDARY_RECOVERY_DEBOUNCE_MS 未満の呼び出しはスキップする。
+      const msSinceLastMiss =
+        secondaryLane.lastDecisionAt > 0
+          ? now - secondaryLane.lastDecisionAt
+          : Infinity;
+
+      if (msSinceLastMiss < SECONDARY_RECOVERY_DEBOUNCE_MS) {
+        secondaryLane.lastDecision = "idle";
+        secondaryLane.lastDecisionAt = now;
+        return {
+          primaryLane,
+          secondaryLane,
+          action: "idle",
+          reason: "secondary_recovery_debounce",
         };
       }
 
@@ -514,6 +563,7 @@
       ) {
         secondaryLane.terminated = true;
         secondaryLane.lastDecision = "terminated";
+        secondaryLane.lastDecisionAt = now;
         return {
           primaryLane,
           secondaryLane,
@@ -529,6 +579,7 @@
       secondaryLane.lastDecision = shouldForceSecondaryRebind
         ? "force-rebind"
         : "recover";
+      secondaryLane.lastDecisionAt = now;
 
       return {
         primaryLane,

@@ -4,6 +4,10 @@
 // 役割:
 // - 再生セッションに紐づく一時的な UI 状態だけをクリアする。
 // - popup / options で保存した設定値（primaryLang / secondaryLang / showSidebar など）は保持する。
+//
+// clearInternalSubtitleState の reason 使い分け:
+//   "prepareForRestart" → 設定変更による再起動。パネルDOMはフラッシュ防止のため保持する。
+//   "videoClose"        → 動画クローズ / セッション完全終了。パネルDOMも含めて全消去する。
 // =============================================================
 (() => {
   "use strict";
@@ -55,6 +59,10 @@
 
     // 字幕履歴や track 参照など、再生セッション由来の一時 state を初期化する。
     // ユーザー設定（contentSettings / requestedContentSettings / storage）は保持する。
+    //
+    // reason="prepareForRestart": 設定変更による再起動。
+    //   パネルDOMはフラッシュ防止のため clearInternalSubtitleState 側でスキップされる。
+    //   startBilingual() が直後に呼ばれて新しい字幕で上書きされることが前提。
     function prepareForRestart() {
       clearInternalSubtitleState?.("prepareForRestart");
 
@@ -73,6 +81,10 @@
 
     // 動画 close / 再生終了 / 再初期化前に、
     // playback session にだけ紐づく UI 状態をまとめてクリアする。
+    //
+    // prepareForRestart() は reason="prepareForRestart" でパネルDOMを保持するが、
+    // 動画クローズ時はその後 startBilingual が来ないため、
+    // 直後に reason="videoClose" で明示的にパネルDOMも消去する。
     function clearPlaybackSessionUiState(reason = "playback_session_cleared") {
       logContent?.(reason, {
         previousVideoSrcKey: state.lastVideoSrcKey,
@@ -87,6 +99,11 @@
 
       teardownForRestart();
       prepareForRestart();
+
+      // prepareForRestart はパネルDOMをスキップするが、
+      // 動画クローズ後は次の startBilingual が来ないため、
+      // パネルとオーバーレイの残留字幕を確実に消去する。
+      clearInternalSubtitleState?.("videoClose");
 
       state.video = null;
       state.dialogEl = null;

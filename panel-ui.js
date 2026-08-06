@@ -195,14 +195,15 @@
     }
 
     function applyPanelVisibility(show) {
-      const { panelHost, overlayHost, toggleBtn } = getPanelUiElements();
+      const { panelHost, overlayHost } = getPanelUiElements();
 
       if (panelHost) panelHost.style.display = show ? "" : "none";
       if (overlayHost) {
         overlayHost.style.width = show ? "70%" : "100%";
         overlayHost.style.display = show ? "none" : "";
       }
-      if (toggleBtn) toggleBtn.style.display = show ? "none" : "block";
+
+      updateToggleButton(show);
     }
 
     function showRightPanel() {
@@ -218,7 +219,7 @@
       else state.panelVisible = !state.panelVisible;
 
       applyLayout(state.panelVisible);
-      applyPanelVisibility(state.panelVisible);
+      applyPanelVisibility(state.panelVisible);  // updateToggleButton はここで呼ばれる
 
       if (typeof persistPanelVisibility === "function") {
         persistPanelVisibility();
@@ -227,6 +228,7 @@
       if (typeof logContent === "function") {
         logContent("togglePanel", { panelVisible: state.panelVisible });
       }
+      // updateToggleButton(state.panelVisible); ← 削除
     }
 
     function applyPanelState(reason = "unknown") {
@@ -259,6 +261,67 @@
       }
     }
 
+    // [UI shell: toggle button]
+    // パネル開閉ボタンを生成する。常時表示・左半円デザイン。
+    function createToggleButton() {
+      if (getTarget().querySelector("#atv-toggle-btn")) return;
+
+      const btn = document.createElement("button");
+      btn.id = "atv-toggle-btn";
+      btn.textContent = "›";
+      btn.title = "字幕パネルを開く";
+      btn.style.cssText = [
+        "position:fixed",
+        "top:80px",
+        "right:0",
+        "transform:none",
+        "z-index:2147483647",
+        "background:rgba(0,0,0,0.45)",
+        "color:rgba(255,255,255,0.85)",
+        "border:2px solid rgba(255,255,255,0.6)",
+        "border-radius:10px 0 0 10px",
+        "padding:14px 12px",
+        "font-size:24px",
+        "font-weight:bold",
+        "box-shadow:-2px 2px 8px rgba(0,0,0,0.4)",
+        "line-height:1",
+        "cursor:pointer",
+        "backdrop-filter:blur(4px)",
+        "transition:right 0.3s ease, background 0.2s",
+      ].join(";");
+
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        togglePanel(true);
+      });
+
+      getTarget().appendChild(btn);
+
+      // window resize でボタン位置をパネル左端に追従させる
+      window.addEventListener("resize", () => {
+        if (state.panelVisible) updateToggleButton(true);
+      }, { passive: true });
+    }
+
+    // パネルの開閉状態に合わせてトグルボタンの表示を更新する。
+    function updateToggleButton(isOpen) {
+      const btn = getTarget()?.querySelector("#atv-toggle-btn");
+      if (!btn) return;
+      if (isOpen) {
+        const panelHost = getTarget()?.querySelector("#atv-panel-host");
+        const panelWidthPx = panelHost
+          ? panelHost.getBoundingClientRect().width
+          : 0;
+        btn.textContent = "‹";
+        btn.title = "字幕パネルを閉じる";
+        btn.style.right = panelWidthPx + "px";
+      } else {
+        btn.textContent = "›";
+        btn.title = "字幕パネルを開く";
+        btn.style.right = "0px";
+      }
+    }
+
     function loadPanelVisibility() {
       return new Promise((resolve) => {
         chrome.storage.local.get("panelVisible", (result = {}) => {
@@ -278,6 +341,7 @@
     return {
       createRightPanel,
       createDebugPanel,
+      createToggleButton,
       showRightPanel,
       hideRightPanel,
       togglePanel,

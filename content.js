@@ -37,25 +37,10 @@
     LOG_CATEGORIES.ERROR,
   ];
   const TRACK_RESOLVE_RETRY_DELAYS_MS = [120, 260, 420, 680];
-  const SECONDARY_SUBTITLE_GRACE_MS = 1200;
   const SECONDARY_SUBTITLE_IDLE_CLEAR_MS = 3200;
   const PANEL_PRIMARY_GRACE_MS = 600;
   const SUBTITLE_HISTORY_MAX_PER_CONTENT = 500;
   const PANEL_SLOT_LAYER_STYLE_ID = "atv-panel-slot-layer-style";
-  const PLAYBACK_HEADER_BASE_WIDTH_ATTR = "data-atvb-header-base-width";
-  const PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR = "data-atvb-header-base-max-width";
-  const PLAYBACK_FOOTER_BASE_WIDTH_ATTR = "data-atvb-footer-base-width";
-  const PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR = "data-atvb-footer-base-max-width";
-  const PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR =
-    "data-atvb-progress-base-min-width";
-  const PLAYBACK_PROGRESS_BASE_WIDTH_ATTR = "data-atvb-progress-base-width";
-  const PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR =
-    "data-atvb-progress-base-max-width";
-
-  const PLAYBACK_SKIP_BASE_LEFT_ATTR = "data-atvb-playback-skip-base-left";
-  const PLAYBACK_SKIP_BASE_RIGHT_ATTR = "data-atvb-playback-skip-base-right";
-  const PLAYBACK_SKIP_BASE_TRANSFORM_ATTR =
-    "data-atvb-playback-skip-base-transform";
 
   const state = {
     booted: false,
@@ -482,6 +467,9 @@ function forwardContentLog(...args) {
       overlayController.clearOverlayState?.();
     }
 
+    secondarySubtitleDom?.clearPanelSecondaryText?.();
+    holdBlockCandidate = null;
+
     if (previousContentKey) {
       saveHistoryForContentKey(previousContentKey);
     }
@@ -551,11 +539,6 @@ function forwardContentLog(...args) {
     };
   }
 
-  function ensureSecondarySubtitleElement() {
-    if (!secondarySubtitleDom?.ensure) return null;
-    return secondarySubtitleDom.ensure();
-  }
-
   function ensurePanelSlotLayerStyle() {
     if (!secondarySubtitleDom?.ensure) return;
     secondarySubtitleDom.ensure();
@@ -571,13 +554,8 @@ function forwardContentLog(...args) {
   function logSubtitlePanelState(tag) {
     try {
       const panelHost = getTarget().querySelector("#atv-panel-host");
-      const secondaryEls = Array.from(
-        document.querySelectorAll("[data-secondary-subtitle], .dual-subtitles-secondary"),
-      );
-      const nonPanelSecondaryEls = secondaryEls.filter(
-        (el) => !panelHost || !panelHost.contains(el),
-      );
-      const secondaryEl = nonPanelSecondaryEls[0] || null;
+      const nonPanelSecondaryEls = secondarySubtitleDom?.getNonPanelElements?.() ?? [];
+      const secondaryEl = nonPanelSecondaryEls[0] ?? null;
 
       const snapshot = state.lastPanelRenderSnapshot || {};
       const currentSubtitleBlock = snapshot.currentSubtitleBlock || null;
@@ -831,6 +809,7 @@ function forwardContentLog(...args) {
         const switched = syncHistoryContextWithPlayback("content_key_changed");
         if (switched) {
           requestSnapshotRefresh("content_key_changed");
+          renderPanel();
         }
       }
 
@@ -954,469 +933,6 @@ function forwardContentLog(...args) {
         state.lastPrimaryRecoveryAttemptAt = 0;
       }
     }, 2000);
-  }
-
-  function isVisibleElement(el) {
-    if (!el) return false;
-    if (!el.isConnected) return false;
-    if (el.getClientRects().length === 0) return false;
-    return getComputedStyle(el).display !== "none";
-  }
-
-  function composeManagedTransform(baseTransform, shiftX) {
-    const normalizedBase = String(baseTransform || "").trim();
-    const normalizedShift =
-      Math.abs(shiftX) < 0.5 ? 0 : Number(shiftX.toFixed(2));
-
-    if (!normalizedShift) return normalizedBase;
-
-    const shiftTransform = `translateX(${normalizedShift}px)`;
-    return normalizedBase
-      ? `${normalizedBase} ${shiftTransform}`
-      : shiftTransform;
-  }
-
-  function setTransformIfChanged(el, value) {
-    if (!el) return;
-    const normalizedNext = String(value || "").trim();
-    const normalizedCurrent = String(el.style.transform || "").trim();
-    if (normalizedCurrent === normalizedNext) return;
-    el.style.transform = normalizedNext;
-  }
-
-  function setStyleIfChanged(el, propertyName, value) {
-    if (!el) return;
-    const next = String(value || "");
-    if (el.style[propertyName] === next) return;
-    el.style[propertyName] = next;
-  }
-
-  function applyManagedTranslateX(el, shiftX) {
-    if (!el) return;
-
-    const managed = el.getAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR) === "1";
-    const baseTransform = managed
-      ? el.getAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR) || ""
-      : String(el.style.transform || "").trim();
-
-    if (!managed) {
-      el.setAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR, baseTransform);
-    }
-
-    const composed = composeManagedTransform(baseTransform, shiftX);
-    setTransformIfChanged(el, composed);
-    el.setAttribute(PLAYBACK_CONTROLS_SHIFT_X_ATTR, String(shiftX || 0));
-    el.setAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR, "1");
-  }
-
-  function getManagedShiftX(el) {
-    if (!el) return 0;
-    const raw = el.getAttribute(PLAYBACK_CONTROLS_SHIFT_X_ATTR);
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-
-  function clearManagedTranslateX(el) {
-    if (!el) return;
-    if (el.getAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR) !== "1") return;
-
-    const baseTransform =
-      el.getAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR) || "";
-    setTransformIfChanged(el, baseTransform);
-    el.removeAttribute(PLAYBACK_CONTROLS_SHIFT_X_ATTR);
-    el.removeAttribute(PLAYBACK_CONTROLS_BASE_TRANSFORM_ATTR);
-    el.removeAttribute(PLAYBACK_CONTROLS_MANAGED_ATTR);
-  }
-
-  function applyManagedFooterSizing(footer, widthPx, leftPx = 0) {
-    if (!footer) return;
-
-    if (!footer.hasAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR)) {
-      footer.setAttribute(
-        PLAYBACK_FOOTER_BASE_WIDTH_ATTR,
-        footer.style.width || "",
-      );
-    }
-    if (!footer.hasAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR)) {
-      footer.setAttribute(
-        PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR,
-        footer.style.maxWidth || "",
-      );
-    }
-
-    const safeWidth = `${Math.max(0, widthPx).toFixed(2)}px`;
-    setStyleIfChanged(footer, "width", safeWidth);
-    setStyleIfChanged(footer, "maxWidth", safeWidth);
-    applyManagedInlineStyle(
-      footer,
-      "footer",
-      "marginLeft",
-      `${Math.max(0, leftPx).toFixed(2)}px`,
-    );
-    applyManagedInlineStyle(footer, "footer", "marginRight", "auto");
-  }
-
-  function clearManagedFooterSizing(footer) {
-    if (!footer) return;
-
-    if (footer.hasAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR)) {
-      setStyleIfChanged(
-        footer,
-        "width",
-        footer.getAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR) || "",
-      );
-      footer.removeAttribute(PLAYBACK_FOOTER_BASE_WIDTH_ATTR);
-    }
-
-    if (footer.hasAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR)) {
-      setStyleIfChanged(
-        footer,
-        "maxWidth",
-        footer.getAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR) || "",
-      );
-      footer.removeAttribute(PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR);
-    }
-
-    clearManagedInlineStyle(footer, "footer", "marginLeft");
-    clearManagedInlineStyle(footer, "footer", "marginRight");
-  }
-
-  function applyManagedHeaderSizing(header, widthPx, leftPx = 0) {
-    if (!header) return;
-
-    if (!header.hasAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR)) {
-      header.setAttribute(
-        PLAYBACK_HEADER_BASE_WIDTH_ATTR,
-        header.style.width || "",
-      );
-    }
-    if (!header.hasAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR)) {
-      header.setAttribute(
-        PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR,
-        header.style.maxWidth || "",
-      );
-    }
-
-    const safeWidth = `${Math.max(0, widthPx).toFixed(2)}px`;
-    setStyleIfChanged(header, "width", safeWidth);
-    setStyleIfChanged(header, "maxWidth", safeWidth);
-    applyManagedInlineStyle(
-      header,
-      "header",
-      "marginLeft",
-      `${Math.max(0, leftPx).toFixed(2)}px`,
-    );
-    applyManagedInlineStyle(header, "header", "marginRight", "auto");
-  }
-
-  function clearManagedHeaderSizing(header) {
-    if (!header) return;
-
-    if (header.hasAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR)) {
-      setStyleIfChanged(
-        header,
-        "width",
-        header.getAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR) || "",
-      );
-      header.removeAttribute(PLAYBACK_HEADER_BASE_WIDTH_ATTR);
-    }
-
-    if (header.hasAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR)) {
-      setStyleIfChanged(
-        header,
-        "maxWidth",
-        header.getAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR) || "",
-      );
-      header.removeAttribute(PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR);
-    }
-
-    clearManagedInlineStyle(header, "header", "marginLeft");
-    clearManagedInlineStyle(header, "header", "marginRight");
-  }
-
-  function applyManagedProgressInset(progress) {
-    if (!progress) return;
-
-    if (!progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR)) {
-      progress.setAttribute(
-        PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR,
-        progress.style.minWidth || "",
-      );
-    }
-    if (!progress.hasAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR)) {
-      progress.setAttribute(
-        PLAYBACK_PROGRESS_BASE_WIDTH_ATTR,
-        progress.style.width || "",
-      );
-    }
-    if (!progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR)) {
-      progress.setAttribute(
-        PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR,
-        progress.style.maxWidth || "",
-      );
-    }
-
-    setStyleIfChanged(progress, "minWidth", "0");
-    setStyleIfChanged(progress, "width", "calc(100% - 48px)");
-    setStyleIfChanged(progress, "maxWidth", "calc(100% - 48px)");
-  }
-
-  function clearManagedProgressInset(progress) {
-    if (!progress) return;
-
-    if (progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR)) {
-      setStyleIfChanged(
-        progress,
-        "minWidth",
-        progress.getAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR) || "",
-      );
-      progress.removeAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR);
-    }
-    if (progress.hasAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR)) {
-      setStyleIfChanged(
-        progress,
-        "width",
-        progress.getAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR) || "",
-      );
-      progress.removeAttribute(PLAYBACK_PROGRESS_BASE_WIDTH_ATTR);
-    }
-    if (progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR)) {
-      setStyleIfChanged(
-        progress,
-        "maxWidth",
-        progress.getAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR) || "",
-      );
-      progress.removeAttribute(PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR);
-    }
-  }
-
-  function applyManagedSkipPosition(skipOverlay, safeAreaRight) {
-    if (!skipOverlay) return;
-
-    if (!skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR)) {
-      skipOverlay.setAttribute(
-        PLAYBACK_SKIP_BASE_LEFT_ATTR,
-        skipOverlay.style.left || "",
-      );
-    }
-    if (!skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR)) {
-      skipOverlay.setAttribute(
-        PLAYBACK_SKIP_BASE_RIGHT_ATTR,
-        skipOverlay.style.right || "",
-      );
-    }
-    if (!skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR)) {
-      skipOverlay.setAttribute(
-        PLAYBACK_SKIP_BASE_TRANSFORM_ATTR,
-        skipOverlay.style.transform || "",
-      );
-    }
-
-    const rect = skipOverlay.getBoundingClientRect();
-    const left = safeAreaRight - rect.width;
-    setStyleIfChanged(skipOverlay, "left", `${left.toFixed(2)}px`);
-    setStyleIfChanged(skipOverlay, "right", "auto");
-    setStyleIfChanged(skipOverlay, "transform", "none");
-  }
-
-  function clearManagedSkipPosition(skipOverlay) {
-    if (!skipOverlay) return;
-
-    if (skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR)) {
-      setStyleIfChanged(
-        skipOverlay,
-        "left",
-        skipOverlay.getAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR) || "",
-      );
-      skipOverlay.removeAttribute(PLAYBACK_SKIP_BASE_LEFT_ATTR);
-    }
-    if (skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR)) {
-      setStyleIfChanged(
-        skipOverlay,
-        "right",
-        skipOverlay.getAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR) || "",
-      );
-      skipOverlay.removeAttribute(PLAYBACK_SKIP_BASE_RIGHT_ATTR);
-    }
-    if (skipOverlay.hasAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR)) {
-      setStyleIfChanged(
-        skipOverlay,
-        "transform",
-        skipOverlay.getAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR) || "",
-      );
-      skipOverlay.removeAttribute(PLAYBACK_SKIP_BASE_TRANSFORM_ATTR);
-    }
-  }
-
-  function getManagedInlineStyleAttr(scope, propertyName) {
-    return `data-atvb-${scope}-${propertyName.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`)}`;
-  }
-
-  function applyManagedInlineStyle(el, scope, propertyName, value) {
-    if (!el) return;
-    const attrName = getManagedInlineStyleAttr(scope, propertyName);
-    if (!el.hasAttribute(attrName)) {
-      el.setAttribute(attrName, el.style[propertyName] || "");
-    }
-    setStyleIfChanged(el, propertyName, value);
-  }
-
-  function clearManagedInlineStyle(el, scope, propertyName) {
-    if (!el) return;
-    const attrName = getManagedInlineStyleAttr(scope, propertyName);
-    if (!el.hasAttribute(attrName)) return;
-    setStyleIfChanged(el, propertyName, el.getAttribute(attrName) || "");
-    el.removeAttribute(attrName);
-  }
-
-  function applyManagedFooterChildSizing(footer, safeAreaWidth) {
-    if (!footer) return;
-
-    const metadata = footer.querySelector(
-      PLAYBACK_CONTROLS_LAYOUT.metadataSelector,
-    );
-    const progress = footer.querySelector(
-      PLAYBACK_CONTROLS_LAYOUT.progressSelector,
-    );
-    const tabs = footer.querySelector(PLAYBACK_CONTROLS_LAYOUT.tabsSelector);
-    const autoSubsNote = footer.querySelector(
-      PLAYBACK_CONTROLS_LAYOUT.autoSubsNoteSelector,
-    );
-
-    [metadata, progress, tabs].forEach((el, index) => {
-      const scope = ["metadata", "progress", "tabs"][index];
-      if (!el) return;
-      applyManagedInlineStyle(el, scope, "minWidth", "0");
-      applyManagedInlineStyle(el, scope, "maxWidth", "100%");
-      applyManagedInlineStyle(el, scope, "overflow", "hidden");
-      applyManagedInlineStyle(el, scope, "flexShrink", "1");
-    });
-
-    if (progress) {
-      applyManagedInlineStyle(progress, "progress", "width", "100%");
-    }
-
-    if (autoSubsNote) {
-      applyManagedInlineStyle(
-        autoSubsNote,
-        "auto-subs-note",
-        "maxWidth",
-        "100%",
-      );
-      applyManagedInlineStyle(
-        autoSubsNote,
-        "auto-subs-note",
-        "overflow",
-        "hidden",
-      );
-      applyManagedInlineStyle(
-        autoSubsNote,
-        "auto-subs-note",
-        "flexShrink",
-        "1",
-      );
-      if (safeAreaWidth < 1200) {
-        applyManagedInlineStyle(
-          autoSubsNote,
-          "auto-subs-note",
-          "display",
-          "none",
-        );
-      } else {
-        clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "display");
-      }
-    }
-  }
-
-  function clearManagedFooterChildSizing(footer) {
-    if (!footer) return;
-
-    const metadata = footer.querySelector(
-      PLAYBACK_CONTROLS_LAYOUT.metadataSelector,
-    );
-    const progress = footer.querySelector(
-      PLAYBACK_CONTROLS_LAYOUT.progressSelector,
-    );
-    const tabs = footer.querySelector(PLAYBACK_CONTROLS_LAYOUT.tabsSelector);
-    const autoSubsNote = footer.querySelector(
-      PLAYBACK_CONTROLS_LAYOUT.autoSubsNoteSelector,
-    );
-
-    [
-      [metadata, "metadata"],
-      [progress, "progress"],
-      [tabs, "tabs"],
-    ].forEach(([el, scope]) => {
-      clearManagedInlineStyle(el, scope, "minWidth");
-      clearManagedInlineStyle(el, scope, "maxWidth");
-      clearManagedInlineStyle(el, scope, "overflow");
-      clearManagedInlineStyle(el, scope, "flexShrink");
-    });
-
-    clearManagedInlineStyle(progress, "progress", "width");
-
-    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "maxWidth");
-    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "overflow");
-    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "flexShrink");
-    clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "display");
-  }
-
-  function getPlaybackPanelLayoutAnchor() {
-    return (
-      document.querySelector(PLAYBACK_CONTROLS_LAYOUT.panelSelector) ||
-      document.querySelector(".dual-subtitles-secondary") ||
-      document.querySelector("[data-secondary-subtitle]")
-    );
-  }
-
-  function computePlaybackVisibleArea(panelAnchor, video) {
-    if (!isVisibleElement(panelAnchor) || !isVisibleElement(video)) return null;
-
-    const videoRect = video.getBoundingClientRect();
-    const panelRect = panelAnchor.getBoundingClientRect();
-    const safeGutter = PLAYBACK_CONTROLS_LAYOUT.footerSafeGutterPx;
-    const safeAreaLeft = videoRect.left + safeGutter;
-    const safeAreaRight =
-      Math.min(videoRect.right, panelRect.left) - safeGutter;
-    const safeAreaWidth = Math.max(0, safeAreaRight - safeAreaLeft);
-
-    return {
-      panelRect,
-      videoRect,
-      safeAreaLeft,
-      safeAreaRight,
-      safeAreaWidth,
-    };
-  }
-
-  function clampManagedShiftX(
-    rect,
-    existingShiftX,
-    nextShiftX,
-    minLeft,
-    maxRight,
-  ) {
-    if (!rect) return 0;
-
-    let shiftX = nextShiftX;
-    const projectLeft = (candidateShiftX) =>
-      rect.left + (candidateShiftX - existingShiftX);
-    const projectRight = (candidateShiftX) =>
-      rect.right + (candidateShiftX - existingShiftX);
-
-    if (projectRight(shiftX) > maxRight) {
-      shiftX -= projectRight(shiftX) - maxRight;
-    }
-
-    if (projectLeft(shiftX) < minLeft) {
-      shiftX += minLeft - projectLeft(shiftX);
-    }
-
-    if (shiftX > 0) {
-      shiftX = 0;
-    }
-
-    return shiftX;
   }
 
   function getShadowProgressTargets() {
@@ -1576,12 +1092,10 @@ function forwardContentLog(...args) {
     applyLayout(true);
     const panelHost = getTarget().querySelector("#atv-panel-host");
     const overlayHost = getTarget().querySelector("#atv-overlay-host");
-    const toggleBtn = getTarget().querySelector("#atv-toggle-btn");
     if (panelHost) panelHost.style.display = "";
     if (overlayHost) {
       overlayHost.style.width = "70%";
     }
-    if (toggleBtn) toggleBtn.style.display = "none";
   }
 
   function hideRightPanel() {
@@ -1592,12 +1106,10 @@ function forwardContentLog(...args) {
     applyLayout(false);
     const panelHost = getTarget().querySelector("#atv-panel-host");
     const overlayHost = getTarget().querySelector("#atv-overlay-host");
-    const toggleBtn = getTarget().querySelector("#atv-toggle-btn");
     if (panelHost) panelHost.style.display = "none";
     if (overlayHost) {
       overlayHost.style.width = "100%";
     }
-    if (toggleBtn) toggleBtn.style.display = "block";
   }
 
   function pinRightPanel() {}
@@ -1745,36 +1257,6 @@ function forwardContentLog(...args) {
     target.appendChild(createLanguageSetupNotice());
   }
 
-  function createToggleButton() {
-    if (getTarget().querySelector("#atv-toggle-btn")) return;
-
-    const btn = document.createElement("button");
-    btn.id = "atv-toggle-btn";
-    btn.textContent = "📋";
-    btn.title = "字幕パネルを開く";
-    btn.style.cssText = [
-      "position:fixed",
-      "top:60px",
-      "right:16px",
-      "z-index:999999",
-      "background:rgba(0,0,0,0.7)",
-      "color:white",
-      "border:1px solid rgba(255,255,255,0.25)",
-      "border-radius:8px",
-      "padding:4px 10px",
-      "font-size:16px",
-      "cursor:pointer",
-      "backdrop-filter:blur(4px)",
-      "display:none",
-    ].join(";");
-
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      panelUi.togglePanel(true);
-    });
-
-    getTarget().appendChild(btn);
-  }
 
   // [UI shell: subtitle popup]
   // [UI shell: subtitle popup style]
@@ -2655,17 +2137,8 @@ function forwardContentLog(...args) {
 
   const { createPlaybackControlsLayout } = root.playbackControlsLayout;
   const playbackControlsLayout = createPlaybackControlsLayout({
-    PLAYBACK_HEADER_BASE_WIDTH_ATTR,
-    PLAYBACK_HEADER_BASE_MAX_WIDTH_ATTR,
-    PLAYBACK_FOOTER_BASE_WIDTH_ATTR,
-    PLAYBACK_FOOTER_BASE_MAX_WIDTH_ATTR,
-    PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR,
-    PLAYBACK_PROGRESS_BASE_WIDTH_ATTR,
-    PLAYBACK_PROGRESS_BASE_MAX_WIDTH_ATTR,
-    PLAYBACK_SKIP_BASE_LEFT_ATTR,
-    PLAYBACK_SKIP_BASE_RIGHT_ATTR,
-    PLAYBACK_SKIP_BASE_TRANSFORM_ATTR,
     DEBUG_SECONDARY_SUBS,
+    secondarySubtitleDom,
     logContent,
   });
 
@@ -2704,7 +2177,6 @@ function forwardContentLog(...args) {
     getPlaybackControlsLayoutTargets:
       getPlaybackControlsLayoutTargetsFromModule,
     PLAYBACK_CONTROLS_LAYOUT,
-    setStyleIfChanged,
   });
 
   const cueController = createCueController({
@@ -2813,7 +2285,6 @@ function forwardContentLog(...args) {
   panelUi = createPanelUi({
     state,
     getTarget,
-    ensureSecondarySubtitleElement,
     getLiveDebugLogFilter,
     getDebugLogText,
     clearDebugLogs,
@@ -2979,9 +2450,13 @@ function ensureSyncIntervalOrchestrator() {
       state,
       services: {
         logContent,
+        isLanguageSelectionReady,
         getVideoAndDialog,
         waitForVideo,
         attachTracks,
+        startBilingual,
+        clearSubtitles: (opts) =>
+        clearInternalSubtitleState(opts?.reason ?? "startup_coordinator"),
       },
     }) ?? null;
     
@@ -3188,6 +2663,7 @@ function ensureSyncIntervalOrchestrator() {
     };
   }
 
+
   function clearInternalSubtitleState(reason = "unknown") {
     state.lastSecondaryText = "";
     state.lastSecondaryTextAt = 0;
@@ -3195,20 +2671,17 @@ function ensureSyncIntervalOrchestrator() {
     state.lastPrimaryText = "";
     state.lastPrimarySnapshotAt = 0;
 
-    const shouldPreserveSecondaryDom = reason === "prepareForRestart";
-    const panelHost = getTarget().querySelector("#atv-panel-host");
-    const secondaryEl = panelHost?.querySelector("[data-secondary-subtitle]");
-    if (secondaryEl && !shouldPreserveSecondaryDom) {
-      secondaryEl.textContent = "";
-      secondaryEl.innerHTML = "";
+    const shouldPreserveSecondaryDom =
+      reason === "prepareForRestart" || reason === "panelToggle";
+    if (!shouldPreserveSecondaryDom) {
+      secondarySubtitleDom.clearPanelSecondaryText();
     }
 
     logContent("internal subtitle state cleared", {
       reason,
       contentKey: state.currentContentKey,
-      hasPanelHost: Boolean(panelHost),
-      hasSecondaryElement: Boolean(secondaryEl),
-      preservedSecondaryDom: shouldPreserveSecondaryDom && Boolean(secondaryEl),
+      preservedSecondaryDom: shouldPreserveSecondaryDom,
+      // hasPanelHost / hasSecondaryElement は削除（DOM参照なしになったため）
     });
   }
 
@@ -3607,13 +3080,11 @@ function ensureSyncIntervalOrchestrator() {
     layoutController.initForPanelVisible(state.panelVisible);
 
     createOverlay();
-    createToggleButton();
+    panelUi.createToggleButton();
     panelUi.createRightPanel();
     createPopupHost();
     createDebugPanel();
-
     applyLayout(state.panelVisible);
-
     renderCurrentSnapshot();
     renderPanel();
 

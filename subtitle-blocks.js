@@ -271,7 +271,7 @@
     // 直前に終わった block を GAP_HOLD_SECONDS の間だけ current として保持する。
     // これにより cue 切り替わりの瞬間に current が -1 になり
     // 字幕表示が一瞬途切れる／更新が止まって見える問題を避ける。
-    function resolveCurrentIndex(blocks, now, { gapHoldSeconds = 0.4 } = {}) {
+    function resolveCurrentIndex(blocks, now, { gapHoldSeconds = 0.1 } = {}) {
       const list = Array.isArray(blocks) ? blocks : [];
       if (!list.length) return -1;
 
@@ -303,16 +303,17 @@
         return bestIndex;
       }
 
+      // grace-period フォールバック:
+      // state ベースで "past" のみを対象に絞り、直前に終わった block を保持する。
       let closestPastIndex = -1;
       let closestPastGap = Number.POSITIVE_INFINITY;
 
       list.forEach((block, index) => {
-        if (block.endTime <= now) {
-          const gap = now - block.endTime;
-          if (gap <= gapHoldSeconds && gap < closestPastGap) {
-            closestPastGap = gap;
-            closestPastIndex = index;
-          }
+        if (block.state !== "past") return;
+        const gap = now - block.endTime;
+        if (gap <= gapHoldSeconds && gap < closestPastGap) {
+          closestPastGap = gap;
+          closestPastIndex = index;
         }
       });
 

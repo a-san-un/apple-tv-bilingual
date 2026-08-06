@@ -37,7 +37,6 @@
       showPopup,
       getPlaybackControlsLayoutTargets,
       PLAYBACK_CONTROLS_LAYOUT,
-      setStyleIfChanged,
     } = {}) {
       // content 切替時の残留テキストを防ぐため、簡単な前回 state を保持する。
       function ensureOverlayState() {

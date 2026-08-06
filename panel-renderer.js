@@ -433,11 +433,8 @@
                 startTime: currentBlock.startTime ?? null,
                 endTime: currentBlock.endTime ?? null,
                 state: currentBlock.state || null,
-                primaryPreview: String(currentBlock.primary || "").slice(0, 80),
-                secondaryPreview: String(currentBlock.secondary || "").slice(
-                  0,
-                  80,
-                ),
+                primaryPreview: String(currentBlock.primaryText || currentBlock.primary || "").slice(0, 80),
+                secondaryPreview: String(currentBlock.secondaryText || currentBlock.secondary || "").slice(0, 80),
               }
             : null,
           stateCurrentSubtitleBlock: state.currentSubtitleBlock || null,

@@ -34,6 +34,7 @@
       logContentSubtitle = () => {},
       isDebugEnabled = () => false,
       idleClearMs = 3200,
+      gapHoldMs = 500,            // ← 追加：cue gap 間の即時クリア抑止ウィンドウ
       panelSlotLayerStyleId = 'atv-panel-slot-layer-style',
     } = deps || {};
 
@@ -204,6 +205,19 @@
         ? getTrackActiveCuesLength(track)
         : 0;
 
+      // ── GAP GUARD ──────────────────────────────────────────────────
+      // activeCuesLength=0 でも、前回シグナルから gapHoldMs 以内なら
+      // render を早期リターンして DOM クリアを防ぐ
+      if (
+        activeCuesLength === 0 &&
+        !text &&
+        lastSecondarySignalAt > 0 &&
+        Date.now() - lastSecondarySignalAt < gapHoldMs
+      ) {
+        return; // cue gap の瞬間クリアをスキップ
+      }
+      // ───────────────────────────────────────────────────────────────
+
       let resolvedText = text;
       if (!resolvedText && activeCuesLength > 0 && getCurrentCueText) {
         resolvedText = getCurrentCueText(track);
@@ -289,6 +303,19 @@
       lastSecondarySignalAt = 0;
     }
 
+
+    function clearPanelSecondaryText() {
+      const panelHost = getOrCreatePanelHost();
+      if (!panelHost) return;
+      const el = panelHost.querySelector('[data-secondary-subtitle]');
+      if (!el) return;
+      el.textContent = '';
+      el.innerHTML = '';
+      if (isDebugEnabled()) {
+        logContentSubtitle('secondary-dom clearPanelSecondaryText', {});
+      }
+}
+
     function cleanup() {
       removePanelSecondarySubtitleElements();
 
@@ -300,7 +327,16 @@
       }
     }
 
-    return { ensure, render, clear, cleanup };
+    function getElement() {
+      const els = getNonPanelSecondarySubtitleElements();
+      return els.length > 0 ? els[0] : null;
+    }
+
+    function getNonPanelElements() {
+      return getNonPanelSecondarySubtitleElements();
+    }
+
+    return { ensure, render, clear, clearPanelSecondaryText, cleanup, getElement, getNonPanelElements };
   }
 
   root.createSecondarySubtitleDom = createSecondarySubtitleDom;

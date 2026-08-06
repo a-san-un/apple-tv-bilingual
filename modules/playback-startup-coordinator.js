@@ -23,6 +23,7 @@
       waitForVideo,
       attachTracks,
       startBilingual,
+      clearSubtitles,
     } = services;
 
     let startupWatchCleanup = null;
@@ -83,6 +84,11 @@
 
     function attachAndMaybeStart(video, reason = "unknown") {
       if (!video) return;
+
+      // 既に video が設定済み（= 切り替え）のときだけクリア
+      if (state.video && state.video !== video) {
+        clearSubtitles?.({ reason: `startup_coordinator:video_change:${reason}` });
+      }
 
       const current = getVideoAndDialog?.();
       state.video = video;

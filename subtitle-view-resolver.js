@@ -54,8 +54,10 @@
       const baseMeta = meta && typeof meta === "object" ? meta : {};
       const now = Number(baseMeta.now ?? baseMeta.currentTime ?? NaN);
       const endTime = Number(block?.endTime ?? NaN);
+      const startTime = Number(block?.startTime ?? NaN);  // ← 追加
 
       if (!Number.isFinite(now) || !Number.isFinite(endTime)) return false;
+      if (Number.isFinite(startTime) && now < startTime - 5) return false;  // ← 追加
       if (now < endTime) return true;
       return now - endTime <= HOLD_WINDOW_SECONDS;
     }
