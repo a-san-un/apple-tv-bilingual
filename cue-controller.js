@@ -619,6 +619,14 @@
       secondaryTrackBound = null;
     }
 
+    function suppressNativeSubtitles() {
+      if (document.getElementById("atvb-cue-suppress")) return;
+      const style = document.createElement("style");
+      style.id = "atvb-cue-suppress";
+      style.textContent = "video::cue { visibility: hidden !important; }";
+      document.head.appendChild(style);
+    }
+
     // primary track を usable 化し、cuechange だけでなく playback 側イベントでも再評価できるようにする。
     // 初回 resume 時に cuechange が来ないケースでも、timeupdate / seeked / playing で onCueChange を補助発火させる。
     function bindPrimarySubtitleTrack(track, onCueChange, options = {}) {
@@ -634,6 +642,8 @@
         track.mode = "showing";
       } catch (_) {}
 
+      suppressNativeSubtitles();
+      
       const video = options.video || null;
 
       try {

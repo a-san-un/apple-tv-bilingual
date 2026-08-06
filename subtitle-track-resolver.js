@@ -366,7 +366,7 @@
 
     try {
       if (selectedTrack.mode === "disabled") {
-        selectedTrack.mode = "hidden";
+        selectedTrack.mode = "showing";  // cuechange を確実に発火させる
       }
     } catch (_) {}
 

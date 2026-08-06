@@ -1095,6 +1095,7 @@ function forwardContentLog(...args) {
     if (panelHost) panelHost.style.display = "";
     if (overlayHost) {
       overlayHost.style.width = "70%";
+      overlayHost.style.display = ""; 
     }
   }
 

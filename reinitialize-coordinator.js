@@ -40,14 +40,14 @@
     // panel 反映までの手順を束ねる。
     // 判定本体や resolver / binder の実装詳細は deps 側へ委譲する。
     // -----------------------------------------------------------------------------
-    function reinitializeSubtitlePipeline(reason = "unknown") {
+    async function reinitializeSubtitlePipeline(reason = "unknown") {
       const switched = syncHistoryContextWithPlayback(reason);
       clearInternalSubtitleState(reason);
 
       const effectiveSecondaryLanguage =
         state.requestedSecondaryLang || state.contentSettings.secondaryLang;
 
-      const trackSelection = selectPrimaryAndSecondaryTracks(
+      const trackSelection = await selectPrimaryAndSecondaryTracks(
         state.video,
         state.contentSettings.primaryLang,
         effectiveSecondaryLanguage,
@@ -118,9 +118,9 @@
       return true;
     }
 
-    function runReinitializeFromCurrentPlayback(reason = "unknown") {
+    async function runReinitializeFromCurrentPlayback(reason = "unknown") {
       if (!refreshPlaybackContextForReinitialize()) return null;
-      return reinitializeSubtitlePipeline(reason);
+      return await reinitializeSubtitlePipeline(reason);
     }
 
     // -----------------------------------------------------------------------------
@@ -129,7 +129,7 @@
     // retry 間隔とタイマーのライフサイクルを管理する。
     // retry 条件の判定本体は持ち込まず、再試行の orchestration に限定する。
     // -----------------------------------------------------------------------------
-    function scheduleTrackResolveRetry(reason = "video_changed") {
+    async function scheduleTrackResolveRetry(reason = "video_changed") {
       clearTrackResolveRetryTimers();
 
       logContentSubtitle("track resolve retry scheduled", {
@@ -138,7 +138,7 @@
       });
 
       TRACK_RESOLVE_RETRY_DELAYS_MS.forEach((delayMs, retryIndex) => {
-        const timerId = window.setTimeout(() => {
+        const timerId = window.setTimeout(async () => {
           if (state.restarting || !state.video) return;
 
           const attempt = retryIndex + 1;
@@ -149,7 +149,7 @@
             delayMs,
           });
 
-          const retryResult = runReinitializeFromCurrentPlayback(
+          const retryResult = await runReinitializeFromCurrentPlayback(
             `${reason}:retry_${attempt}`,
           );
 
@@ -217,10 +217,9 @@
       if (state.restarting) return;
 
       loadSettingsSnapshot(reason)
-        .then((snapshot) => {
+        .then(async (snapshot) => {
           applySettingsSnapshotToState(snapshot);
-
-          const result = runReinitializeFromCurrentPlayback(reason);
+          const result = await runReinitializeFromCurrentPlayback(reason);
           applyReinitializeResult(result, reason);
         })
         .catch((error) => {

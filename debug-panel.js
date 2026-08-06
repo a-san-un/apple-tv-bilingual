@@ -79,7 +79,8 @@
 
   async function update(root) {
     if (!root) return;
-
+    if (!isChromeContextAlive()) return;
+    
     const textarea = root.getElementById("debug-log");
     if (!textarea) return;
 
