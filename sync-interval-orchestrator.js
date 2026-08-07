@@ -767,10 +767,24 @@
         };
       }
 
+      // sync-interval-orchestrator.js — return の直前に追加
+      let _orchestratorPaused = false;
+
+      function stop() {
+        _orchestratorPaused = true;
+      }
+
+      function start() {
+        _orchestratorPaused = false;
+      }
+
       return {
         refreshPlaybackContext,
         detectLargeSeek,
         runSecondaryRecoveryPass,
+        stop,
+        start,
+        isPaused: () => _orchestratorPaused,
       };
     };
 })();

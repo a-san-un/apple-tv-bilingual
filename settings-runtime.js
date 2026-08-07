@@ -34,6 +34,7 @@
       getUniqueTracks,
       cueController,
       renderSecondarySubtitle,
+      syncIntervalOrchestrator,
     } = deps;
 
     let initialAutoStartCleanup = null;
@@ -350,7 +351,11 @@
             return;
           }
 
-          startBilingualWhenTracksReady("initial_load");
+          if (state.contentSettings.enabled === false) {
+            logContent?.("initial auto-start skipped: disabled");
+          } else {
+            startBilingualWhenTracksReady("initial_load");
+}
         })
         .catch((error) => {
           logContentError("settings load failed", {
@@ -592,6 +597,16 @@
         });
 
         const applySettingsAsync = async () => {
+
+          if (next.enabled === false) {
+            teardownForRestart("disabled");
+            syncIntervalOrchestrator?.stop?.();
+            cleanupInitialAutoStartWatch();
+            state.booted = false;
+            sendResponse({ ok: true, reason: "disabled" });
+            return;  // restartBilingual も cueController も呼ばない
+          }
+
           await syncAppleTvNativeSubtitleToSecondaryLang(
             state.contentSettings.secondaryLang,
             triggerReason,

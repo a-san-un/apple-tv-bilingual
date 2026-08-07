@@ -277,6 +277,11 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     const url = changeInfo.url || tab?.url;
     if (!isAppleTvUrl(url)) return;
     await updateTrackedAppleTvTab(tabId, url, "tabs_onUpdated");
+
+    // SPA 内の URL 変化（コンテンツ遷移）でも SETTINGS_CHANGED を送信
+    if (changeInfo.url) {
+      await notifySettingsChangedToTab(tabId, "spa_navigation");
+    }
   } catch (error) {
     await logBackground("tabs.onUpdated error", {
       tabId,

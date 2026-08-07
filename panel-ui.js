@@ -1,12 +1,14 @@
 // =============================================================
 // Apple TV Bilingual Subtitles - panel-ui.js
-// version: 1.0.5
+// version: 1.0.6
 // Issue #32 Round 11 後半: panel host / shell 責務へ限定し、
 // shared view を正本とする現在の構成に合わせて、panel header の
 // secondary language selector と旧 secondary subtitle DOM 依存を除去。
 // Debug panel は初期 mount のみ行い、applyPanelState では再 mount しない。
 // PR3: layout / playback controls orchestration は content.js の
 // applyLayout → layout controller 側へ寄せ、ここは薄い UI 配線に保つ。
+// Fix: applyPanelVisibility に OFF 時ボタン非表示を統合し、
+//      togglePanel 内の重複ロジックを除去。
 // =============================================================
 
 (function () {
@@ -20,7 +22,6 @@
       getDebugLogText,
       clearDebugLogs,
       sendToBackground,
-      onClosePanel,
       applyLayout,
       persistPanelVisibility,
       logContent,
@@ -98,7 +99,6 @@
             <span>📋 字幕履歴</span>
             <div class="panel-header-actions">
               <button id="settings-btn" type="button" title="設定">⚙️</button>
-              <button id="close-btn" type="button">✕ 閉じる</button>
             </div>
           </div>
           ${buildPanelDebugShellHTML()}
@@ -117,14 +117,6 @@
         try {
           chrome.runtime.sendMessage({ type: "OPEN_OPTIONS_PAGE" });
         } catch (_) {}
-      });
-
-      root.getElementById("close-btn")?.addEventListener("click", () => {
-        if (typeof onClosePanel === "function") {
-          onClosePanel();
-          return;
-        }
-        hideRightPanel();
       });
     }
 
@@ -194,16 +186,25 @@
       };
     }
 
+    // applyPanelVisibility にボタン表示制御を統合。
+    // show=true  → パネル表示・ボタンをパネル左端へ移動（updateToggleButton が処理）
+    // show=false → パネル非表示・ボタンも非表示（updateToggleButton の後で上書き）
     function applyPanelVisibility(show) {
       const { panelHost, overlayHost } = getPanelUiElements();
 
       if (panelHost) panelHost.style.display = show ? "" : "none";
       if (overlayHost) {
         overlayHost.style.width = show ? "70%" : "100%";
-        overlayHost.style.display = show ? "none" : "";
+        overlayHost.style.display = show ? "" : "none";
       }
 
       updateToggleButton(show);
+
+      // OFF 時はトグルボタンを非表示にする（updateToggleButton が "" に戻すので上書き）
+      if (!show) {
+        const btn = getTarget()?.querySelector("#atv-toggle-btn");
+        if (btn) btn.style.display = "none";
+      }
     }
 
     function showRightPanel() {
@@ -219,16 +220,14 @@
       else state.panelVisible = !state.panelVisible;
 
       applyLayout(state.panelVisible);
-      applyPanelVisibility(state.panelVisible);  // updateToggleButton はここで呼ばれる
+      applyPanelVisibility(state.panelVisible);
 
-      if (typeof persistPanelVisibility === "function") {
-        persistPanelVisibility();
+      if (state.panelVisible) {
+        deps.onPanelOpen?.();
+      } else {
+        deps.onPanelClose?.();
       }
-
-      if (typeof logContent === "function") {
-        logContent("togglePanel", { panelVisible: state.panelVisible });
-      }
-      // updateToggleButton(state.panelVisible); ← 削除
+      logContent("togglePanel", { panelVisible: state.panelVisible });
     }
 
     function applyPanelState(reason = "unknown") {
@@ -292,7 +291,7 @@
 
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        togglePanel(true);
+        togglePanel();
       });
 
       getTarget().appendChild(btn);
@@ -303,7 +302,8 @@
       }, { passive: true });
     }
 
-    // パネルの開閉状態に合わせてトグルボタンの表示を更新する。
+    // パネルの開閉状態に合わせてトグルボタンの位置・テキストを更新する。
+    // 表示/非表示の制御は applyPanelVisibility が一元管理する。
     function updateToggleButton(isOpen) {
       const btn = getTarget()?.querySelector("#atv-toggle-btn");
       if (!btn) return;
@@ -315,10 +315,12 @@
         btn.textContent = "‹";
         btn.title = "字幕パネルを閉じる";
         btn.style.right = panelWidthPx + "px";
+        btn.style.display = "";
       } else {
         btn.textContent = "›";
         btn.title = "字幕パネルを開く";
         btn.style.right = "0px";
+        btn.style.display = "";
       }
     }
 
@@ -338,6 +340,68 @@
       });
     }
 
+    // ── ネイティブUIへのトグル注入 ──────────────────────────────
+    function injectNativeToggle() {
+      if (document.getElementById('atvb-native-toggle')) return;
+
+      const upNextBtn = document.querySelector(
+        '[data-testid="uts.col.PlayerTabUpNext-trigger"]'
+      );
+      if (!upNextBtn) return;
+
+      const wrapper = document.createElement('li');
+      wrapper.style.cssText = 'display:flex;align-items:center;margin-left:14px;list-style:none';
+
+      const label = document.createElement('label');
+      label.id = 'atvb-native-toggle';
+      label.title = '字幕拡張 ON/OFF';
+      label.style.cssText = 'display:inline-flex;align-items:center;cursor:pointer';
+      label.innerHTML = `
+        <input type="checkbox" style="display:none" ${state.panelVisible ? 'checked' : ''}>
+        <span id="atvb-native-slider" style="
+          display:inline-block;width:36px;height:20px;
+          background:${state.panelVisible ? '#00aaff' : 'rgba(255,255,255,0.25)'};
+          border-radius:10px;position:relative;transition:background 0.2s;
+        ">
+          <span style="
+            position:absolute;width:16px;height:16px;border-radius:50%;
+            background:#fff;top:2px;
+            left:${state.panelVisible ? '18px' : '2px'};
+            transition:left 0.2s;
+          "></span>
+        </span>
+      `;
+
+      const checkbox = label.querySelector('input');
+      checkbox.addEventListener('change', () => {
+        const on = checkbox.checked;
+        const slider = label.querySelector('#atvb-native-slider');
+        const knob = slider.querySelector('span');
+        slider.style.background = on ? '#00aaff' : 'rgba(255,255,255,0.25)';
+        knob.style.left = on ? '18px' : '2px';
+        togglePanel(on);
+      });
+
+      wrapper.appendChild(label);
+      upNextBtn.closest('li').after(wrapper);
+      logContent('injectNativeToggle: inserted');
+    }
+
+    function watchForPlayerTabs() {
+      if (document.querySelector('[data-testid="uts.col.PlayerTabUpNext-trigger"]')) {
+        injectNativeToggle();
+        return;
+      }
+
+      const obs = new MutationObserver(() => {
+        if (document.querySelector('[data-testid="uts.col.PlayerTabUpNext-trigger"]')) {
+          injectNativeToggle();
+          obs.disconnect();
+        }
+      });
+      obs.observe(document.body, { childList: true, subtree: true });
+    }
+
     return {
       createRightPanel,
       createDebugPanel,
@@ -347,6 +411,7 @@
       togglePanel,
       applyPanelState,
       loadPanelVisibility,
+      watchForPlayerTabs,
     };
   }
 
