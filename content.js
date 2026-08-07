@@ -2209,7 +2209,7 @@ function forwardContentLog(...args) {
     getUniqueTracks: resolverDeps.getUniqueTracks,
     cueController,
     renderSecondarySubtitle,
-    syncIntervalOrchestrator,
+    get syncIntervalOrchestrator() { return syncIntervalOrchestrator; },
   });
 
   const {
