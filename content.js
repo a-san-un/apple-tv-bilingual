@@ -2128,6 +2128,9 @@ function forwardContentLog(...args) {
     return rebuildResult;
   }
 
+
+let syncIntervalOrchestrator = null;
+
   panelUi = createPanelUi({
     state,
     getTarget,
@@ -2255,9 +2258,6 @@ function forwardContentLog(...args) {
         state.requestedSecondaryLang || state.contentSettings.secondaryLang,
     },
   }) ?? null;
-
-let syncIntervalOrchestrator = null;
-
 function ensureSyncIntervalOrchestrator() {
   if (syncIntervalOrchestrator) return syncIntervalOrchestrator;
   if (!window.ATVB?.createSyncIntervalOrchestrator) return null;
