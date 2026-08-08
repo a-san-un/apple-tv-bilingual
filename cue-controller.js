@@ -601,13 +601,23 @@
       return secondaryTrackBound;
     }
 
-    // bind 済みの primary track listener を解除する。
+    // bind 済みの primary track listener と ネイティブ字幕抑制スタイルを除去する。
     function unbindPrimarySubtitleTrack() {
       if (primaryTrackCleanup) {
         primaryTrackCleanup();
         primaryTrackCleanup = null;
       }
       primaryTrackBound = null;
+
+      // ★ 追加：ネイティブ字幕抑制スタイルを除去
+      const suppress = document.getElementById("atvb-cue-suppress");
+      if (suppress) suppress.remove();
+    }
+
+    // bind 済みの ネイティブ字幕抑制スタイルを除去する。
+    function restoreNativeSubtitles() {
+      const suppress = document.getElementById("atvb-cue-suppress");
+      if (suppress) suppress.remove();
     }
 
     // bind 済みの secondary track listener を解除する。
@@ -619,6 +629,7 @@
       secondaryTrackBound = null;
     }
 
+    // ネイティブ字幕を抑制するスタイルを head に追加する。
     function suppressNativeSubtitles() {
       if (document.getElementById("atvb-cue-suppress")) return;
       const style = document.createElement("style");
@@ -1507,6 +1518,8 @@
 
     // primary cue change を基準に full rebuild を行い、必要なら 1 回だけ nearby current / hold view を優先する。
     function onPrimaryCueChange() {
+      // ★ enabled チェック
+      if (state?.contentSettings?.enabled === false) return;
       const currentTime = getCurrentTime();
 
       const primaryTrack = getBoundPrimaryTrack();

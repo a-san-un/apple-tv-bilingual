@@ -35,6 +35,7 @@
       cueController,
       renderSecondarySubtitle,
       syncIntervalOrchestrator,
+      panelUi,
     } = deps;
 
     let initialAutoStartCleanup = null;
@@ -351,8 +352,9 @@
             return;
           }
 
-          if (state.contentSettings.enabled === false) {
+          if (state.contentSettings.enabled !== true) {
             logContent?.("initial auto-start skipped: disabled");
+            mountToggleOnlyUi?.();
           } else {
             startBilingualWhenTracksReady("initial_load");
 }
@@ -598,13 +600,19 @@
 
         const applySettingsAsync = async () => {
 
-          if (next.enabled === false) {
+          const nextEnabled = ('enabled' in incoming)
+            ? incoming.enabled
+            : state.contentSettings.enabled;
+
+          // enabled=false の早期リターン直前に UI 隠し処理を追加
+          if (nextEnabled !== true) {
+            panelUi?.hideRightPanel?.();
             teardownForRestart("disabled");
             syncIntervalOrchestrator?.stop?.();
             cleanupInitialAutoStartWatch();
             state.booted = false;
             sendResponse({ ok: true, reason: "disabled" });
-            return;  // restartBilingual も cueController も呼ばない
+            return;
           }
 
           await syncAppleTvNativeSubtitleToSecondaryLang(

@@ -12,6 +12,7 @@
 (function () {
   ("use strict");
   const DEFAULT_SETTINGS = {
+    enabled: false,
     primaryLang: "en",
     secondaryLang: "",
     showSidebar: true,
@@ -936,7 +937,9 @@ function forwardContentLog(...args) {
     }
     applyLayout(true);
     const panelHost = getTarget().querySelector("#atv-panel-host");
-    const overlayHost = getTarget().querySelector("#atv-overlay-host");
+    const overlayHost =
+      getTarget().querySelector("#atv-overlay-host") ??
+      document.querySelector("#atv-overlay-host");
     if (panelHost) panelHost.style.display = "";
     if (overlayHost) {
       overlayHost.style.width = "70%";
@@ -951,7 +954,9 @@ function forwardContentLog(...args) {
     }
     applyLayout(false);
     const panelHost = getTarget().querySelector("#atv-panel-host");
-    const overlayHost = getTarget().querySelector("#atv-overlay-host");
+    const overlayHost =
+      getTarget().querySelector("#atv-overlay-host") ??
+      document.querySelector("#atv-overlay-host");
     if (panelHost) panelHost.style.display = "none";
     if (overlayHost) {
       overlayHost.style.width = "100%";
@@ -987,7 +992,7 @@ function forwardContentLog(...args) {
 
   function removeHost(id) {
     const root = getTarget();
-    const el = root.querySelector(`#${id}`);
+    const el = root.querySelector(`#${id}`) ?? document.body.querySelector(`#${id}`);
     if (el) el.remove();
   }
 
@@ -2213,6 +2218,8 @@ let syncIntervalOrchestrator = null;
     cueController,
     renderSecondarySubtitle,
     get syncIntervalOrchestrator() { return syncIntervalOrchestrator; },
+    mountToggleOnlyUi: () => panelUi?.watchForPlayerTabs?.(),
+    get panelUi() { return panelUi; }, 
   });
 
   const {
@@ -2320,6 +2327,8 @@ function ensureSyncIntervalOrchestrator() {
         destroyOverlay,
         destroyUiHosts,
         clearInternalSubtitleState,
+        cueController,
+        runtimeObservers,
       },
     }) ?? null;
 
@@ -2795,6 +2804,10 @@ function ensureSyncIntervalOrchestrator() {
   // 未設定時は notice 表示と panel close のみを行い、通常の track attach / UI build は進めない。
   // track 選択・panelVisible 復元・UI 構築をこの経路でまとめて行う。
   async function startBilingual(options = {}) {
+    if (state.contentSettings?.enabled === false) {
+      logContent("startBilingual skipped: disabled");
+      return;
+    }
     logContent("startBilingual trace", {
       panelVisible: state.panelVisible,
       keepPanelVisible:
@@ -3064,6 +3077,7 @@ function ensureSyncIntervalOrchestrator() {
         trackCount: v?.textTracks?.length ?? 0,
       });
     }
+    panelUi?.watchForPlayerTabs?.();
     loadSettingsFromSync();
   }
 

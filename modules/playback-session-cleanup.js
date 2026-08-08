@@ -28,6 +28,8 @@
       destroyOverlay,
       destroyUiHosts,
       clearInternalSubtitleState,
+      cueController,
+      runtimeObservers,
     } = teardownDeps;
 
     // secondary track の参照と表示だけを消す。
@@ -55,6 +57,22 @@
       overlayController?.clearOverlayState?.();
       destroyOverlay?.();
       destroyUiHosts?.();
+
+      runtimeObservers?.stopAll?.();
+      
+      const boundPrimaryTrack = cueController?.getBoundPrimaryTrack?.();
+      const boundSecondaryTrack = cueController?.getBoundSecondaryTrack?.();
+
+      cueController?.unbindPrimarySubtitleTrack?.();
+      cueController?.unbindSecondarySubtitleTrack?.();
+
+      try {
+        if (boundPrimaryTrack) boundPrimaryTrack.mode = "showing";
+      } catch (_) {}
+
+      try {
+        if (boundSecondaryTrack) boundSecondaryTrack.mode = "disabled";
+      } catch (_) {}
     }
 
     // 字幕履歴や track 参照など、再生セッション由来の一時 state を初期化する。

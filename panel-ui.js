@@ -180,9 +180,9 @@
     function getPanelUiElements() {
       const target = getTarget();
       return {
-        panelHost: target.querySelector("#atv-panel-host"),
+        panelHost:   target.querySelector("#atv-panel-host"),
         overlayHost: target.querySelector("#atv-overlay-host"),
-        toggleBtn: target.querySelector("#atv-toggle-btn"),
+        toggleBtn:   document.body.querySelector("#atv-toggle-btn"),
       };
     }
 
@@ -202,7 +202,7 @@
 
       // OFF 時はトグルボタンを非表示にする（updateToggleButton が "" に戻すので上書き）
       if (!show) {
-        const btn = getTarget()?.querySelector("#atv-toggle-btn");
+        const btn = document.body.querySelector("#atv-toggle-btn");
         if (btn) btn.style.display = "none";
       }
     }
@@ -263,7 +263,7 @@
     // [UI shell: toggle button]
     // パネル開閉ボタンを生成する。常時表示・左半円デザイン。
     function createToggleButton() {
-      if (getTarget().querySelector("#atv-toggle-btn")) return;
+      if (document.body.querySelector("#atv-toggle-btn")) return;
 
       const btn = document.createElement("button");
       btn.id = "atv-toggle-btn";
@@ -294,7 +294,7 @@
         togglePanel();
       });
 
-      getTarget().appendChild(btn);
+      document.body.appendChild(btn);
 
       // window resize でボタン位置をパネル左端に追従させる
       window.addEventListener("resize", () => {
@@ -305,7 +305,8 @@
     // パネルの開閉状態に合わせてトグルボタンの位置・テキストを更新する。
     // 表示/非表示の制御は applyPanelVisibility が一元管理する。
     function updateToggleButton(isOpen) {
-      const btn = getTarget()?.querySelector("#atv-toggle-btn");
+      const btn = document.body.querySelector("#atv-toggle-btn");
+
       if (!btn) return;
       if (isOpen) {
         const panelHost = getTarget()?.querySelector("#atv-panel-host");
@@ -357,29 +358,56 @@
       label.title = '字幕拡張 ON/OFF';
       label.style.cssText = 'display:inline-flex;align-items:center;cursor:pointer';
       label.innerHTML = `
-        <input type="checkbox" style="display:none" ${state.panelVisible ? 'checked' : ''}>
+        <input type="checkbox" style="display:none">
         <span id="atvb-native-slider" style="
           display:inline-block;width:36px;height:20px;
-          background:${state.panelVisible ? '#00aaff' : 'rgba(255,255,255,0.25)'};
+          background:rgba(255,255,255,0.25);
           border-radius:10px;position:relative;transition:background 0.2s;
         ">
           <span style="
             position:absolute;width:16px;height:16px;border-radius:50%;
             background:#fff;top:2px;
-            left:${state.panelVisible ? '18px' : '2px'};
+            left:2px;
             transition:left 0.2s;
           "></span>
         </span>
       `;
 
-      const checkbox = label.querySelector('input');
+      const checkbox = label.querySelector('input[type="checkbox"]');
+
+      // storage から enabled を読んで初期状態を反映
+      chrome.storage.sync.get('enabled', ({ enabled }) => {
+        const isOn = enabled === true;
+        const sl = label.querySelector('#atvb-native-slider');
+        const kn = sl.querySelector('span');
+        checkbox.checked    = isOn;
+        sl.style.background = isOn ? '#00aaff' : 'rgba(255,255,255,0.25)';
+        kn.style.left       = isOn ? '18px' : '2px';
+      });
+
       checkbox.addEventListener('change', () => {
         const on = checkbox.checked;
         const slider = label.querySelector('#atvb-native-slider');
         const knob = slider.querySelector('span');
         slider.style.background = on ? '#00aaff' : 'rgba(255,255,255,0.25)';
         knob.style.left = on ? '18px' : '2px';
-        togglePanel(on);
+
+        // ★ OFF 時：SETTINGS_CHANGED の応答を待たず即座にパネルを隠す
+        if (!on) {
+          hideRightPanel();
+        }
+
+        // enabled を storage に書いて SETTINGS_CHANGED を content.js に届ける
+        chrome.storage.sync.get(null, (stored) => {
+          const next = { ...stored, enabled: on };
+          chrome.storage.sync.set(next, () => {
+            chrome.runtime.sendMessage({
+              type: "APPLY_SETTINGS_TO_APPLE_TV",
+              reason: "NATIVE_TOGGLE",
+              settings: next,
+            });
+          });
+        });
       });
 
       wrapper.appendChild(label);

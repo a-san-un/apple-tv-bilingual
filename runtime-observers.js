@@ -202,11 +202,22 @@
       refreshPlaybackControlResizeObserverTargets();
     }
 
+    function stopAll() {
+      // waitForVideo の再試行タイマーを解除
+      if (waitTimer) {
+        clearTimeout(waitTimer);
+        waitTimer = null;
+      }
+      // MutationObserver / ResizeObserver / イベントリスナーを解除
+      stopPlaybackControlLayoutObservers();
+    }
+
     return {
       waitForVideo,
       refreshPlaybackControlResizeObserverTargets,
       startPlaybackControlLayoutObservers,
       stopPlaybackControlLayoutObservers,
+      stopAll,
     };
   }
 
