@@ -1,15 +1,19 @@
 // =============================================================
-// popup.js - Popup UI for subtitle language settings (v2.6.0)
+// popup.js - 字幕言語設定用の Popup UI
 // -------------------------------------------------------------
-// Responsibilities:
-// - Show a fixed supported-language list for primary/secondary.
-// - Allow empty secondaryLang as "Browser language" in stored spec.
-// - Treat raw stored settings as the source of truth for setup completion.
-// - Require primary + secondary selection for initial setup completion.
-// - Disallow selecting the same language for primary and secondary.
-// - Save settings to chrome.storage.sync.
-// - Notify the active Apple TV+ tab immediately after save.
-// - Keep debug logging behavior for troubleshooting.
+// 役割:
+// - primary / secondary 用に固定の言語一覧を表示する
+// - secondaryLang の空文字は「Browser language」として保存上は許可する
+// - 保存済みの生 settings を初期設定完了判定の正本として使う
+// - 初回設定完了には primary / secondary の両方を必須にする
+// - primary / secondary に同一言語は選べないようにする
+// - 設定を chrome.storage.sync に保存する
+// - 拡張が有効中なら、保存後に Apple TV+ タブへ即時通知する
+// - デバッグ用ログを残して調査しやすくする
+//
+// 補足:
+// - enabled が未保存でも、popup 初回保存時に false を明示保存する
+// - 拡張が OFF のときでも、言語設定保存後は popup を自動で閉じる
 // =============================================================
 
 const SUPPORTED_LANGS = [
@@ -22,6 +26,8 @@ const SUPPORTED_LANGS = [
   { lang: "es", label: "Español" },
 ];
 
+// popup 起動時に読む一般設定キー。
+// enabled は保存時に個別取得・正規化するため、ここには含めない。
 const GENERAL_KEYS = [
   "primaryLang",
   "secondaryLang",
@@ -41,8 +47,10 @@ const statusEl = document.getElementById("status");
 const openOptionsBtn = document.getElementById("open-options-btn");
 const noticeEl = document.getElementById("language-setup-notice");
 
+// 保存済み primary / secondary が両方あるまでは初期設定未完了として扱う。
 let isLanguageSelectionIncomplete = true;
 
+// API キーなどの機微値はログへそのまま残さない。
 function maskSensitive(value) {
   if (typeof value !== "string") return value;
   if (!value) return "";
@@ -50,6 +58,7 @@ function maskSensitive(value) {
   return `${value.slice(0, 4)}...${value.slice(-2)}`;
 }
 
+// デバッグログへ保存する payload を安全化する。
 function sanitizeForLog(payload) {
   if (payload == null) return payload;
 
@@ -82,12 +91,14 @@ function sanitizeForLog(payload) {
   return walk(cloned);
 }
 
+// popup / options / content 間で見やすい共通ログ形式を作る。
 function debugLog(scope, message, payload = null) {
   const time = new Date().toISOString();
   const safePayload = sanitizeForLog(payload);
   return { time, scope, message, payload: safePayload };
 }
 
+// ローカルデバッグログを末尾追加し、上限を超えた古い分は捨てる。
 async function appendDebugLog(line) {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
@@ -101,10 +112,13 @@ async function appendDebugLog(line) {
   await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
 }
 
+// セレクト表示用ラベルを整形する。
 function formatLanguageLabel(lang) {
   return lang.label ? `${lang.label} (${lang.lang})` : lang.lang;
 }
 
+// primary / secondary の select を固定言語一覧で再構築する。
+// secondary 側だけ空文字 = Browser language を先頭に置く。
 function populateSelects(langs, savedPrimary = "en", savedSecondary = "") {
   [primarySel, secondarySel].forEach((sel, idx) => {
     const saved = idx === 0 ? savedPrimary : savedSecondary;
@@ -128,6 +142,8 @@ function populateSelects(langs, savedPrimary = "en", savedSecondary = "") {
   });
 }
 
+// popup 上の入力値を検証する。
+// 現仕様では secondary も必須で、primary と同一言語は不可。
 function getValidationResult() {
   const primaryLang = String(primarySel.value || "").trim();
   const secondaryLang = String(secondarySel.value || "").trim();
@@ -159,6 +175,7 @@ function getValidationResult() {
   };
 }
 
+// バリデーション結果と初期設定未完了状態を popup UI へ反映する。
 function updatePopupUI() {
   const validation = getValidationResult();
 
@@ -176,6 +193,8 @@ function updatePopupUI() {
   statusEl.textContent = "";
 }
 
+// 有効中の Apple TV+ タブへ、保存済み言語設定を即時通知する。
+// 失敗時も popup は閉じ、保存自体は成功扱いにする。
 async function notifyActiveAppleTvTab(settingsToSend) {
   const lineNotifyStart = debugLog(
     "popup",
@@ -239,6 +258,7 @@ async function notifyActiveAppleTvTab(settingsToSend) {
   );
 }
 
+// popup 初期表示時に保存済み settings を読み、固定言語一覧へ反映する。
 async function initPopup() {
   const lineInit = debugLog("popup", "popup initialized");
   await appendDebugLog(lineInit);
@@ -276,6 +296,8 @@ async function initPopup() {
   });
 }
 
+// Apply 押下時は、言語設定を保存する。
+// enabled が未保存なら false として正規化し、一緒に sync へ保存する。
 applyBtn.addEventListener("click", async () => {
   const validation = getValidationResult();
 
@@ -298,12 +320,18 @@ applyBtn.addEventListener("click", async () => {
   const primaryLang = primarySel.value;
   const secondaryLang = secondarySel.value;
 
+  const currentSettings = await chrome.storage.sync.get(["enabled"]);
+  const normalizedEnabled = currentSettings.enabled === true;
+
   const settingsToSave = {
     primaryLang,
     secondaryLang,
+    enabled: normalizedEnabled,
   };
 
-  const lineSave = debugLog("popup", "Saving popup settings", settingsToSave);
+  const lineSave = debugLog("popup", "Saving popup settings", {
+    ...settingsToSave,
+  });
   await appendDebugLog(lineSave);
 
   chrome.storage.sync.set(settingsToSave, async () => {
@@ -313,11 +341,29 @@ applyBtn.addEventListener("click", async () => {
     const lineSaved = debugLog(
       "popup",
       "Saved popup settings to sync",
-      settingsToSave,
+      {
+        ...settingsToSave,
+      },
     );
     await appendDebugLog(lineSaved);
 
-    await notifyActiveAppleTvTab(settingsToSave);
+    if (normalizedEnabled === true) {
+      await notifyActiveAppleTvTab({
+        primaryLang,
+        secondaryLang,
+      });
+      return;
+    }
+
+    const lineDeferred = debugLog(
+      "popup",
+      "Skipped APPLY_SETTINGS_TO_APPLE_TV because extension is disabled",
+      settingsToSave,
+    );
+    await appendDebugLog(lineDeferred);
+
+    statusEl.textContent = "✓ Saved. Extension is currently off.";
+    setTimeout(() => window.close(), 1000);
   });
 });
 

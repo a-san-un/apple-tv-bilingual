@@ -574,12 +574,22 @@ async function saveSettings() {
   );
   await appendDebugLog(lineReadback);
 
+  const enabledState = await chrome.storage.sync.get(["enabled"]);
   const languageSettingsPayload = buildLanguageSettingsPayload(
     generalSettings,
   );
-  const dispatchResult = await dispatchSettingsChangedFromOptions(
-    languageSettingsPayload,
-  );
+
+  let dispatchResult = {
+    ok: false,
+    skipped: true,
+    reason: "extension-disabled",
+  };
+
+  if (enabledState.enabled === true) {
+    dispatchResult = await dispatchSettingsChangedFromOptions(
+      languageSettingsPayload,
+    );
+  }
 
   const lineDispatchResult = debugLog(
     "options",
@@ -587,6 +597,7 @@ async function saveSettings() {
     "options dispatch APPLY_SETTINGS_TO_APPLE_TV result",
     {
       payload: languageSettingsPayload,
+      enabled: enabledState.enabled,
       result: dispatchResult,
     },
   );
@@ -594,6 +605,8 @@ async function saveSettings() {
 
   if (dispatchResult?.ok) {
     showSaveStatus("Saved and applied.");
+  } else if (dispatchResult?.skipped) {
+    showSaveStatus("Saved. It will apply when the extension is enabled.");
   } else {
     showSaveStatus("Saved. Open Apple TV+ tab to apply immediately.");
   }
