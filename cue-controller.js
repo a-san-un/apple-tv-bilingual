@@ -51,11 +51,17 @@
     // 現在 bind 済みの primary track を保持する。
     let primaryTrackBound = null;
 
+    // primary track を拡張が変更する前の mode を保持する。
+    let primaryTrackOriginalMode = null;
+
     // 現在 bind されている secondary listener の解除関数を保持する。
     let secondaryTrackCleanup = null;
 
     // 現在 bind 済みの secondary track を保持する。
     let secondaryTrackBound = null;
+
+    // secondary track を拡張が変更する前の mode を保持する。
+    let secondaryTrackOriginalMode = null;
 
     function getUsableTrackDebugPayload(track) {
       return {
@@ -66,6 +72,41 @@
         cuesLength: getTrackCuesLength(track),
         activeCuesLength: getTrackActiveCuesLength(track),
       };
+    }
+
+    function dumpTextTrackSnapshot(reason = "unknown", extra = {}) {
+      const video = getVideoElement?.();
+      const tracks = Array.from(video?.textTracks || []);
+
+      const payload = {
+        reason,
+        currentTime: Number.isFinite(video?.currentTime) ? video.currentTime : null,
+        paused: Boolean(video?.paused),
+        readyState: Number.isFinite(video?.readyState) ? video.readyState : null,
+        textTrackCount: tracks.length,
+        primaryBoundTrack: getUsableTrackDebugPayload(primaryTrackBound),
+        secondaryBoundTrack: getUsableTrackDebugPayload(secondaryTrackBound),
+        tracks: tracks.map((track, index) => ({
+          index,
+          language: track?.language || "",
+          label: track?.label || "",
+          kind: track?.kind || "",
+          mode: track?.mode || "",
+          cuesLength: getTrackCuesLength(track),
+          activeCuesLength: getTrackActiveCuesLength(track),
+          isPrimaryBound: track === primaryTrackBound,
+          isSecondaryBound: track === secondaryTrackBound,
+        })),
+        ...extra,
+      };
+
+      logContent("text track snapshot", payload);
+
+      try {
+        console.log("[ATVB] text track snapshot", payload);
+      } catch (_) {}
+
+      return payload;
     }
 
     function ensureSubtitleTracksUsable(video, requestedLang, options = {}) {
@@ -601,32 +642,99 @@
       return secondaryTrackBound;
     }
 
-    // bind 済みの primary track listener と ネイティブ字幕抑制スタイルを除去する。
-    function unbindPrimarySubtitleTrack() {
+    // primary track の listener を解除し、必要に応じて拡張が変更する前の mode に戻す。
+    function unbindPrimarySubtitleTrack(options = {}) {
+      const restoreMode = options.restoreMode === true;
+      const track = primaryTrackBound;
+
       if (primaryTrackCleanup) {
         primaryTrackCleanup();
         primaryTrackCleanup = null;
       }
+
+      if (restoreMode && track && primaryTrackOriginalMode != null) {
+        try {
+          track.mode = primaryTrackOriginalMode;
+        } catch (_) {}
+      }
+
       primaryTrackBound = null;
+      primaryTrackOriginalMode = null;
 
-      // ★ 追加：ネイティブ字幕抑制スタイルを除去
       const suppress = document.getElementById("atvb-cue-suppress");
       if (suppress) suppress.remove();
     }
 
-    // bind 済みの ネイティブ字幕抑制スタイルを除去する。
+    // OFF 時に primary 字幕を Apple TV+ ネイティブ表示へ引き継ぐ。
+    // listener と拡張側 CSS 抑制だけを解除し、対象 track は showing にする。
+    function handoffPrimarySubtitleToNative() {
+      const track = primaryTrackBound;
+
+      dumpTextTrackSnapshot("handoffPrimarySubtitleToNative before", {
+        targetTrack: getUsableTrackDebugPayload(track),
+        originalMode: primaryTrackOriginalMode,
+        hasPrimaryTrackCleanup: Boolean(primaryTrackCleanup),
+      });
+
+      if (primaryTrackCleanup) {
+        primaryTrackCleanup();
+        primaryTrackCleanup = null;
+      }
+
+      const suppress = document.getElementById("atvb-cue-suppress");
+      if (suppress) suppress.remove();
+
+      try {
+        if (track) track.mode = "showing";
+      } catch (_) {}
+
+      dumpTextTrackSnapshot("handoffPrimarySubtitleToNative after-showing", {
+        targetTrack: getUsableTrackDebugPayload(track),
+        originalMode: primaryTrackOriginalMode,
+      });
+
+      primaryTrackBound = null;
+      primaryTrackOriginalMode = null;
+
+      dumpTextTrackSnapshot("handoffPrimarySubtitleToNative after-clear", {
+        targetTrack: getUsableTrackDebugPayload(track),
+      });
+
+      return track || null;
+    }
+
+    // ネイティブ字幕の CSS 抑制を解除し、primary track の元 mode を復元する。
     function restoreNativeSubtitles() {
+      const track = primaryTrackBound;
+
+      if (track && primaryTrackOriginalMode != null) {
+        try {
+          track.mode = primaryTrackOriginalMode;
+        } catch (_) {}
+      }
+
       const suppress = document.getElementById("atvb-cue-suppress");
       if (suppress) suppress.remove();
     }
 
-    // bind 済みの secondary track listener を解除する。
-    function unbindSecondarySubtitleTrack() {
+    // secondary track の listener を解除し、必要に応じて拡張が変更する前の mode に戻す。
+    function unbindSecondarySubtitleTrack(options = {}) {
+      const restoreMode = options.restoreMode === true;
+      const track = secondaryTrackBound;
+
       if (secondaryTrackCleanup) {
         secondaryTrackCleanup();
         secondaryTrackCleanup = null;
       }
+
+      if (restoreMode && track && secondaryTrackOriginalMode != null) {
+        try {
+          track.mode = secondaryTrackOriginalMode;
+        } catch (_) {}
+      }
+
       secondaryTrackBound = null;
+      secondaryTrackOriginalMode = null;
     }
 
     // ネイティブ字幕を抑制するスタイルを head に追加する。
@@ -643,6 +751,8 @@
     function bindPrimarySubtitleTrack(track, onCueChange, options = {}) {
       unbindPrimarySubtitleTrack();
       if (!track) return false;
+
+      primaryTrackOriginalMode = track.mode;
 
       ensureSubtitleTracksUsable(options.video, options.requestedLang, {
         finalMode: "showing",
@@ -804,6 +914,7 @@
       unbindSecondarySubtitleTrack();
 
       const previousMode = track?.mode || "";
+      secondaryTrackOriginalMode = previousMode;
       const requestedMode = modeDecision?.requestedMode || "hidden";
 
       const getReadableSnapshot = () => {
@@ -1653,6 +1764,7 @@
       ensureSubtitleTracksUsable,
       getBoundPrimaryTrack,
       unbindPrimarySubtitleTrack,
+      handoffPrimarySubtitleToNative,
       bindPrimarySubtitleTrack,
       getBoundSecondaryTrack,
       unbindSecondarySubtitleTrack,

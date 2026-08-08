@@ -27,6 +27,7 @@
       overlayController,
       destroyOverlay,
       destroyUiHosts,
+      destroyFeatureUiHosts,
       clearInternalSubtitleState,
       cueController,
       runtimeObservers,
@@ -59,7 +60,7 @@
       destroyUiHosts?.();
 
       runtimeObservers?.stopAll?.();
-      
+
       const boundPrimaryTrack = cueController?.getBoundPrimaryTrack?.();
       const boundSecondaryTrack = cueController?.getBoundSecondaryTrack?.();
 
@@ -73,6 +74,22 @@
       try {
         if (boundSecondaryTrack) boundSecondaryTrack.mode = "disabled";
       } catch (_) {}
+    }
+
+    function detachForDisabled() {
+      stopPlaybackControlLayoutObservers?.();
+      layoutController?.teardownPlaybackControlsUi?.();
+
+      clearInitialCueRecovery?.();
+      clearSecondaryTrackState();
+      overlayController?.clearOverlayState?.();
+      destroyOverlay?.();
+      destroyFeatureUiHosts?.();
+
+      runtimeObservers?.stopAll?.();
+
+      cueController?.handoffPrimarySubtitleToNative?.();
+      cueController?.unbindSecondarySubtitleTrack?.({ restoreMode: true });
     }
 
     // 字幕履歴や track 参照など、再生セッション由来の一時 state を初期化する。
@@ -175,6 +192,7 @@
     return {
       clearSecondaryTrackState,
       teardownForRestart,
+      detachForDisabled,
       prepareForRestart,
       clearPlaybackSessionUiState,
       isPlaybackCloseButtonClick,

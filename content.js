@@ -996,16 +996,21 @@ function forwardContentLog(...args) {
     if (el) el.remove();
   }
 
-  function destroyUiHosts() {
-    // restart 時は UI を一度全破棄し、buildUi で再生成する。
+  function destroyFeatureUiHosts() {
+    // OFF 時は toggle を残し、それ以外の拡張 UI だけを破棄する。
     window.ATVB?.debugPanel?.unmount?.();
     removeHost("atv-panel-host");
-    removeHost("atv-toggle-btn");
     removeHost("atv-popup-host");
     destroyOverlay();
     state.panelShadowRoot = null;
     state.popupShadowRoot = null;
     state.debugPanelRoot = null;
+  }
+
+  function destroyUiHosts() {
+    // restart 時は UI を一度全破棄し、buildUi で再生成する。
+    destroyFeatureUiHosts();
+    removeHost("atv-toggle-btn");
   }
 
   const LANGUAGE_SETUP_NOTICE_ID = "atv-language-setup-notice";
@@ -2209,6 +2214,8 @@ let syncIntervalOrchestrator = null;
     getVideoAndDialog,
     teardownForRestart: (...args) =>
       playbackSessionCleanup?.teardownForRestart?.(...args),
+    detachForDisabled: (...args) =>
+      playbackSessionCleanup?.detachForDisabled?.(...args),
     prepareForRestart: (...args) =>
       playbackSessionCleanup?.prepareForRestart?.(...args),
     startBilingual,
@@ -2326,6 +2333,7 @@ function ensureSyncIntervalOrchestrator() {
         overlayController,
         destroyOverlay,
         destroyUiHosts,
+        destroyFeatureUiHosts,
         clearInternalSubtitleState,
         cueController,
         runtimeObservers,

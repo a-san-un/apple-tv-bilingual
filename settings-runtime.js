@@ -27,6 +27,7 @@
       logContentSettings,
       getVideoAndDialog,
       teardownForRestart,
+      detachForDisabled,
       prepareForRestart,
       startBilingual,
       isPlaybackPageReady,
@@ -606,8 +607,22 @@
 
           // enabled=false の早期リターン直前に UI 隠し処理を追加
           if (nextEnabled !== true) {
+            state.contentSettings.enabled = false;
+            state.requestedContentSettings = {
+              ...state.requestedContentSettings,
+              enabled: false,
+            };
+            state.panelVisible = false;
+
+            logContentSettings("SETTINGS_CHANGED disable-branch", {
+              triggerReason,
+              incoming,
+              contentEnabled: state.contentSettings.enabled,
+              requestedEnabled: state.requestedContentSettings.enabled,
+            });
+
             panelUi?.hideRightPanel?.();
-            teardownForRestart("disabled");
+            detachForDisabled("disabled");
             syncIntervalOrchestrator?.stop?.();
             cleanupInitialAutoStartWatch();
             state.booted = false;
