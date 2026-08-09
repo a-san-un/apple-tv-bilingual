@@ -21,6 +21,8 @@
         "vtt-normalizer.js",
         "debug-logger.js",
         "subtitle-track-resolver.js",
+        "modules/settings-schema.js",
+        "modules/settings-store.js",
         "settings-bridge.js",
         "debug-panel.js",
         "panel-renderer.js",

@@ -15,19 +15,25 @@ const SUPPORTED_LANGS = [
   { lang: "es", label: "Español" },
 ];
 
-const DEFAULT_GENERAL_SETTINGS = {
-  primaryLang: "en",
-  secondaryLang: "",
-  showSidebar: true,
-  playWordAudio: true,
-  enableAiTooltip: true,
-  preferredAiProvider: "auto",
-};
+// 設定キー・デフォルト値は settings-schema.js の正本を参照する
+const DEFAULT_GENERAL_SETTINGS = globalThis.ATVB_SCHEMA
+  ? { ...globalThis.ATVB_SCHEMA.DEFAULT_SYNC_SETTINGS }
+  : {
+      enabled: false,
+      primaryLang: "en",
+      secondaryLang: "",
+      showSidebar: true,
+      playWordAudio: true,
+      enableAiTooltip: false,
+      preferredAiProvider: "auto",
+    };
 
-const DEFAULT_LOCAL_SETTINGS = {
-  googleAiStudioApiKey: "",
-  groqApiKey: "",
-};
+const DEFAULT_LOCAL_SETTINGS = globalThis.ATVB_SCHEMA
+  ? { ...globalThis.ATVB_SCHEMA.DEFAULT_LOCAL_SETTINGS }
+  : {
+      googleAiStudioApiKey: "",
+      groqApiKey: "",
+    };
 
 const DEBUG_LOGS_KEY = "debugLogs";
 const DEBUG_LOGS_MAX = 300;

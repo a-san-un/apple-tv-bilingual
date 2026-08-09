@@ -28,14 +28,10 @@ const SUPPORTED_LANGS = [
 
 // popup 起動時に読む一般設定キー。
 // enabled は保存時に個別取得・正規化するため、ここには含めない。
-const GENERAL_KEYS = [
-  "primaryLang",
-  "secondaryLang",
-  "showSidebar",
-  "playWordAudio",
-  "enableAiTooltip",
-  "preferredAiProvider",
-];
+// ATVB_SCHEMA (modules/settings-schema.js) がこのスクリプトより先に実行されていること。
+const GENERAL_KEYS = (globalThis.ATVB_SCHEMA?.SETTINGS_KEYS_SYNC ?? []).filter(
+  (k) => k !== "enabled"
+);
 
 const DEBUG_LOGS_KEY = "debugLogs";
 const DEBUG_LOGS_MAX = 400;
@@ -264,15 +260,15 @@ async function initPopup() {
   await appendDebugLog(lineInit);
 
   chrome.storage.sync.get(GENERAL_KEYS, async (result) => {
+    const schema = globalThis.ATVB_SCHEMA;
+    const merged = schema ? schema.mergeSyncSettings(result) : result;
     const hasStoredPrimaryLang = Boolean(result.primaryLang);
     const hasStoredSecondaryLang = Boolean(result.secondaryLang);
 
-    isLanguageSelectionIncomplete = !(
-      hasStoredPrimaryLang && hasStoredSecondaryLang
-    );
+    isLanguageSelectionIncomplete = !(hasStoredPrimaryLang && hasStoredSecondaryLang);
 
-    const savedPrimary = result.primaryLang || "en";
-    const savedSecondary = result.secondaryLang ?? "";
+    const savedPrimary = merged.primaryLang;
+    const savedSecondary = merged.secondaryLang ?? "";
 
     const lineLoaded = debugLog("popup", "Loaded general settings", {
       ...result,
@@ -321,7 +317,10 @@ applyBtn.addEventListener("click", async () => {
   const secondaryLang = secondarySel.value;
 
   const currentSettings = await chrome.storage.sync.get(["enabled"]);
-  const normalizedEnabled = currentSettings.enabled === true;
+  const schema = globalThis.ATVB_SCHEMA;
+  const normalizedEnabled = schema
+    ? schema.normalizeEnabled(currentSettings.enabled)
+    : currentSettings.enabled === true;
 
   const settingsToSave = {
     primaryLang,

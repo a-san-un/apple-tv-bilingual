@@ -1,31 +1,61 @@
+// tests/vtt-normalize.characterization.test.js
 import { describe, test, expect } from "vitest";
 import { normalizeSubtitleText, cleanCueText } from "../modules/vtt.js";
 
-describe("normalizeSubtitleText (characterization)", () => {
-  const cases = [
-    { input: "  Hello   World  ", expected: "  Hello   World  " },
-    { input: "<i>italic</i> text", expected: "italic text" },
-    { input: "", expected: "" },
-    { input: null, expected: "" },
-  ];
+// normalizeSubtitleText の仕様:
+//   - HTML タグ (<i>, <c.xxx>, </c> など) を除去する
+//   - HTML エンティティ (&amp; &lt; &gt;) をデコードする
+//   - 空白・改行は除去しない（トリムも行わない）
+//   - null / undefined は空文字に変換する
 
-  test.each(cases)("normalizes %o consistently", ({ input, expected }) => {
-    expect(normalizeSubtitleText(input)).toBe(expected);
+describe("normalizeSubtitleText (characterization)", () => {
+  test("HTML タグを除去する", () => {
+    expect(normalizeSubtitleText("<i>italic</i> text")).toBe("italic text");
+  });
+
+  test("VTT の <c.xxx> タグを除去する", () => {
+    expect(normalizeSubtitleText("<c.styledotitalic>text</c>")).toBe("text");
+  });
+
+  test("空白・改行はそのまま保持する（トリムしない）", () => {
+    expect(normalizeSubtitleText("  Hello   World  ")).toBe("  Hello   World  ");
+  });
+
+  test("HTML エンティティをデコードする", () => {
+    expect(normalizeSubtitleText("a &amp; b &lt;c&gt;")).toBe("a & b <c>");
+  });
+
+  test("空文字はそのまま返す", () => {
+    expect(normalizeSubtitleText("")).toBe("");
+  });
+
+  test("null は空文字を返す", () => {
+    expect(normalizeSubtitleText(null)).toBe("");
+  });
+
+  test("undefined は空文字を返す", () => {
+    expect(normalizeSubtitleText(undefined)).toBe("");
   });
 });
 
-test.skip("normalizeSubtitleText basic sanity", () => {
-  expect(normalizeSubtitleText("  Hello   World  ")).toBe("Hello World");
-});
-
 describe("cleanCueText (characterization)", () => {
-  test.each([
-    [{ text: "hello" }],
-    [{ text: "Line1\nLine2" }],
-    [{ text: "<i>italic</i>" }],
-    [{ text: "" }],
-    [null],
-  ])("keeps current behavior for %o", (cue) => {
-    expect(cleanCueText(cue)).toMatchSnapshot();
+  test("cue.text から HTML タグを除去して返す", () => {
+    expect(cleanCueText({ text: "<i>italic</i>" })).toBe("italic");
+  });
+
+  test("複数行テキストは改行を保持する", () => {
+    expect(cleanCueText({ text: "Line1\nLine2" })).toBe("Line1\nLine2");
+  });
+
+  test("プレーンテキストはそのまま返す", () => {
+    expect(cleanCueText({ text: "hello" })).toBe("hello");
+  });
+
+  test("空テキストは空文字を返す", () => {
+    expect(cleanCueText({ text: "" })).toBe("");
+  });
+
+  test("null は空文字を返す", () => {
+    expect(cleanCueText(null)).toBe("");
   });
 });

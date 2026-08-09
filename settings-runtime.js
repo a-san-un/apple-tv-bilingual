@@ -177,17 +177,16 @@
     // -------------------------------------------------------------
 
     // secondaryLang が空のときだけ browser language を補完する。
-    // 既に保存済みの secondaryLang がある場合は上書きしない。
+    // 実装は ATVB_SCHEMA.applySecondaryLangFallback に集約。
     function applySecondaryLangFallback(settings) {
-      const result = { ...settings };
-      if (!result.secondaryLang) {
-        const browserLang = (navigator.language || navigator.userLanguage || "en")
-          .toLowerCase()
-          .split("-")[0];
-        result.secondaryLang = browserLang;
+      const result = globalThis.ATVB_SCHEMA.applySecondaryLangFallback(
+        settings,
+        navigator.language || navigator.userLanguage || "en"
+      );
+      if (result.secondaryLang !== settings.secondaryLang) {
         logContentSettings(
           "secondaryLang empty: applying browser language fallback",
-          browserLang,
+          result.secondaryLang,
         );
       }
       return result;
@@ -240,7 +239,7 @@
               return;
             }
 
-            const requestedSettings = { ...DEFAULT_SETTINGS, ...storedSettings };
+            const requestedSettings = globalThis.ATVB_SCHEMA.mergeSyncSettings(storedSettings);
             const effectiveSettings =
               applySecondaryLangFallback(requestedSettings);
 
@@ -260,16 +259,15 @@
 
       return settingsBridge
         .loadSettings({
-          defaults: DEFAULT_SETTINGS,
+          defaults: globalThis.ATVB_SCHEMA.DEFAULT_SYNC_SETTINGS,
           applyFallback: applySecondaryLangFallback,
         })
         .then(() => {
           const snapshot = settingsBridge.getCurrentSettings?.() || {};
           const storedSettings = { ...(snapshot.storedSettings || {}) };
-          const requestedSettings = {
-            ...DEFAULT_SETTINGS,
-            ...(snapshot.requestedSettings || storedSettings),
-          };
+          const requestedSettings = globalThis.ATVB_SCHEMA.mergeSyncSettings(
+            snapshot.requestedSettings || storedSettings
+          );
           const effectiveSettings =
             snapshot.effectiveSettings || snapshot.settings || requestedSettings;
 
