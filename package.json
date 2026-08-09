@@ -3,6 +3,7 @@
   "devDependencies": {
     "eslint": "^9.0.0",
     "globals": "^15.0.0",
+    "jsdom": "^29.1.1",
     "vitest": "^4.1.10"
   },
   "scripts": {
