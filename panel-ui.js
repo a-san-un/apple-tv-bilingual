@@ -23,7 +23,6 @@
       clearDebugLogs,
       sendToBackground,
       applyLayout,
-      persistPanelVisibility,
       logContent,
       renderCurrentSnapshot,
       renderPanel,
@@ -188,7 +187,7 @@
 
     // applyPanelVisibility にボタン表示制御を統合。
     // show=true  → パネル表示・ボタンをパネル左端へ移動（updateToggleButton が処理）
-    // show=false → パネル非表示・ボタンも非表示（updateToggleButton の後で上書き）
+    // show=false → パネル非表示・ボタンも非表示（updateToggleButton が display:none を設定）
     function applyPanelVisibility(show) {
       const { panelHost, overlayHost } = getPanelUiElements();
 
@@ -199,12 +198,8 @@
       }
 
       updateToggleButton(show);
+      // updateToggleButton が ON/OFF 両方を管理するため後書き上書き不要
 
-      // OFF 時はトグルボタンを非表示にする（updateToggleButton が "" に戻すので上書き）
-      if (!show) {
-        const btn = document.body.querySelector("#atv-toggle-btn");
-        if (btn) btn.style.display = "none";
-      }
     }
 
     function showRightPanel() {
@@ -325,7 +320,7 @@
         btn.textContent = "›";
         btn.title = "字幕パネルを開く";
         btn.style.right = "0px";
-        btn.style.display = "";
+        btn.style.display = "none";  // ← OFF 時は非表示に統一
       }
     }
 
@@ -432,6 +427,7 @@
       showRightPanel,
       hideRightPanel,
       togglePanel,
+      applyPanelVisibility,
       applyPanelState,
       loadPanelVisibility,
       watchForPlayerTabs,

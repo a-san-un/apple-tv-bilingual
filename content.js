@@ -976,12 +976,8 @@ function forwardContentLog(...args) {
     if (shouldSyncPanelVisibility) {
       const sidebarEnabled = settings.showSidebar !== false;
       // state.panelVisible はランタイムUI状態のため、設定変更で上書きしない。
-      // パネルの表示/非表示だけを UI に反映する。
-      if (sidebarEnabled) {
-        panelUi.showRightPanel();
-      } else {
-        panelUi.hideRightPanel();
-      }
+      // showSidebar（設定値）に基づきパネルホストの表示/非表示だけを UI に反映する。
+      panelUi.applyPanelVisibility(sidebarEnabled);
     }
 
     logContent("Applied settings to UI", {
@@ -1001,10 +997,11 @@ function forwardContentLog(...args) {
   }
 
   function destroyFeatureUiHosts() {
-    // OFF 時は toggle を残し、それ以外の拡張 UI だけを破棄する。
+    // 字幕パネル開閉ボタンを含むすべての拡張 UI を破棄する。
     window.ATVB?.debugPanel?.unmount?.();
     removeHost("atv-panel-host");
     removeHost("atv-popup-host");
+    removeHost("atv-toggle-btn");
     destroyOverlay();
     state.panelShadowRoot = null;
     state.popupShadowRoot = null;
@@ -1014,7 +1011,7 @@ function forwardContentLog(...args) {
   function destroyUiHosts() {
     // restart 時は UI を一度全破棄し、buildUi で再生成する。
     destroyFeatureUiHosts();
-    removeHost("atv-toggle-btn");
+    // atv-toggle-btn は destroyFeatureUiHosts で処理済みのため個別削除不要。
   }
 
   const LANGUAGE_SETUP_NOTICE_ID = "atv-language-setup-notice";
@@ -2965,8 +2962,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       renderCurrentSnapshot();
       renderPanel();
 
-      if (state.panelVisible) panelUi.showRightPanel();
-      else panelUi.hideRightPanel();
+      panelUi.applyPanelVisibility(state.panelVisible);
     }
 
     if (typeof options.keepPanelVisible === "boolean") {
