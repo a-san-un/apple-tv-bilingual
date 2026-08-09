@@ -1,3 +1,4 @@
+/* global mountToggleOnlyUi */
 // =============================================================
 // Apple TV+ Bilingual Subtitles - settings-runtime.js
 //
@@ -26,7 +27,7 @@
       logContentError,
       logContentSettings,
       getVideoAndDialog,
-      teardownForRestart,
+      _teardownForRestart,
       detachForDisabled,
       prepareForRestart,
       startBilingual,
@@ -52,7 +53,8 @@
       if (typeof initialAutoStartCleanup === "function") {
         try {
           initialAutoStartCleanup();
-        } catch (_) {}
+        } catch {
+        }
       }
       initialAutoStartCleanup = null;
     }
@@ -79,7 +81,7 @@
 
     // bilingual 起動に使える字幕系 track が1本以上あるかを返す。
     // 初回起動を遅延させる判定の共通入口として使う。
-    function hasUsableSubtitleTracks(video) {
+    function _hasUsableSubtitleTracks(video) {
       return getSubtitleLikeTracks(video).length > 0;
     }
 
@@ -124,7 +126,8 @@
 
         startBilingual({
           reason: `settings_runtime:${reason}:${triggerReason}`,
-          keepPanelVisible: state.contentSettings.showSidebar !== false,
+          // ランタイムUI状態をそのまま引き継ぐ（設定値 showSidebar ではない）。
+          keepPanelVisible: state.panelVisible,
         });
 
         return true;
@@ -445,6 +448,7 @@
       }
 
       try {
+        // eslint-disable-next-line no-console
         console.log("[ATVB] syncAppleTvNativeSubtitleToSecondaryLang entered", {
           reason,
           secondaryLang,
@@ -500,6 +504,7 @@
         reason,
         panelVisible: state.panelVisible,
       });
+      // eslint-disable-next-line no-console
       console.trace("restartBilingual trace");
 
       if (state.restarting) {
@@ -564,8 +569,9 @@
 
         const triggerReason = message.reason || "unknown";
         const incoming = { ...(message.settings || {}) };
+        // フォールバックは設定値（showSidebar）にする。ランタイム状態（panelVisible）は使わない。
         const resolvedShowSidebar =
-          incoming.showSidebar ?? state.panelVisible;
+          incoming.showSidebar ?? state.contentSettings.showSidebar;
         const next = applySecondaryLangFallback({
           ...state.contentSettings,
           ...incoming,
@@ -587,7 +593,11 @@
           showSidebar: resolvedShowSidebar,
         };
 
-        state.panelVisible = resolvedShowSidebar !== false;
+        // panelVisible は incoming に showSidebar が明示されている場合のみ更新する。
+        // 言語変更など showSidebar を含まない設定変更では上書きしない。
+        if ("showSidebar" in incoming) {
+          state.panelVisible = incoming.showSidebar !== false;
+        }
 
         logContentSettings("SETTINGS_CHANGED received", {
           triggerReason,
@@ -640,7 +650,8 @@
             },
             "SETTINGS_CHANGED",
             {
-              keepPanelVisible: state.contentSettings.showSidebar !== false,
+              // ランタイムUI状態をそのまま引き継ぐ（設定値 showSidebar ではない）。
+              keepPanelVisible: state.panelVisible,
             },
           );
 

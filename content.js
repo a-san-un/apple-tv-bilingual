@@ -230,7 +230,7 @@ function forwardContentLog(...args) {
   }
 
   // logger の更新通知を Debug パネル更新へ接続する。
-  function registerDebugLogUpdateCallback() {
+  function _registerDebugLogUpdateCallback() {
     window.ATVB?.logger?.setOnLogUpdated?.(() => {
       updateLiveDebugPanel();
     });
@@ -252,6 +252,7 @@ function forwardContentLog(...args) {
       });
     } catch (e) {
       logContentError("EJDict load failed", { error: e.message });
+      // eslint-disable-next-line no-console
       console.warn("[ATV-Bilingual] EJDict load failed:", e.message);
     }
   })();
@@ -469,7 +470,7 @@ function forwardContentLog(...args) {
     }
 
     secondarySubtitleDom?.clearPanelSecondaryText?.();
-    holdBlockCandidate = null;
+    state.holdBlockCandidate = null;
 
     if (previousContentKey) {
       saveHistoryForContentKey(previousContentKey);
@@ -492,7 +493,7 @@ function forwardContentLog(...args) {
     return switchHistoryContext(resolvePlaybackContentKey(), reason);
   }
 
-  function appendSubtitleHistory(entry) {
+  function _appendSubtitleHistory(entry) {
     if (!entry) return;
 
     const nextHistory = state.subtitleHistory
@@ -511,7 +512,7 @@ function forwardContentLog(...args) {
     };
   }
 
-  function canReadCueFromTrack(track) {
+  function _canReadCueFromTrack(track) {
     if (!track) return false;
     return track.mode === "hidden" || track.mode === "showing";
   }
@@ -531,7 +532,7 @@ function forwardContentLog(...args) {
     return vttDeps.cleanCueText(getCurrentCue(track, time));
   }
 
-  function getSecondaryRenderLogPayload(text, track, elementCount) {
+  function _getSecondaryRenderLogPayload(text, track, elementCount) {
     return {
       textPreview: String(text || "").slice(0, 40),
       trackLanguage: track?.language || "",
@@ -540,7 +541,7 @@ function forwardContentLog(...args) {
     };
   }
 
-  function ensurePanelSlotLayerStyle() {
+  function _ensurePanelSlotLayerStyle() {
     if (!secondarySubtitleDom?.ensure) return;
     secondarySubtitleDom.ensure();
   }
@@ -554,7 +555,7 @@ function forwardContentLog(...args) {
 
   function logSubtitlePanelState(tag) {
     try {
-      const panelHost = getTarget().querySelector("#atv-panel-host");
+      const _panelHost = getTarget().querySelector("#atv-panel-host");
       const nonPanelSecondaryEls = secondarySubtitleDom?.getNonPanelElements?.() ?? [];
       const secondaryEl = nonPanelSecondaryEls[0] ?? null;
 
@@ -587,6 +588,7 @@ function forwardContentLog(...args) {
         state.lastAfterRenderSecondarySnapshotSignature = signature;
       }
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.warn("[ATVB] panel state snapshot failed", {
         tag,
         error: String(error),
@@ -781,7 +783,7 @@ function forwardContentLog(...args) {
     }, 1000);
   }
 
-  function getShadowProgressTargets() {
+  function _getShadowProgressTargets() {
     const host = document.querySelector("amp-playback-controls-progress");
     const root = host?.shadowRoot;
     if (!root) {
@@ -829,6 +831,7 @@ function forwardContentLog(...args) {
             immediate: true,
           });
         } catch (error) {
+          // eslint-disable-next-line no-console
           console.error(
             "[ATVB] scheduleAdjustPlaybackControls(windowResize) failed",
             error,
@@ -930,9 +933,9 @@ function forwardContentLog(...args) {
   }
 
 
-  function showRightPanel() {
+  function _showRightPanel() {
     if (!state.panelVisible) {
-      togglePanel(true);
+      panelUi.togglePanel(true);
       return;
     }
     applyLayout(true);
@@ -947,9 +950,9 @@ function forwardContentLog(...args) {
     }
   }
 
-  function hideRightPanel() {
+  function _hideRightPanel() {
     if (state.panelVisible) {
-      togglePanel(false);
+      panelUi.togglePanel(false);
       return;
     }
     applyLayout(false);
@@ -963,16 +966,17 @@ function forwardContentLog(...args) {
     }
   }
 
-  function pinRightPanel() {}
+  function _pinRightPanel() {}
 
-  function unpinRightPanel() {}
+  function _unpinRightPanel() {}
 
-  function applySettingsToUI(settings, options = {}) {
+  function _applySettingsToUI(settings, options = {}) {
     const shouldSyncPanelVisibility = options.syncPanelVisibility !== false;
 
     if (shouldSyncPanelVisibility) {
       const sidebarEnabled = settings.showSidebar !== false;
-      state.panelVisible = sidebarEnabled;
+      // state.panelVisible はランタイムUI状態のため、設定変更で上書きしない。
+      // パネルの表示/非表示だけを UI に反映する。
       if (sidebarEnabled) {
         panelUi.showRightPanel();
       } else {
@@ -1392,6 +1396,7 @@ function forwardContentLog(...args) {
     try {
       await window.ATVB?.debugPanel?.update?.();
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.warn("[ATV-Bilingual] updateLiveDebugPanel failed:", error);
     }
   }
@@ -1506,7 +1511,7 @@ function forwardContentLog(...args) {
     state.popupResizeObserver.observe(popup);
   }
 
-  function resetPopupDisplayState(clean) {
+  function _resetPopupDisplayState(clean) {
     const root = state.popupShadowRoot;
     const popup = root?.getElementById("popup");
     if (!root || !popup) return null;
@@ -1549,7 +1554,7 @@ function forwardContentLog(...args) {
     };
   }
 
-  function openPopupDisplay(popup) {
+  function _openPopupDisplay(popup) {
     popup.hidden = false;
     popup.setAttribute("aria-hidden", "false");
     popup.style.display = "block";
@@ -1794,7 +1799,7 @@ function forwardContentLog(...args) {
     });
   }
 
-  function fetchDictionary(word) {
+  function _fetchDictionary(word) {
     const paneDict = state.popupShadowRoot.getElementById("pane-dict");
     const badgesEl = state.popupShadowRoot.getElementById("popup-badges");
     const readingEl = state.popupShadowRoot.getElementById("popup-reading");
@@ -1822,7 +1827,7 @@ function forwardContentLog(...args) {
     repositionPopup("translation_failed");
   }
 
-  function fetchTranslation(text) {
+  function _fetchTranslation(text) {
     const el = state.popupShadowRoot.getElementById("pane-ai");
 
     logContent("fetchTranslation UI start", {
@@ -2233,7 +2238,7 @@ let syncIntervalOrchestrator = null;
   const {
     loadSettingsSnapshot,
     loadSettingsFromSync,
-    restartBilingual,
+    restartBilingual: _restartBilingual,
     ensureMessageListener,
   } = settingsRuntime;
 
@@ -2273,52 +2278,60 @@ let syncIntervalOrchestrator = null;
         state.requestedSecondaryLang || state.contentSettings.secondaryLang,
     },
   }) ?? null;
-function ensureSyncIntervalOrchestrator() {
-  if (syncIntervalOrchestrator) return syncIntervalOrchestrator;
-  if (!window.ATVB?.createSyncIntervalOrchestrator) return null;
 
-  syncIntervalOrchestrator =
-    window.ATVB.createSyncIntervalOrchestrator({
-      state,
-      controllers: {
-        cueController,
-      },
-      services: {
-        logContent,
-        getVideoAndDialog,
-        getCurrentVideoSrcKey,
-        syncHistoryContextWithPlayback,
-        renderCurrentSnapshot,
-        renderPanel,
-        reloadSettingsAndReinitialize: (reason) =>
-          reinitializeCoordinator?.reloadSettingsAndReinitialize?.(reason),
-        clearPlaybackSessionUiState: (reason) =>
-          playbackSessionCleanup?.clearPlaybackSessionUiState?.(reason),
-        debugPanelProbe: DEBUG_PANEL_PROBE,
-        getTrackActiveCuesLength,
-        getCurrentCueText,
-        normalizeSubtitleText: vttDeps.normalizeSubtitleText,
-        getMergedSubtitleHealthSnapshot,
-        syncSecondarySubtitleTrackBinding,
-        syncSecondarySubtitleTrack,
-        renderSecondarySubtitle,
-        resolverDeps,
-        panelUi,
-        initialCueRecovery,
-        getRequestedSecondaryLang: () => state.requestedSecondaryLang,
-      },
-    }) || null;
+const getMergedSubtitleHealthSnapshot = () =>
+  cueController?.getMergedSubtitleHealth?.() ?? null;
 
-  return syncIntervalOrchestrator;
-}
+const syncSecondarySubtitleTrackBinding = (...args) =>
+  cueController?.syncSecondarySubtitleTrack?.(...args);
+
+
+  function _ensureSyncIntervalOrchestrator() {
+    if (syncIntervalOrchestrator) return syncIntervalOrchestrator;
+    if (!window.ATVB?.createSyncIntervalOrchestrator) return null;
+  
+    syncIntervalOrchestrator =
+      window.ATVB.createSyncIntervalOrchestrator({
+        state,
+        controllers: {
+          cueController,
+        },
+        services: {
+          logContent,
+          getVideoAndDialog,
+          getCurrentVideoSrcKey,
+          syncHistoryContextWithPlayback,
+          renderCurrentSnapshot,
+          renderPanel,
+          reloadSettingsAndReinitialize: (reason) =>
+            reinitializeCoordinator?.reloadSettingsAndReinitialize?.(reason),
+          clearPlaybackSessionUiState: (reason) =>
+            playbackSessionCleanup?.clearPlaybackSessionUiState?.(reason),
+          debugPanelProbe: DEBUG_PANEL_PROBE,
+          getTrackActiveCuesLength,
+          getCurrentCueText,
+          normalizeSubtitleText: vttDeps.normalizeSubtitleText,
+          getMergedSubtitleHealthSnapshot,
+          syncSecondarySubtitleTrackBinding,
+          syncSecondarySubtitleTrack,
+          renderSecondarySubtitle,
+          resolverDeps,
+          panelUi,
+          initialCueRecovery,
+          getRequestedSecondaryLang: () => state.requestedSecondaryLang,
+        },
+      }) || null;
+  
+    return syncIntervalOrchestrator;
+  }
 
   const { setOverlayVisible, destroyOverlay, createOverlay } =
     overlayController;
 
   const {
     waitForVideo,
-    refreshPlaybackControlResizeObserverTargets,
-    startPlaybackControlLayoutObservers,
+    refreshPlaybackControlResizeObserverTargets: _refreshPlaybackControlResizeObserverTargets,
+    startPlaybackControlLayoutObservers: _startPlaybackControlLayoutObservers,
     stopPlaybackControlLayoutObservers,
   } = runtimeObservers;
 
@@ -2356,56 +2369,18 @@ function ensureSyncIntervalOrchestrator() {
       },
     }) ?? null;
     
-  function loadPanelVisibility() {
-    return Promise.resolve(state.contentSettings.showSidebar !== false);
+  function _loadPanelVisibility() {
+    const showSidebar = state.contentSettings?.showSidebar;
+    return globalThis.ATVB_PANEL_VISIBILITY.load(showSidebar !== false);
   }
 
   function persistPanelVisibility() {
-    const nextSettings = {
-      showSidebar: state.panelVisible,
-    };
-
-    chrome.storage.sync.set(nextSettings, () => {
-      if (chrome.runtime.lastError) {
-        logContentError("showSidebar persist failed", {
-          error: chrome.runtime.lastError.message,
-          showSidebar: state.panelVisible,
-        });
-        return;
-      }
-
-      state.contentSettings = {
-        ...state.contentSettings,
-        showSidebar: state.panelVisible,
-      };
-
-      logContent("showSidebar persisted from playback toggle", {
-        showSidebar: state.panelVisible,
-      });
-
-      chrome.runtime.sendMessage(
-        {
-          type: "APPLY_SETTINGS_TO_APPLE_TV",
-          reason: "playback_toggle",
-          settings: nextSettings,
-        },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            logContentError("playback toggle settings dispatch failed", {
-              error: chrome.runtime.lastError.message,
-              showSidebar: state.panelVisible,
-            });
-            return;
-          }
-
-          logContent("playback toggle settings dispatched", {
-            showSidebar: state.panelVisible,
-            ok: response?.ok ?? null,
-          });
-        },
-      );
+    globalThis.ATVB_PANEL_VISIBILITY.persist(state.panelVisible, (msg, data) => {
+      logContent(msg, data);
     });
   }
+
+
 
   function clearInitialCueRecoveryTimers() {
     if (!state.initialCueRecoveryTimers.length) return;
@@ -2582,7 +2557,7 @@ function ensureSyncIntervalOrchestrator() {
   }
 
 
-  function refreshSettingsOnPanelOpen() {
+  function _refreshSettingsOnPanelOpen() {
     if (!state.panelVisible) return;
 
     reinitializeCoordinator?.reloadSettingsAndReinitialize(
@@ -2836,6 +2811,7 @@ function ensureSyncIntervalOrchestrator() {
       },
       requestedSecondaryLang: state.requestedSecondaryLang || "",
     });
+    // eslint-disable-next-line no-console
     console.trace("startBilingual trace");
     if (!state.video) return;
 
@@ -2966,38 +2942,42 @@ function ensureSyncIntervalOrchestrator() {
 
     const sidebarEnabledSetting = state.contentSettings.showSidebar !== false;
 
-    if (typeof options.keepPanelVisible === "boolean") {
-      state.panelVisible = options.keepPanelVisible;
-    } else {
-      state.panelVisible = false;
+    // panelVisible が確定してから UI 構築を実行するヘルパー。
+    function _applyPanelVisibleAndBuild(panelVisible) {
+      state.panelVisible = panelVisible;
+
+      logContent("startBilingual panelVisible applied", {
+        panelVisible: state.panelVisible,
+        showSidebarSetting: state.contentSettings.showSidebar,
+        secondaryLang: state.contentSettings.secondaryLang || "",
+        requestedSecondaryLang: state.requestedSecondaryLang || "",
+      });
+
+      layoutController.initForPanelVisible(state.panelVisible);
+
+      createOverlay();
+      panelUi.createToggleButton();
+      panelUi.createRightPanel();
+      panelUi.watchForPlayerTabs();
+      createPopupHost();
+      createDebugPanel();
+      applyLayout(state.panelVisible);
+      renderCurrentSnapshot();
+      renderPanel();
+
+      if (state.panelVisible) panelUi.showRightPanel();
+      else panelUi.hideRightPanel();
     }
 
-    logContent("startBilingual panelVisible applied", {
-      panelVisible: state.panelVisible,
-      keepPanelVisible:
-        typeof options.keepPanelVisible === "boolean"
-          ? options.keepPanelVisible
-          : null,
-      showSidebarSetting: state.contentSettings.showSidebar,
-      secondaryLang: state.contentSettings.secondaryLang || "",
-      requestedSecondaryLang: state.requestedSecondaryLang || "",
-    });
-    console.trace("startBilingual panelVisible applied");
-
-    layoutController.initForPanelVisible(state.panelVisible);
-
-    createOverlay();
-    panelUi.createToggleButton();
-    panelUi.createRightPanel();
-    panelUi.watchForPlayerTabs();
-    createPopupHost();
-    createDebugPanel();
-    applyLayout(state.panelVisible);
-    renderCurrentSnapshot();
-    renderPanel();
-
-    if (state.panelVisible) panelUi.showRightPanel();
-    else panelUi.hideRightPanel();
+    if (typeof options.keepPanelVisible === "boolean") {
+      // 再初期化パスなど keepPanelVisible が明示的に渡された場合はそれを使う。
+      _applyPanelVisibleAndBuild(options.keepPanelVisible);
+    } else {
+      // 通常起動: chrome.storage.local の panelVisible を復元してから UI を構築する。
+      globalThis.ATVB_PANEL_VISIBILITY.load(sidebarEnabledSetting).then((restored) => {
+        _applyPanelVisibleAndBuild(restored);
+      });
+    }
 
     if (state.secondaryTrack) {
       renderSecondarySubtitle(
@@ -3093,4 +3073,3 @@ function ensureSyncIntervalOrchestrator() {
   playbackSessionCleanup?.ensureCloseClickListener?.();
   playbackStartupCoordinator?.boot?.();
 })();
-

@@ -23,6 +23,7 @@
         "subtitle-track-resolver.js",
         "modules/settings-schema.js",
         "modules/settings-store.js",
+        "modules/panel-visibility-state.js",
         "settings-bridge.js",
         "debug-panel.js",
         "panel-renderer.js",

@@ -222,6 +222,10 @@
       applyLayout(state.panelVisible);
       applyPanelVisibility(state.panelVisible);
 
+      // panelVisible を chrome.storage.local に保存する。
+      // showSidebar（chrome.storage.sync）には書かない。
+      globalThis.ATVB_PANEL_VISIBILITY.persist(state.panelVisible, logContent);
+
       if (state.panelVisible) {
         deps.onPanelOpen?.();
       } else {
@@ -326,19 +330,10 @@
     }
 
     function loadPanelVisibility() {
-      return new Promise((resolve) => {
-        chrome.storage.local.get("panelVisible", (result = {}) => {
-          if (chrome.runtime.lastError) {
-            resolve(false);
-            return;
-          }
-          if (Object.prototype.hasOwnProperty.call(result, "panelVisible")) {
-            resolve(result.panelVisible !== false);
-            return;
-          }
-          resolve(false);
-        });
-      });
+      // showSidebar 設定値を初期値として ATVB_PANEL_VISIBILITY.load に委譲する。
+      // local に panelVisible が未保存の場合は showSidebar の値が初期値になる。
+      const showSidebarSetting = state.contentSettings?.showSidebar !== false;
+      return globalThis.ATVB_PANEL_VISIBILITY.load(showSidebarSetting);
     }
 
     // ── ネイティブUIへのトグル注入 ──────────────────────────────
