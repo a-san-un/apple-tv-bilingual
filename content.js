@@ -972,12 +972,12 @@ function forwardContentLog(...args) {
 
     if (shouldSyncPanelVisibility) {
       const sidebarEnabled = settings.showSidebar !== false;
+      state.panelVisible = sidebarEnabled;
       if (sidebarEnabled) {
         panelUi.showRightPanel();
       } else {
         panelUi.hideRightPanel();
       }
-      state.panelVisible = sidebarEnabled;
     }
 
     logContent("Applied settings to UI", {
@@ -1873,7 +1873,8 @@ function forwardContentLog(...args) {
     }),
   } = subtitleBlockResolverApi;
   const createCueController = window.ATVB?.cueController?.createCueController;
-  const createSubtitleSyncController = window.ATVB?.createSubtitleSyncController;
+  const createSubtitleSyncController =
+    window.ATVB?.subtitleSyncController?.createSubtitleSyncController;
 
 
   if (typeof createPanelRenderer !== "function") {
@@ -1885,7 +1886,7 @@ function forwardContentLog(...args) {
   }
 
   if (typeof createSubtitleSyncController !== "function") {
-    throw new Error("ATVB createSubtitleSyncController is not available");
+    throw new Error("ATVB subtitleSyncController.createSubtitleSyncController is not available");
   }
 
   const root = (window.ATVB = window.ATVB || {});

@@ -3,9 +3,9 @@
 //
 // 役割:
 // - secondary 字幕の同期処理をまとめる。
-// - resolver が選んだ候補 track を 1 本ずつ showing に上げて cues を温める。
-// - cue が載った候補を再評価し、secondary bind 用の track を確定する。
-// - showing ベースで成立しない作品だけ、最後に native menu sync へフォールバックする。
+// - resolver が選んだ secondary track を直接 bind する。
+// - bind 前後の readability 情報を補助的に記録する。
+// - direct bind で成立しない作品だけ、最後に native menu sync へフォールバックする。
 // =============================================================
 (() => {
   "use strict";
@@ -18,9 +18,6 @@
       resolver,
       syncNativeSubtitleSelection,
       bindSecondaryTrack,
-      pollIntervalMs = 100,
-      activationHoldMs = 500,
-      activationTimeoutMs = 1500,
     } = services;
 
     function getTrackReadability(track, currentTime = NaN) {
@@ -59,126 +56,6 @@
       };
     }
 
-    function wait(ms) {
-      return new Promise((resolve) => setTimeout(resolve, ms));
-    }
-
-    function getOrderedSecondaryCandidates(video, requestedLang) {
-      const candidates = resolver?.getSecondarySubtitleTrackCandidates?.(
-        video,
-        requestedLang,
-      );
-
-      if (!Array.isArray(candidates) || candidates.length === 0) {
-        return [];
-      }
-
-      return [...candidates]
-        .filter((candidate) => candidate?.track)
-        .sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0));
-    }
-
-    async function warmTrackWithShowing(track, context = {}) {
-      if (!track) return null;
-
-      const {
-        requestedLang = "",
-        reason = "secondary-sync",
-        currentTime = NaN,
-      } = context;
-
-      const previousMode = track.mode;
-      const startedAt = Date.now();
-
-      try {
-        track.mode = "showing";
-      } catch (error) {
-        logContent?.("subtitle sync showing warmup failed to switch mode", {
-          reason,
-          requestedLang,
-          previousMode,
-          error: String(error?.message || error),
-        });
-        return null;
-      }
-
-      logContent?.("subtitle sync showing warmup started", {
-        reason,
-        requestedLang,
-        previousMode,
-        currentMode: track.mode,
-        activationTimeoutMs,
-        language: track.language ?? "",
-        label: track.label ?? "",
-      });
-
-      const deadline = startedAt + activationTimeoutMs;
-      while (Date.now() < deadline) {
-        const readability = getTrackReadability(track, currentTime);
-        if (readability.readable) {
-          logContent?.("subtitle sync showing warmup readable", {
-            reason,
-            requestedLang,
-            elapsedMs: Date.now() - startedAt,
-            language: track.language ?? "",
-            label: track.label ?? "",
-            ...readability,
-          });
-
-          return {
-            track,
-            previousMode,
-            readability,
-          };
-        }
-
-        await wait(pollIntervalMs);
-      }
-
-      logContent?.("subtitle sync showing warmup timeout", {
-        reason,
-        requestedLang,
-        elapsedMs: Date.now() - startedAt,
-        language: track.language ?? "",
-        label: track.label ?? "",
-      });
-
-      try {
-        track.mode = previousMode;
-      } catch {}
-
-      return null;
-    }
-
-    async function warmSecondaryCandidatesWithShowing(video, requestedLang) {
-      if (!video || !requestedLang) return null;
-
-      const currentTime = Number(video.currentTime ?? NaN);
-      const candidates = getOrderedSecondaryCandidates(video, requestedLang);
-
-      if (candidates.length === 0) {
-        logContent?.("subtitle sync showing warmup no candidates", {
-          requestedLang,
-          currentTime,
-        });
-        return null;
-      }
-
-      for (const candidate of candidates) {
-        const warmed = await warmTrackWithShowing(candidate.track, {
-          requestedLang,
-          reason: "secondary-sync",
-          currentTime,
-        });
-
-        if (warmed?.track) {
-          return warmed;
-        }
-      }
-
-      return null;
-    }
-
     async function syncSecondarySubtitleTrack(
       video,
       requestedLang,
@@ -187,41 +64,33 @@
       if (!video || !requestedLang) return null;
 
       const currentTime = Number(video.currentTime ?? NaN);
-      const warmed = await warmSecondaryCandidatesWithShowing(
-        video,
-        requestedLang,
-      );
+      const selectedTrack =
+        resolver?.resolveSecondarySubtitleTrack?.(video, requestedLang) || null;
 
-      if (warmed?.track) {
-        await wait(activationHoldMs);
-
-        const selectedTrack =
-          resolver?.resolveSecondarySubtitleTrack?.(video, requestedLang) ||
-          warmed.track;
+      if (selectedTrack) {
+        const readability = getTrackReadability(selectedTrack, currentTime);
 
         bindSecondaryTrack?.(selectedTrack, {
           ...options,
           requestedLang,
-          reason: "secondary-sync-showing",
+          reason: "secondary-sync-direct-bind",
         });
 
         state.secondaryTrack = selectedTrack || null;
 
-        logContent?.("subtitle sync showing selected track", {
+        logContent?.("subtitle sync direct selected track", {
           requestedLang,
           currentTime,
-          warmedLanguage: warmed.track?.language ?? "",
-          warmedLabel: warmed.track?.label ?? "",
           selectedLanguage: selectedTrack?.language ?? "",
           selectedLabel: selectedTrack?.label ?? "",
           selectedMode: selectedTrack?.mode ?? "",
-          readability: warmed.readability,
+          readability,
         });
 
         return selectedTrack;
       }
 
-      logContent?.("subtitle sync showing fallback to native", {
+      logContent?.("subtitle sync direct fallback to native", {
         requestedLang,
         currentTime,
       });
@@ -250,12 +119,11 @@
 
     return {
       getTrackReadability,
-      getOrderedSecondaryCandidates,
-      warmTrackWithShowing,
-      warmSecondaryCandidatesWithShowing,
       syncSecondarySubtitleTrack,
     };
   }
 
-  root.createSubtitleSyncController = createSubtitleSyncController;
+  root.subtitleSyncController = root.subtitleSyncController || {};
+  root.subtitleSyncController.createSubtitleSyncController =
+    createSubtitleSyncController;
 })();

@@ -986,54 +986,11 @@
           decisionReason: modeDecision?.reason || "",
           ...initialSnapshot,
           shouldPromote,
+          promotionSkipped: true,
+          skipReason: "secondary-track-hidden-lock",
         });
 
-        if (!shouldPromote) return;
-
-        const startedAt = Date.now();
-        const holdMs = 800;
-        const pollIntervalMs = 100;
-        const timeoutMs = 1500;
-
-        applyTrackMode("showing", "post-bind-readability-promote");
-
-        const finalize = (finalMode, restoreReason) => {
-          if (secondaryTrackBound !== track) return;
-
-          applyTrackMode(finalMode, restoreReason);
-
-          logContent("secondary-sync post-bind readability-finalized", {
-            trackLanguage: track?.language || "",
-            trackKind: track?.kind || "",
-            requestedMode,
-            finalMode,
-            restoreReason,
-            elapsedMs: Date.now() - startedAt,
-            ...getReadableSnapshot(),
-          });
-        };
-
-        const poll = () => {
-          if (secondaryTrackBound !== track) return;
-
-          const snapshot = getReadableSnapshot();
-          const elapsedMs = Date.now() - startedAt;
-          const holdSatisfied = elapsedMs >= holdMs;
-
-          if (snapshot.readableNow && holdSatisfied) {
-            finalize("showing", "post-bind-readable");
-            return;
-          }
-
-          if (elapsedMs >= timeoutMs) {
-            finalize(snapshot.readableNow ? "showing" : "hidden", "post-bind-timeout");
-            return;
-          }
-
-          setTimeout(poll, pollIntervalMs);
-        };
-
-        setTimeout(poll, pollIntervalMs);
+        return;
       };
 
       applyTrackMode(requestedMode, "bind-initial");
@@ -1132,9 +1089,9 @@
 
       maybePromoteTrackReadability();
 
-      if (!modeDecision || modeDecision.requestedMode === "showing") {
-        onCueChange(track);
-      }
+      // hidden track でも現在 cue は読み出せる。
+      // bind 後に一度だけ描画して、次の cuechange を待つ間の空表示を防ぐ。
+      onCueChange(track);
     }
 
     // secondary track の再解決と再同期を行い、必要なら nearby rebuild まで進める。
@@ -1315,7 +1272,7 @@
               ? "sameTrackUnreadable"
               : "syncSecondarySubtitleTrack",
         debugForceShowing: DEBUG_SECONDARY_SUBS,
-        allowShowing: true,
+        allowShowing: false,
         unreadableSnapshot,
       });
 

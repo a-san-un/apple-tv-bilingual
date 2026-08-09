@@ -1,10 +1,8 @@
-import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 async function loadFactory() {
   global.window = global.window || {};
   global.window.ATVB = {};
-  global.window.setInterval = global.window.setInterval || vi.fn();
-  global.window.clearInterval = global.window.clearInterval || vi.fn();
 
   const controllerUrl = new URL(
     "../modules/subtitle-sync-controller.js",
@@ -13,10 +11,27 @@ async function loadFactory() {
 
   await import(`${controllerUrl.href}?t=${Date.now()}-${Math.random()}`);
 
-  return global.window?.ATVB?.subtitleSyncController?.createSubtitleSyncController;
+  return global.window?.ATVB?.subtitleSyncController
+    ?.createSubtitleSyncController;
 }
 
-describe("subtitle-sync-controller (PR2)", () => {
+function createController({
+  state = { secondaryTrack: null },
+  logContent = vi.fn(),
+  resolver = {},
+  syncNativeSubtitleSelection = vi.fn(),
+  bindSecondaryTrack = vi.fn(),
+} = {}) {
+  return {
+    state,
+    logContent,
+    resolver,
+    syncNativeSubtitleSelection,
+    bindSecondaryTrack,
+  };
+}
+
+describe("subtitle-sync-controller", () => {
   let originalWindow;
 
   beforeEach(() => {
@@ -28,152 +43,283 @@ describe("subtitle-sync-controller (PR2)", () => {
     vi.restoreAllMocks();
   });
 
-  test("exposes createSubtitleSyncController on window.ATVB", async () => {
+  test("exposes createSubtitleSyncController on window.ATVB.subtitleSyncController", async () => {
     const createSubtitleSyncController = await loadFactory();
 
     expect(typeof createSubtitleSyncController).toBe("function");
   });
 
-  test("getSecondaryTrackDebugPayload returns normalized debug payload", async () => {
+  test("getTrackReadability returns an unreadable default payload when track is missing", async () => {
     const createSubtitleSyncController = await loadFactory();
+    const { state, logContent, resolver, syncNativeSubtitleSelection, bindSecondaryTrack } =
+      createController();
 
     const controller = createSubtitleSyncController({
-      state: {},
-      logContent: vi.fn(),
-      cueController: {},
-      renderSecondarySubtitle: vi.fn(),
-      getRequestedSecondaryLanguage: () => "ja",
-      resolverDeps: {
-        getTrackCuesLength: (track) => track?.cues?.length ?? 0,
+      state,
+      services: {
+        logContent,
+        resolver,
+        syncNativeSubtitleSelection,
+        bindSecondaryTrack,
       },
-      getTrackActiveCuesLength: (track) => track?.activeCues?.length ?? 0,
-      ensureSyncIntervalOrchestrator: vi.fn(),
-      onRecoveryNeeded: vi.fn(),
     });
 
-    const track = {
-      language: "en",
-      cues: [{}, {}],
-      activeCues: [{}],
+    expect(controller.getTrackReadability(null)).toEqual({
+      cuesLength: 0,
+      activeCuesLength: 0,
+      currentCueTextLength: 0,
+      hasCueOverlapAtCurrentTime: false,
+      readable: false,
+    });
+  });
+
+  test("getTrackReadability returns readable when the track has cues", async () => {
+    const createSubtitleSyncController = await loadFactory();
+    const { state, logContent, syncNativeSubtitleSelection, bindSecondaryTrack } =
+      createController();
+
+    const resolver = {
+      getTrackCuesLength: vi.fn(() => 2),
+      getTrackActiveCuesLength: vi.fn(() => 1),
+      getCurrentCueTextLength: vi.fn(() => 5),
+      hasCueOverlapAtTime: vi.fn(() => true),
     };
 
-    expect(controller.getSecondaryTrackDebugPayload("ja", track)).toEqual({
-      effectiveSecondaryLanguage: "ja",
-      selectedTrackLanguage: "en",
+    const controller = createSubtitleSyncController({
+      state,
+      services: {
+        logContent,
+        resolver,
+        syncNativeSubtitleSelection,
+        bindSecondaryTrack,
+      },
+    });
+
+    const track = { language: "ja", label: "Japanese" };
+
+    expect(controller.getTrackReadability(track, 12.5)).toEqual({
       cuesLength: 2,
       activeCuesLength: 1,
+      currentCueTextLength: 5,
+      hasCueOverlapAtCurrentTime: true,
+      readable: true,
     });
+
+    expect(resolver.getCurrentCueTextLength).toHaveBeenCalledWith(track, 12.5);
+    expect(resolver.hasCueOverlapAtTime).toHaveBeenCalledWith(track, 12.5);
   });
 
-  test("canReadCueFromTrack returns true only for hidden/showing tracks", async () => {
+  test("syncSecondarySubtitleTrack returns null when video or requested language is missing", async () => {
     const createSubtitleSyncController = await loadFactory();
+    const { state, logContent, resolver, syncNativeSubtitleSelection, bindSecondaryTrack } =
+      createController();
 
     const controller = createSubtitleSyncController({
-      state: {},
-      logContent: vi.fn(),
-      cueController: {},
-      renderSecondarySubtitle: vi.fn(),
-      getRequestedSecondaryLanguage: () => "ja",
-      resolverDeps: {
-        getTrackCuesLength: () => 0,
+      state,
+      services: {
+        logContent,
+        resolver,
+        syncNativeSubtitleSelection,
+        bindSecondaryTrack,
       },
-      getTrackActiveCuesLength: () => 0,
-      ensureSyncIntervalOrchestrator: vi.fn(),
-      onRecoveryNeeded: vi.fn(),
     });
 
-    expect(controller.canReadCueFromTrack(null)).toBe(false);
-    expect(controller.canReadCueFromTrack({ mode: "disabled" })).toBe(false);
-    expect(controller.canReadCueFromTrack({ mode: "hidden" })).toBe(true);
-    expect(controller.canReadCueFromTrack({ mode: "showing" })).toBe(true);
+    await expect(
+      controller.syncSecondarySubtitleTrack(null, "ja"),
+    ).resolves.toBeNull();
+
+    await expect(
+      controller.syncSecondarySubtitleTrack({ currentTime: 0 }, ""),
+    ).resolves.toBeNull();
+
+    expect(resolver.resolveSecondarySubtitleTrack).toBeUndefined();
+    expect(syncNativeSubtitleSelection).not.toHaveBeenCalled();
+    expect(bindSecondaryTrack).not.toHaveBeenCalled();
   });
 
-  test("syncSecondarySubtitleTrack returns null when video is missing", async () => {
+  test("syncSecondarySubtitleTrack directly binds a resolved secondary track", async () => {
     const createSubtitleSyncController = await loadFactory();
+    const selectedTrack = {
+      language: "ja",
+      label: "Japanese",
+      mode: "hidden",
+    };
+    const video = { currentTime: 24.5 };
 
-    const logContent = vi.fn();
-    const cueController = {
-      syncSecondarySubtitleTrack: vi.fn(),
-      getBoundSecondaryTrack: vi.fn(() => null),
+    const resolver = {
+      resolveSecondarySubtitleTrack: vi.fn(() => selectedTrack),
+      getTrackCuesLength: vi.fn(() => 3),
+      getTrackActiveCuesLength: vi.fn(() => 1),
+      getCurrentCueTextLength: vi.fn(() => 9),
+      hasCueOverlapAtTime: vi.fn(() => true),
     };
 
+    const { state, logContent, syncNativeSubtitleSelection, bindSecondaryTrack } =
+      createController({ resolver });
+
     const controller = createSubtitleSyncController({
-      state: {
-        video: null,
-        secondaryTrack: null,
+      state,
+      services: {
+        logContent,
+        resolver,
+        syncNativeSubtitleSelection,
+        bindSecondaryTrack,
       },
-      logContent,
-      cueController,
-      renderSecondarySubtitle: vi.fn(),
-      getRequestedSecondaryLanguage: () => "ja",
-      resolverDeps: {
-        getTrackCuesLength: () => 0,
-      },
-      getTrackActiveCuesLength: () => 0,
-      ensureSyncIntervalOrchestrator: vi.fn(),
-      onRecoveryNeeded: vi.fn(),
     });
 
-    expect(
-      controller.syncSecondarySubtitleTrack({ reason: "test-missing-video" }),
-    ).toBeNull();
+    await expect(
+      controller.syncSecondarySubtitleTrack(video, "ja", {
+        primaryLang: "en",
+        source: "test",
+      }),
+    ).resolves.toBe(selectedTrack);
 
-    expect(cueController.syncSecondarySubtitleTrack).not.toHaveBeenCalled();
+    expect(resolver.resolveSecondarySubtitleTrack).toHaveBeenCalledTimes(1);
+    expect(resolver.resolveSecondarySubtitleTrack).toHaveBeenCalledWith(
+      video,
+      "ja",
+    );
+
+    expect(bindSecondaryTrack).toHaveBeenCalledWith(selectedTrack, {
+      primaryLang: "en",
+      source: "test",
+      requestedLang: "ja",
+      reason: "secondary-sync-direct-bind",
+    });
+
+    expect(state.secondaryTrack).toBe(selectedTrack);
+    expect(syncNativeSubtitleSelection).not.toHaveBeenCalled();
 
     expect(logContent).toHaveBeenCalledWith(
-      "secondary sync result: skipped before binding",
+      "subtitle sync direct selected track",
       expect.objectContaining({
-        reason: "test-missing-video",
-        hasVideo: false,
         requestedLang: "ja",
+        currentTime: 24.5,
+        selectedLanguage: "ja",
+        selectedLabel: "Japanese",
+        selectedMode: "hidden",
+        readability: {
+          cuesLength: 3,
+          activeCuesLength: 1,
+          currentCueTextLength: 9,
+          hasCueOverlapAtCurrentTime: true,
+          readable: true,
+        },
       }),
     );
   });
 
-  test("ensureSecondaryTrackSyncInterval does not register duplicate intervals", async () => {
-    const setIntervalSpy = vi.fn(() => 12345);
-    const clearIntervalSpy = vi.fn();
+  test("syncSecondarySubtitleTrack falls back to native selection and binds the resolved fallback track", async () => {
+    const createSubtitleSyncController = await loadFactory();
+    const fallbackTrack = {
+      language: "ja",
+      label: "Japanese",
+      mode: "hidden",
+    };
+    const video = { currentTime: 10 };
 
-    global.window = {
-      ATVB: {},
-      setInterval: setIntervalSpy,
-      clearInterval: clearIntervalSpy,
+    const resolver = {
+      resolveSecondarySubtitleTrack: vi
+        .fn()
+        .mockReturnValueOnce(null)
+        .mockReturnValueOnce(fallbackTrack),
     };
 
-    const controllerUrl = new URL(
-      "../modules/subtitle-sync-controller.js",
-      import.meta.url,
-    );
-    await import(`${controllerUrl.href}?t=${Date.now()}-${Math.random()}`);
-
-    const createSubtitleSyncController =
-      global.window?.ATVB?.subtitleSyncController?.createSubtitleSyncController;
-
-    const controller = createSubtitleSyncController({
-      state: {
-        restarting: false,
-        video: null,
-      },
-      logContent: vi.fn(),
-      cueController: {},
-      renderSecondarySubtitle: vi.fn(),
-      getRequestedSecondaryLanguage: () => "",
-      resolverDeps: {
-        getTrackCuesLength: () => 0,
-      },
-      getTrackActiveCuesLength: () => 0,
-      ensureSyncIntervalOrchestrator: vi.fn(() => null),
-      onRecoveryNeeded: vi.fn(),
+    const syncNativeSubtitleSelection = vi.fn().mockResolvedValue(undefined);
+    const { state, logContent, bindSecondaryTrack } = createController({
+      resolver,
+      syncNativeSubtitleSelection,
     });
 
-    controller.ensureSecondaryTrackSyncInterval();
-    controller.ensureSecondaryTrackSyncInterval();
+    const controller = createSubtitleSyncController({
+      state,
+      services: {
+        logContent,
+        resolver,
+        syncNativeSubtitleSelection,
+        bindSecondaryTrack,
+      },
+    });
 
-    expect(setIntervalSpy).toHaveBeenCalledTimes(1);
-    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 2000);
+    await expect(
+      controller.syncSecondarySubtitleTrack(video, "ja", {
+        primaryLang: "en",
+        source: "test",
+      }),
+    ).resolves.toBe(fallbackTrack);
 
-    controller.clearSecondaryTrackSyncInterval();
+    expect(syncNativeSubtitleSelection).toHaveBeenCalledWith({
+      primaryLang: "en",
+      secondaryLang: "ja",
+      preferredSource: "ja",
+    });
 
-    expect(clearIntervalSpy).toHaveBeenCalledWith(12345);
+    expect(resolver.resolveSecondarySubtitleTrack).toHaveBeenCalledTimes(2);
+    expect(resolver.resolveSecondarySubtitleTrack).toHaveBeenNthCalledWith(
+      1,
+      video,
+      "ja",
+    );
+    expect(resolver.resolveSecondarySubtitleTrack).toHaveBeenNthCalledWith(
+      2,
+      video,
+      "ja",
+    );
+
+    expect(bindSecondaryTrack).toHaveBeenCalledWith(fallbackTrack, {
+      primaryLang: "en",
+      source: "test",
+      requestedLang: "ja",
+      reason: "secondary-sync-native-fallback",
+    });
+
+    expect(state.secondaryTrack).toBe(fallbackTrack);
+
+    expect(logContent).toHaveBeenCalledWith(
+      "subtitle sync direct fallback to native",
+      {
+        requestedLang: "ja",
+        currentTime: 10,
+      },
+    );
+  });
+
+  test("syncSecondarySubtitleTrack leaves secondaryTrack null when native fallback cannot resolve a track", async () => {
+    const createSubtitleSyncController = await loadFactory();
+    const video = { currentTime: 3 };
+
+    const resolver = {
+      resolveSecondarySubtitleTrack: vi.fn(() => null),
+    };
+
+    const syncNativeSubtitleSelection = vi.fn().mockResolvedValue(undefined);
+    const { state, logContent, bindSecondaryTrack } = createController({
+      state: { secondaryTrack: { language: "old" } },
+      resolver,
+      syncNativeSubtitleSelection,
+    });
+
+    const controller = createSubtitleSyncController({
+      state,
+      services: {
+        logContent,
+        resolver,
+        syncNativeSubtitleSelection,
+        bindSecondaryTrack,
+      },
+    });
+
+    await expect(
+      controller.syncSecondarySubtitleTrack(video, "ja"),
+    ).resolves.toBeNull();
+
+    expect(syncNativeSubtitleSelection).toHaveBeenCalledWith({
+      primaryLang: "",
+      secondaryLang: "ja",
+      preferredSource: "ja",
+    });
+
+    expect(bindSecondaryTrack).not.toHaveBeenCalled();
+    expect(state.secondaryTrack).toBeNull();
   });
 });

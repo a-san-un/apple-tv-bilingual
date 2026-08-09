@@ -124,6 +124,7 @@
 
         startBilingual({
           reason: `settings_runtime:${reason}:${triggerReason}`,
+          keepPanelVisible: state.contentSettings.showSidebar !== false,
         });
 
         return true;
