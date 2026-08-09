@@ -1,9 +1,16 @@
 {
+  "type": "module",
   "devDependencies": {
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0",
     "vitest": "^4.1.10"
   },
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "lint": "eslint *.js modules/*.js",
+    "lint:tests": "eslint tests/**/*.js",
+    "lint:all": "eslint *.js modules/*.js tests/**/*.js",
+    "check": "node --check *.js modules/*.js && echo '✅ 構文OK'"
   }
 }
