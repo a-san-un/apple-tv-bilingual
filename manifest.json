@@ -37,6 +37,7 @@
         "cue-controller.js",
         "modules/cue-track-binder.js",
         "modules/text-track-debug.js",
+        "modules/cue-sequence-builder.js",
         "overlay-controller.js",
         "runtime-observers.js",
         "playback-controls-layout.js",
