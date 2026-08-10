@@ -2048,6 +2048,8 @@ function forwardContentLog(...args) {
   const subtitleSyncController = createSubtitleSyncController({
     services: {
       logContent,
+      createSyncIntervalOrchestrator:
+        window.ATVB?.createSyncIntervalOrchestrator,
       resolver: resolverDeps,
       bindSecondaryTrack: (track, options = {}) => {
         const modeDecision = {
@@ -2246,10 +2248,9 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
 
   function _ensureSyncIntervalOrchestrator() {
     if (syncIntervalOrchestrator) return syncIntervalOrchestrator;
-    if (!window.ATVB?.createSyncIntervalOrchestrator) return null;
-  
+
     syncIntervalOrchestrator =
-      window.ATVB.createSyncIntervalOrchestrator({
+      subtitleSyncController?.ensureSyncIntervalOrchestrator?.({
         state,
         controllers: {
           cueController,
@@ -2279,7 +2280,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
           getRequestedSecondaryLang: () => state.requestedSecondaryLang,
         },
       }) || null;
-  
+
     return syncIntervalOrchestrator;
   }
 

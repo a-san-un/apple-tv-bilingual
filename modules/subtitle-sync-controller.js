@@ -18,7 +18,23 @@
       resolver,
       syncNativeSubtitleSelection,
       bindSecondaryTrack,
+      createSyncIntervalOrchestrator,
     } = services;
+    let syncIntervalOrchestrator = null;
+
+    function ensureSyncIntervalOrchestrator(factoryArgs) {
+      if (syncIntervalOrchestrator) return syncIntervalOrchestrator;
+      if (typeof createSyncIntervalOrchestrator !== "function") return null;
+
+      syncIntervalOrchestrator =
+        createSyncIntervalOrchestrator(factoryArgs || {}) || null;
+
+      logContent?.("subtitleSyncController.ensureSyncIntervalOrchestrator", {
+        available: Boolean(syncIntervalOrchestrator),
+      });
+
+      return syncIntervalOrchestrator;
+    }
 
     function getTrackReadability(track, currentTime = NaN) {
       if (!track) {
@@ -120,6 +136,7 @@
     return {
       getTrackReadability,
       syncSecondarySubtitleTrack,
+      ensureSyncIntervalOrchestrator,
     };
   }
 

@@ -1,5 +1,17 @@
+// =============================================================
+// tests/subtitle-sync-controller.test.js
+//
+// 概要:
+// - modules/subtitle-sync-controller.js の公開 factory と主要 contract を固定する。
+// - secondary subtitle の direct bind / native fallback / readability 判定に加えて、
+//   sync interval orchestrator の lazy init contract を検証する。
+// - Step 8-D では、content.js から module へ orchestrator 生成責務を段階移管するため、
+//   factory 未提供時の null 戻り値と、提供時に 1 回だけ生成して再利用する挙動を固定する。
+// =============================================================
+
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+// モジュールを毎回 fresh import して、window.ATVB への factory 公開を確認する。
 async function loadFactory() {
   global.window = global.window || {};
   global.window.ATVB = {};
@@ -15,12 +27,15 @@ async function loadFactory() {
     ?.createSubtitleSyncController;
 }
 
+// 各テストで使う依存をまとめて生成する。
+// 必要な mock だけ上書きできるようにして、テスト本体を読みやすくする。
 function createController({
   state = { secondaryTrack: null },
   logContent = vi.fn(),
   resolver = {},
   syncNativeSubtitleSelection = vi.fn(),
   bindSecondaryTrack = vi.fn(),
+  createSyncIntervalOrchestrator = undefined,
 } = {}) {
   return {
     state,
@@ -28,6 +43,7 @@ function createController({
     resolver,
     syncNativeSubtitleSelection,
     bindSecondaryTrack,
+    createSyncIntervalOrchestrator,
   };
 }
 
@@ -43,16 +59,24 @@ describe("subtitle-sync-controller", () => {
     vi.restoreAllMocks();
   });
 
+  // factory が window.ATVB.subtitleSyncController に公開されることを確認する。
   test("exposes createSubtitleSyncController on window.ATVB.subtitleSyncController", async () => {
     const createSubtitleSyncController = await loadFactory();
 
     expect(typeof createSubtitleSyncController).toBe("function");
   });
 
+  // track 不在時は unreadable な既定 payload を返すことを確認する。
   test("getTrackReadability returns an unreadable default payload when track is missing", async () => {
     const createSubtitleSyncController = await loadFactory();
-    const { state, logContent, resolver, syncNativeSubtitleSelection, bindSecondaryTrack } =
-      createController();
+    const {
+      state,
+      logContent,
+      resolver,
+      syncNativeSubtitleSelection,
+      bindSecondaryTrack,
+      createSyncIntervalOrchestrator,
+    } = createController();
 
     const controller = createSubtitleSyncController({
       state,
@@ -61,6 +85,7 @@ describe("subtitle-sync-controller", () => {
         resolver,
         syncNativeSubtitleSelection,
         bindSecondaryTrack,
+        createSyncIntervalOrchestrator,
       },
     });
 
@@ -73,10 +98,16 @@ describe("subtitle-sync-controller", () => {
     });
   });
 
+  // cue 情報がある track は readable=true になり、resolver helper に currentTime が渡ることを確認する。
   test("getTrackReadability returns readable when the track has cues", async () => {
     const createSubtitleSyncController = await loadFactory();
-    const { state, logContent, syncNativeSubtitleSelection, bindSecondaryTrack } =
-      createController();
+    const {
+      state,
+      logContent,
+      syncNativeSubtitleSelection,
+      bindSecondaryTrack,
+      createSyncIntervalOrchestrator,
+    } = createController();
 
     const resolver = {
       getTrackCuesLength: vi.fn(() => 2),
@@ -92,6 +123,7 @@ describe("subtitle-sync-controller", () => {
         resolver,
         syncNativeSubtitleSelection,
         bindSecondaryTrack,
+        createSyncIntervalOrchestrator,
       },
     });
 
@@ -109,10 +141,17 @@ describe("subtitle-sync-controller", () => {
     expect(resolver.hasCueOverlapAtTime).toHaveBeenCalledWith(track, 12.5);
   });
 
+  // video または requestedLang が欠ける場合は何もせず null を返すことを確認する。
   test("syncSecondarySubtitleTrack returns null when video or requested language is missing", async () => {
     const createSubtitleSyncController = await loadFactory();
-    const { state, logContent, resolver, syncNativeSubtitleSelection, bindSecondaryTrack } =
-      createController();
+    const {
+      state,
+      logContent,
+      resolver,
+      syncNativeSubtitleSelection,
+      bindSecondaryTrack,
+      createSyncIntervalOrchestrator,
+    } = createController();
 
     const controller = createSubtitleSyncController({
       state,
@@ -121,6 +160,7 @@ describe("subtitle-sync-controller", () => {
         resolver,
         syncNativeSubtitleSelection,
         bindSecondaryTrack,
+        createSyncIntervalOrchestrator,
       },
     });
 
@@ -137,6 +177,7 @@ describe("subtitle-sync-controller", () => {
     expect(bindSecondaryTrack).not.toHaveBeenCalled();
   });
 
+  // resolver が secondary track を直接解決できる場合は、native fallback を使わず direct bind することを確認する。
   test("syncSecondarySubtitleTrack directly binds a resolved secondary track", async () => {
     const createSubtitleSyncController = await loadFactory();
     const selectedTrack = {
@@ -154,8 +195,13 @@ describe("subtitle-sync-controller", () => {
       hasCueOverlapAtTime: vi.fn(() => true),
     };
 
-    const { state, logContent, syncNativeSubtitleSelection, bindSecondaryTrack } =
-      createController({ resolver });
+    const {
+      state,
+      logContent,
+      syncNativeSubtitleSelection,
+      bindSecondaryTrack,
+      createSyncIntervalOrchestrator,
+    } = createController({ resolver });
 
     const controller = createSubtitleSyncController({
       state,
@@ -164,6 +210,7 @@ describe("subtitle-sync-controller", () => {
         resolver,
         syncNativeSubtitleSelection,
         bindSecondaryTrack,
+        createSyncIntervalOrchestrator,
       },
     });
 
@@ -209,6 +256,7 @@ describe("subtitle-sync-controller", () => {
     );
   });
 
+  // direct bind できない場合は native menu sync へフォールバックし、その後に解決できた track を bind することを確認する。
   test("syncSecondarySubtitleTrack falls back to native selection and binds the resolved fallback track", async () => {
     const createSubtitleSyncController = await loadFactory();
     const fallbackTrack = {
@@ -226,7 +274,12 @@ describe("subtitle-sync-controller", () => {
     };
 
     const syncNativeSubtitleSelection = vi.fn().mockResolvedValue(undefined);
-    const { state, logContent, bindSecondaryTrack } = createController({
+    const {
+      state,
+      logContent,
+      bindSecondaryTrack,
+      createSyncIntervalOrchestrator,
+    } = createController({
       resolver,
       syncNativeSubtitleSelection,
     });
@@ -238,6 +291,7 @@ describe("subtitle-sync-controller", () => {
         resolver,
         syncNativeSubtitleSelection,
         bindSecondaryTrack,
+        createSyncIntervalOrchestrator,
       },
     });
 
@@ -284,6 +338,7 @@ describe("subtitle-sync-controller", () => {
     );
   });
 
+  // native fallback 後も track が見つからない場合は secondaryTrack を null に戻すことを確認する。
   test("syncSecondarySubtitleTrack leaves secondaryTrack null when native fallback cannot resolve a track", async () => {
     const createSubtitleSyncController = await loadFactory();
     const video = { currentTime: 3 };
@@ -293,7 +348,12 @@ describe("subtitle-sync-controller", () => {
     };
 
     const syncNativeSubtitleSelection = vi.fn().mockResolvedValue(undefined);
-    const { state, logContent, bindSecondaryTrack } = createController({
+    const {
+      state,
+      logContent,
+      bindSecondaryTrack,
+      createSyncIntervalOrchestrator,
+    } = createController({
       state: { secondaryTrack: { language: "old" } },
       resolver,
       syncNativeSubtitleSelection,
@@ -306,6 +366,7 @@ describe("subtitle-sync-controller", () => {
         resolver,
         syncNativeSubtitleSelection,
         bindSecondaryTrack,
+        createSyncIntervalOrchestrator,
       },
     });
 
@@ -321,5 +382,46 @@ describe("subtitle-sync-controller", () => {
 
     expect(bindSecondaryTrack).not.toHaveBeenCalled();
     expect(state.secondaryTrack).toBeNull();
+  });
+
+  // orchestrator factory 未提供時は null を返し、content.js 側で安全に null fallback できることを確認する。
+  test("ensureSyncIntervalOrchestrator returns null when factory is unavailable", async () => {
+    const createSubtitleSyncController = await loadFactory();
+
+    const controller = createSubtitleSyncController({
+      state: {},
+      services: {},
+    });
+
+    expect(controller.ensureSyncIntervalOrchestrator({ foo: "bar" })).toBeNull();
+  });
+
+  // orchestrator は lazy init で 1 回だけ生成し、2 回目以降は同じ instance を返すことを確認する。
+  test("ensureSyncIntervalOrchestrator lazily creates and reuses orchestrator instance", async () => {
+    const createSubtitleSyncController = await loadFactory();
+    const orchestrator = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      isPaused: vi.fn(() => false),
+    };
+    const createSyncIntervalOrchestrator = vi.fn(() => orchestrator);
+
+    const controller = createSubtitleSyncController({
+      state: {},
+      services: {
+        createSyncIntervalOrchestrator,
+        logContent: vi.fn(),
+      },
+    });
+
+    const first = controller.ensureSyncIntervalOrchestrator({ reason: "first" });
+    const second = controller.ensureSyncIntervalOrchestrator({ reason: "second" });
+
+    expect(first).toBe(orchestrator);
+    expect(second).toBe(orchestrator);
+    expect(createSyncIntervalOrchestrator).toHaveBeenCalledTimes(1);
+    expect(createSyncIntervalOrchestrator).toHaveBeenCalledWith({
+      reason: "first",
+    });
   });
 });
