@@ -39,6 +39,7 @@
         "modules/text-track-debug.js",
         "modules/cue-sequence-builder.js",
         "modules/cue-render-coordinator.js",
+        "modules/secondary-track-recovery.js",
         "overlay-controller.js",
         "runtime-observers.js",
         "playback-controls-layout.js",
