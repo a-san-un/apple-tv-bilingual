@@ -36,6 +36,7 @@
         "initial-cue-recovery.js",
         "cue-controller.js",
         "modules/cue-track-binder.js",
+        "modules/text-track-debug.js",
         "overlay-controller.js",
         "runtime-observers.js",
         "playback-controls-layout.js",
