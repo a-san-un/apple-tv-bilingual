@@ -3,6 +3,7 @@
 // version: 2.6.3
 // Issue #4: Debug 配置修正と再生ページ限定 build、初回字幕回復導線を最小差分で整理
 // 既存の起動導線は維持し、layout/observer/retry/polling は変更しない
+/* global createSubtitleHistoryStore */
 // Phase A: VTT 正規化と logger を外部モジュールへ分離し、ここでは橋渡しを担当する。
 // =============================================================
 // Phase D/#19: current 行の primary 非対称を最小差分で補正する。
@@ -54,8 +55,6 @@
     primaryTrack: null,
     secondaryTrack: null,
     lastVideoSrcKey: "",
-    currentContentKey: "",
-    subtitleHistoryStore: new Map(),
     subtitleHistory: [],
     panelPastBlocks: [],
     subtitleBlocks: [],
@@ -103,6 +102,7 @@
 
   let panelUi = null;
   let secondaryTrackSyncInterval = null;
+  const historyStore = createSubtitleHistoryStore(SUBTITLE_HISTORY_MAX_PER_CONTENT);
 
 // =====================================================================
 // Section 1: Logger & Debug Bridge
@@ -180,7 +180,7 @@ function forwardContentLog(...args) {
     (await window.ATVB?.logger?.clearDebugLogs?.(...args)) ?? undefined;
 
   function buildContentScopedPayload(payload = null) {
-    const contentKey = String(state.currentContentKey || "").trim();
+    const contentKey = String(historyStore.getCurrentKey() || "").trim();
     const scopedContentKey = contentKey || "content:unknown";
     if (payload == null) {
       return { contentKey: scopedContentKey };
@@ -430,64 +430,34 @@ function forwardContentLog(...args) {
     );
   }
 
-  function getHistoryBucketForContentKey(contentKey) {
-    if (!contentKey) return null;
-    return state.subtitleHistoryStore.get(contentKey) || null;
-  }
-
-  function loadHistoryForContentKey(contentKey) {
-    const bucket = getHistoryBucketForContentKey(contentKey);
-    const items = Array.isArray(bucket?.items) ? bucket.items : [];
-    state.subtitleHistory = items.slice(-SUBTITLE_HISTORY_MAX_PER_CONTENT);
-  }
-
-  function saveHistoryForContentKey(
-    contentKey,
-    history = state.subtitleHistory,
-  ) {
-    if (!contentKey) return;
-    const items = Array.isArray(history)
-      ? history.slice(-SUBTITLE_HISTORY_MAX_PER_CONTENT)
-      : [];
-    state.subtitleHistoryStore.set(contentKey, {
-      items,
-      updatedAt: Date.now(),
-    });
-  }
 
   function switchHistoryContext(nextContentKey, reason = "unknown") {
-    const resolvedContentKey = nextContentKey || "content:unknown";
-    const previousContentKey = state.currentContentKey;
+    const switched = historyStore.switchContext(nextContentKey, {
+      reason,
+      onBeforeSwitch: (prevKey, nextKey) => {
+        if (prevKey && nextKey && prevKey !== nextKey) {
+          overlayController.clearOverlayState?.();
+        }
+        secondarySubtitleDom?.clearPanelSecondaryText?.();
+        state.holdBlockCandidate = null;
+      },
+    });
 
-    if (previousContentKey === resolvedContentKey) return false;
+    if (!switched) return false;
 
-    if (
-      previousContentKey &&
-      resolvedContentKey &&
-      previousContentKey !== resolvedContentKey
-    ) {
-      overlayController.clearOverlayState?.();
-    }
-
-    secondarySubtitleDom?.clearPanelSecondaryText?.();
-    state.holdBlockCandidate = null;
-
-    if (previousContentKey) {
-      saveHistoryForContentKey(previousContentKey);
-    }
-
-    state.currentContentKey = resolvedContentKey;
-    loadHistoryForContentKey(resolvedContentKey);
+    // state.subtitleHistory をブリッジ同期（既存参照箇所との互換維持）
+    state.subtitleHistory = historyStore.getActiveHistory();
     state.lastPrimaryText = "";
 
     logContentSubtitle("history context switched", {
       reason,
-      previousContentKey,
-      nextContentKey: resolvedContentKey,
+      previousContentKey: historyStore.getCurrentKey(),
+      nextContentKey: historyStore.getCurrentKey(),
       historySize: state.subtitleHistory.length,
     });
     return true;
   }
+
 
   function syncHistoryContextWithPlayback(reason = "unknown") {
     return switchHistoryContext(resolvePlaybackContentKey(), reason);
@@ -495,12 +465,9 @@ function forwardContentLog(...args) {
 
   function _appendSubtitleHistory(entry) {
     if (!entry) return;
-
-    const nextHistory = state.subtitleHistory
-      .concat(entry)
-      .slice(-SUBTITLE_HISTORY_MAX_PER_CONTENT);
-    state.subtitleHistory = nextHistory;
-    saveHistoryForContentKey(state.currentContentKey, nextHistory);
+    historyStore.append(entry);
+    // state.subtitleHistory をブリッジ同期（panel-renderer 等の既存参照を維持）
+    state.subtitleHistory = historyStore.getActiveHistory();
   }
 
   function getSecondaryTrackDebugPayload(effectiveSecondaryLanguage, track) {
@@ -2070,11 +2037,11 @@ function forwardContentLog(...args) {
     updateOverlay: (...args) => overlayController.updateOverlay(...args),
     updateOverlayFromView: (view) =>
       overlayController.updateOverlayFromView(view, {
-        contentKey: state.currentContentKey || "",
+        contentKey: historyStore.getCurrentKey() || "",
       }),
     updateOverlayFromBlock: (block) =>
       overlayController.updateOverlayFromBlock(block, {
-        contentKey: state.currentContentKey || "",
+        contentKey: historyStore.getCurrentKey() || "",
       }),
     renderPanel,
     matchesRequestedLanguage: resolverDeps.matchesRequestedLanguage,
@@ -2636,7 +2603,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
 
   function requestSnapshotRefresh(reason = "") {
     logContentSubtitle("snapshot refresh requested", {
-      contentKey: state.currentContentKey || "",
+      contentKey: historyStore.getCurrentKey() || "",
       reason: String(reason || ""),
       currentTime: Number(state.video?.currentTime ?? 0),
       hasPrimaryTrack: Boolean(state.primaryTrack),
@@ -2667,7 +2634,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
         : null;
 
     logContentSubtitle("current subtitle view snapshot input", {
-      contentKey: state.currentContentKey || "",
+      contentKey: historyStore.getCurrentKey() || "",
       totalBlockCount: blocks.length,
       currentIndex,
       sequenceMeta: meta || null,
@@ -2712,7 +2679,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
           ...(meta || {}),
           now: state.video?.currentTime ?? 0,
           currentTime: state.video?.currentTime ?? 0,
-          contentKey: state.currentContentKey || "",
+          contentKey: historyStore.getCurrentKey() || "",
           holdView: state.nearbyRebuildHoldView || null,
           holdBlock:
             state.nearbyRebuildHoldView?.currentBlock ||
@@ -2767,7 +2734,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
     // 空 view は異常ではなく「まだ現在位置の cue が来ていない待機状態」。
     // 起動直後の観測で waiting / ready を見分けやすいよう snapshot ログを残す。
     logContentSubtitle("current subtitle view snapshot", {
-      contentKey: state.currentContentKey || "",
+      contentKey: historyStore.getCurrentKey() || "",
       totalBlockCount: blocks.length,
       currentIndex,
       subtitleViewPrimary: primaryText,
@@ -2779,12 +2746,12 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
     });
 
     overlayController.updateOverlayFromView?.(view, {
-      contentKey: state.currentContentKey || "",
+      contentKey: historyStore.getCurrentKey() || "",
     });
 
     if (!syncIntervalOrchestrator?.isPaused?.()) {
       overlayController.updateOverlayFromView?.(view, {
-        contentKey: state.currentContentKey || "",
+        contentKey: historyStore.getCurrentKey() || "",
       });
     }
     renderPanel();
@@ -3000,7 +2967,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
 
     logContentSubtitle("startBilingual ready", {
       injectedInto: state.dialogEl ? "dialog.playback-view" : "document.body",
-      contentKey: state.currentContentKey,
+      contentKey: historyStore.getCurrentKey(),
       primaryLang: state.contentSettings.primaryLang,
       secondaryLang: state.contentSettings.secondaryLang,
       requestedSecondaryLang: state.requestedSecondaryLang || "",
