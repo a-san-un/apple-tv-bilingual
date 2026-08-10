@@ -2050,14 +2050,12 @@ function forwardContentLog(...args) {
 
   const secondaryTrackRecovery = createSecondaryTrackRecovery
     ? createSecondaryTrackRecovery({
-        state,
         logContent,
-        getCurrentTime: () => state.video?.currentTime ?? 0,
-        getTrackCuesLength: resolverDeps.getTrackCuesLength,
-        getTrackActiveCuesLength: resolverDeps.getTrackActiveCuesLength,
-        getRequestedSecondaryLanguage: () =>
-          state.requestedSecondaryLang || state.contentSettings.secondaryLang,
-        DEBUG_SECONDARY_SUBS,
+        SECONDARY_RECOVERY_WINDOW_MS: 1000,
+        SECONDARY_FORCE_REBIND_MISS_COUNT: 2,
+        SECONDARY_RECOVERY_MISS_LIMIT: 8,
+        SECONDARY_TERMINATED_RETRY_MS: 10_000,
+        SECONDARY_RECOVERY_DEBOUNCE_MS: 200,
       })
     : null;
 

@@ -1,10 +1,10 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - modules/secondary-track-recovery.js
 // 役割:
-// - cue-controller.js にある secondary track recovery 判定ロジックを
-//   段階的に切り出す。
-// - Step 7-D 時点では lane state と recovery evaluation をモジュール化する。
-// - Step 7-F で cue-controller.js facade からこの module を呼ぶ。
+// - cue-controller.js にある secondary recovery 判定ロジックを
+//   既存 contract を維持したままモジュールへ委譲する。
+// - laneStates / createLaneState / resetLaneState / updateLaneState /
+//   evaluateSecondaryRecovery を公開する。
 // =============================================================
 
 (() => {
@@ -12,264 +12,390 @@
 
   /**
    * @param {{
-   *   state: object,
    *   logContent?: Function,
-   *   getCurrentTime: Function,
-   *   getTrackCuesLength: Function,
-   *   getTrackActiveCuesLength: Function,
-   *   getRequestedSecondaryLanguage?: Function,
-   *   DEBUG_SECONDARY_SUBS?: boolean,
-   *   SECONDARY_RECOVERY_MISSING_MS?: number,
-   *   SECONDARY_RECOVERY_REBIND_MS?: number,
+   *   SECONDARY_RECOVERY_WINDOW_MS?: number,
+   *   SECONDARY_FORCE_REBIND_MISS_COUNT?: number,
+   *   SECONDARY_RECOVERY_MISS_LIMIT?: number,
+   *   SECONDARY_TERMINATED_RETRY_MS?: number,
+   *   SECONDARY_RECOVERY_DEBOUNCE_MS?: number,
    * }} deps
    */
-  function createSecondaryTrackRecovery(deps) {
+  function createSecondaryTrackRecovery(deps = {}) {
     const {
-      state,
       logContent,
-      getCurrentTime,
-      getTrackCuesLength,
-      getTrackActiveCuesLength,
-      getRequestedSecondaryLanguage,
-      DEBUG_SECONDARY_SUBS,
-      SECONDARY_RECOVERY_MISSING_MS = 1200,
-      SECONDARY_RECOVERY_REBIND_MS = 2500,
+      SECONDARY_RECOVERY_WINDOW_MS = 1000,
+      SECONDARY_FORCE_REBIND_MISS_COUNT = 2,
+      SECONDARY_RECOVERY_MISS_LIMIT = 8,
+      SECONDARY_TERMINATED_RETRY_MS = 10_000,
+      SECONDARY_RECOVERY_DEBOUNCE_MS = 200,
     } = deps;
 
     function createLaneState(lane) {
       return {
         lane,
-        lastHealthyAt: 0,
-        firstMissingAt: 0,
-        lastRecoveryAt: 0,
-        lastObservationAt: 0,
-        consecutiveMissingCount: 0,
-        lastMissingReason: "",
+        healthy: false,
+        isMissing: false,
+        missingSince: 0,
+        missingDurationMs: 0,
+        missCount: 0,
+        terminated: false,
+        lastDecision: "idle",
+        lastDecisionAt: 0,
       };
     }
+
+    const laneStates = {
+      primary: createLaneState("primary"),
+      secondary: createLaneState("secondary"),
+    };
 
     function resetLaneState(laneState) {
       if (!laneState) return;
-      laneState.lastHealthyAt = 0;
-      laneState.firstMissingAt = 0;
-      laneState.lastRecoveryAt = 0;
-      laneState.lastObservationAt = 0;
-      laneState.consecutiveMissingCount = 0;
-      laneState.lastMissingReason = "";
-    }
-
-    function ensureSecondaryRecoveryLane() {
-      if (!state.secondaryRecoveryLane) {
-        state.secondaryRecoveryLane = createLaneState("secondary");
-      }
-      return state.secondaryRecoveryLane;
+      laneState.isMissing = false;
+      laneState.missingSince = 0;
+      laneState.missingDurationMs = 0;
+      laneState.missCount = 0;
+      laneState.terminated = false;
+      laneState.lastDecision = "idle";
+      laneState.lastDecisionAt = 0;
     }
 
     function resetSecondaryRecoveryLane(reason = "manual-reset") {
-      const laneState = ensureSecondaryRecoveryLane();
-      resetLaneState(laneState);
-
-      if (DEBUG_SECONDARY_SUBS) {
-        logContent?.("secondary-track-recovery: reset lane", {
-          reason,
-          currentTime: getCurrentTime(),
-        });
-      }
-    }
-
-    function updateLaneState(laneState, { now, healthy, isMissing, missingReason = "" }) {
-      if (!laneState) return;
-
-      laneState.lastObservationAt = now;
-
-      if (healthy) {
-        laneState.lastHealthyAt = now;
-        laneState.firstMissingAt = 0;
-        laneState.consecutiveMissingCount = 0;
-        laneState.lastMissingReason = "";
-        return;
-      }
-
-      if (isMissing) {
-        if (!laneState.firstMissingAt) {
-          laneState.firstMissingAt = now;
-        }
-        laneState.consecutiveMissingCount += 1;
-        laneState.lastMissingReason = missingReason || "";
-      }
-    }
-
-    function getSecondaryTrackObservation(track, prefix = "track") {
-      return {
-        [`${prefix}Found`]: Boolean(track),
-        [`${prefix}Language`]: track?.language || "",
-        [`${prefix}Label`]: track?.label || "",
-        [`${prefix}Kind`]: track?.kind || "",
-        [`${prefix}Mode`]: track?.mode || "",
-        [`${prefix}CuesLength`]: getTrackCuesLength(track),
-        [`${prefix}ActiveCuesLength`]: getTrackActiveCuesLength(track),
+      const before = {
+        missCount: laneStates.secondary?.missCount ?? null,
+        terminated: laneStates.secondary?.terminated ?? null,
+        missingSince: laneStates.secondary?.missingSince ?? null,
+        missingDurationMs: laneStates.secondary?.missingDurationMs ?? null,
+        lastDecision: laneStates.secondary?.lastDecision ?? null,
       };
+
+      resetLaneState(laneStates.secondary);
+
+      logContent?.("secondary recovery lane reset", {
+        reason,
+        before,
+        after: {
+          missCount: laneStates.secondary?.missCount ?? null,
+          terminated: laneStates.secondary?.terminated ?? null,
+          missingSince: laneStates.secondary?.missingSince ?? null,
+          missingDurationMs: laneStates.secondary?.missingDurationMs ?? null,
+          lastDecision: laneStates.secondary?.lastDecision ?? null,
+        },
+      });
+
+      return laneStates.secondary;
     }
 
-    function _evaluateLaneHealth({
-      mergedHealth,
-      secondaryTrack,
-      sequenceHealth,
-      pText,
-      sText,
-    }) {
-      const derived = mergedHealth?.derived || {};
-      const runtime = mergedHealth?.runtime || {};
-      const sequence = mergedHealth?.sequence || {};
+    function updateLaneState(laneState, { now, healthy, isMissing }) {
+      laneState.healthy = healthy === true;
+      laneState.isMissing = isMissing === true;
 
-      const primaryHealthy = Boolean(derived.primaryHealthy);
-      const secondaryHealthy = Boolean(derived.secondaryHealthy);
-
-      let missingReason = "";
-
-      if (!secondaryTrack) {
-        missingReason = "secondary-track-missing";
-      } else if (!runtime.secondaryActiveCues && !sText && !sequence.hasCurrentSecondary) {
-        missingReason = "secondary-empty";
-      } else if (
-        primaryHealthy &&
-        !secondaryHealthy &&
-        Boolean(sequence.currentPairMissingSecondary)
-      ) {
-        missingReason = "secondary-gap-on-current-pair";
-      } else if (primaryHealthy && !secondaryHealthy && !sText) {
-        missingReason = "secondary-text-missing";
+      if (!laneState.isMissing) {
+        laneState.missingSince = 0;
+        laneState.missingDurationMs = 0;
+        laneState.missCount = 0;
+        laneState.terminated = false;
+        laneState.lastDecision = "idle";
+        return laneState;
       }
 
-      return {
-        primaryHealthy,
-        secondaryHealthy,
-        isMissing: Boolean(missingReason),
-        missingReason,
-        sequenceHealth: sequenceHealth || null,
-        currentPrimaryTextLength: pText?.length || 0,
-        currentSecondaryTextLength: sText?.length || 0,
-      };
+      if (!laneState.missingSince) {
+        laneState.missingSince = now;
+      }
+
+      laneState.missingDurationMs = Math.max(0, now - laneState.missingSince);
+      return laneState;
     }
 
-    function _evaluateLaneRecovery({
+    function evaluateLaneRecovery({
+      laneName,
       laneState,
       now,
-      laneHealth,
-      secondaryTrack,
-      mergedHealth,
+      shouldRecover,
+      shouldForceRebind,
+      recoverReason,
+      forceRebindReason,
+      observationOnly = false,
     }) {
-      const missingDuration = laneState.firstMissingAt
-        ? Math.max(0, now - laneState.firstMissingAt)
-        : 0;
+      if (!laneState) {
+        return {
+          lane: laneName,
+          laneState: null,
+          action: "idle",
+          reason: "lane_state_missing",
+        };
+      }
 
-      const timeSinceLastRecovery = laneState.lastRecoveryAt
-        ? Math.max(0, now - laneState.lastRecoveryAt)
-        : Number.POSITIVE_INFINITY;
+      if (!laneState.isMissing) {
+        laneState.lastDecision = "idle";
+        laneState.lastDecisionAt = now;
+        const result = {
+          lane: laneName,
+          laneState,
+          action: "idle",
+          reason: "lane_not_missing",
+        };
 
-      const shouldRecover =
-        Boolean(laneHealth.primaryHealthy) &&
-        Boolean(laneHealth.isMissing) &&
-        missingDuration >= SECONDARY_RECOVERY_MISSING_MS;
+        logContent?.("laneRecoveryDecision", {
+          laneName,
+          action: result.action,
+          reason: result.reason,
+          missingDurationMs: laneState.missingDurationMs,
+          missCount: laneState.missCount,
+        });
 
-      const shouldForceRebind =
-        shouldRecover &&
-        timeSinceLastRecovery >= SECONDARY_RECOVERY_REBIND_MS &&
-        Boolean(
-          mergedHealth?.derived?.shouldForceSecondaryRebind ||
-          laneState.consecutiveMissingCount >= 2,
-        );
+        return result;
+      }
 
-      return {
-        shouldRecover,
-        shouldForceRebind,
-        missingDuration,
-        timeSinceLastRecovery,
-        requestedSecondaryLanguage:
-          getRequestedSecondaryLanguage?.() ||
-          state.requestedSecondaryLang ||
-          state.contentSettings?.secondaryLang ||
-          "",
-        secondaryTrackObservation: getSecondaryTrackObservation(
-          secondaryTrack,
-          "secondaryTrack",
-        ),
+      if (!shouldRecover) {
+        laneState.lastDecision = "idle";
+        laneState.lastDecisionAt = now;
+        const result = {
+          lane: laneName,
+          laneState,
+          action: "idle",
+          reason: observationOnly ? "lane_observation_only" : "lane_waiting_window",
+        };
+
+        logContent?.("laneRecoveryDecision", {
+          laneName,
+          action: result.action,
+          reason: result.reason,
+          missingDurationMs: laneState.missingDurationMs,
+          missCount: laneState.missCount,
+        });
+
+        return result;
+      }
+
+      const msSinceLastDecision =
+        laneState.lastDecisionAt > 0
+          ? now - laneState.lastDecisionAt
+          : Infinity;
+
+      if (msSinceLastDecision < SECONDARY_RECOVERY_DEBOUNCE_MS) {
+        laneState.lastDecision = "idle";
+        laneState.lastDecisionAt = now;
+        const result = {
+          lane: laneName,
+          laneState,
+          action: "idle",
+          reason: "lane_recovery_debounce",
+        };
+
+        logContent?.("laneRecoveryDecision", {
+          laneName,
+          action: result.action,
+          reason: result.reason,
+          missingDurationMs: laneState.missingDurationMs,
+          missCount: laneState.missCount,
+        });
+
+        return result;
+      }
+
+      laneState.missCount += 1;
+
+      if (laneState.missCount >= SECONDARY_RECOVERY_MISS_LIMIT) {
+        laneState.terminated = true;
+        laneState.lastDecision = "terminated";
+        laneState.lastDecisionAt = now;
+
+        const result = {
+          lane: laneName,
+          laneState,
+          action: "terminated",
+          reason: `${laneName}_recovery_miss_limit`,
+        };
+
+        logContent?.("laneRecoveryDecision", {
+          laneName,
+          action: result.action,
+          reason: result.reason,
+          missingDurationMs: laneState.missingDurationMs,
+          missCount: laneState.missCount,
+        });
+
+        return result;
+      }
+
+      laneState.lastDecision = shouldForceRebind ? "force-rebind" : "recover";
+      laneState.lastDecisionAt = now;
+
+      const result = {
+        lane: laneName,
+        laneState,
+        action: observationOnly
+          ? "idle"
+          : (shouldForceRebind ? "force-rebind" : "recover"),
+        reason: shouldForceRebind ? forceRebindReason : recoverReason,
       };
+
+      logContent?.("laneRecoveryDecision", {
+        laneName,
+        action: result.action,
+        reason: result.reason,
+        missingDurationMs: laneState.missingDurationMs,
+        missCount: laneState.missCount,
+      });
+
+      return result;
     }
 
     function evaluateSecondaryRecovery({
-      secondaryTrack,
-      mergedHealth,
-      sequenceHealth,
-      pText = "",
-      sText = "",
-      reason = "unknown",
+      now,
+      runtime,
+      currentCue,
+      sequence: _sequence,
+      derived,
     }) {
-      const now = Date.now();
-      const laneState = ensureSecondaryRecoveryLane();
-
-      const laneHealth = _evaluateLaneHealth({
-        mergedHealth,
-        secondaryTrack,
-        sequenceHealth,
-        pText,
-        sText,
+      const primaryLane = updateLaneState(laneStates.primary, {
+        now,
+        healthy: derived?.primaryHealthy === true,
+        isMissing: false,
       });
 
-      updateLaneState(laneState, {
+      const secondaryRuntimeMissing =
+        derived?.primaryHealthy === true &&
+        currentCue?.secondaryTextLength === 0 &&
+        runtime?.secondaryTrackFound === true &&
+        runtime?.secondaryActiveCues === 0;
+
+      const secondaryRecovered =
+        runtime?.secondaryTrackFound === true &&
+        (runtime?.secondaryActiveCues > 0 ||
+          currentCue?.secondaryTextLength > 0);
+
+      const secondaryLane = updateLaneState(laneStates.secondary, {
         now,
-        healthy: laneHealth.secondaryHealthy,
-        isMissing: laneHealth.isMissing,
-        missingReason: laneHealth.missingReason,
+        healthy: secondaryRecovered,
+        isMissing: secondaryRuntimeMissing,
       });
 
-      const recovery = _evaluateLaneRecovery({
-        laneState,
-        now,
-        laneHealth,
-        secondaryTrack,
-        mergedHealth,
-      });
+      if (secondaryRecovered) {
+        resetLaneState(secondaryLane);
+      }
 
-      const payload = {
-        reason,
-        now,
-        currentTime: getCurrentTime(),
-        laneState: {
-          lane: laneState.lane,
-          lastHealthyAt: laneState.lastHealthyAt,
-          firstMissingAt: laneState.firstMissingAt,
-          lastRecoveryAt: laneState.lastRecoveryAt,
-          lastObservationAt: laneState.lastObservationAt,
-          consecutiveMissingCount: laneState.consecutiveMissingCount,
-          lastMissingReason: laneState.lastMissingReason,
-        },
-        laneHealth,
-        recovery,
+      if (!secondaryLane.isMissing) {
+        secondaryLane.lastDecision = "idle";
+        secondaryLane.lastDecisionAt = now;
+        return {
+          primaryLane,
+          secondaryLane,
+          action: "idle",
+          reason: "secondary_not_missing",
+        };
+      }
+
+      if (secondaryLane.terminated && secondaryRuntimeMissing) {
+        const msSinceLastDecision =
+          secondaryLane.lastDecisionAt > 0
+            ? now - secondaryLane.lastDecisionAt
+            : Infinity;
+
+        if (msSinceLastDecision >= SECONDARY_TERMINATED_RETRY_MS) {
+          resetLaneState(secondaryLane);
+          secondaryLane.lastDecision = "idle";
+          secondaryLane.lastDecisionAt = now;
+          return {
+            primaryLane,
+            secondaryLane,
+            action: "idle",
+            reason: "secondary_terminated_retry_reset",
+          };
+        }
+      }
+
+      if (secondaryLane.terminated) {
+        secondaryLane.lastDecision = "terminated";
+        secondaryLane.lastDecisionAt = now;
+        return {
+          primaryLane,
+          secondaryLane,
+          action: "terminated",
+          reason: "secondary_recovery_terminated",
+        };
+      }
+
+      const shouldRecoverSecondary =
+        secondaryLane.missingDurationMs >= SECONDARY_RECOVERY_WINDOW_MS &&
+        (derived?.shouldRecoverSecondary === true || secondaryLane.isMissing);
+
+      if (!shouldRecoverSecondary) {
+        secondaryLane.lastDecision = "idle";
+        secondaryLane.lastDecisionAt = now;
+        return {
+          primaryLane,
+          secondaryLane,
+          action: "idle",
+          reason: "secondary_missing_waiting_window",
+        };
+      }
+
+      const msSinceLastMiss =
+        secondaryLane.lastDecisionAt > 0
+          ? now - secondaryLane.lastDecisionAt
+          : Infinity;
+
+      if (msSinceLastMiss < SECONDARY_RECOVERY_DEBOUNCE_MS) {
+        secondaryLane.lastDecision = "idle";
+        secondaryLane.lastDecisionAt = now;
+        return {
+          primaryLane,
+          secondaryLane,
+          action: "idle",
+          reason: "secondary_recovery_debounce",
+        };
+      }
+
+      secondaryLane.missCount += 1;
+
+      if (
+        secondaryLane.missCount >= SECONDARY_RECOVERY_MISS_LIMIT &&
+        derived?.shouldRecoverSecondary !== true
+      ) {
+        secondaryLane.terminated = true;
+        secondaryLane.lastDecision = "terminated";
+        secondaryLane.lastDecisionAt = now;
+        return {
+          primaryLane,
+          secondaryLane,
+          action: "terminated",
+          reason: "secondary_recovery_miss_limit",
+        };
+      }
+
+      const shouldForceSecondaryRebind =
+        derived?.shouldForceSecondaryRebind === true ||
+        secondaryLane.missCount >= SECONDARY_FORCE_REBIND_MISS_COUNT;
+
+      secondaryLane.lastDecision = shouldForceSecondaryRebind
+        ? "force-rebind"
+        : "recover";
+      secondaryLane.lastDecisionAt = now;
+
+      return {
+        primaryLane,
+        secondaryLane,
+        action: secondaryLane.lastDecision,
+        reason: shouldForceSecondaryRebind
+          ? "secondary_force_rebind_after_repeated_miss"
+          : "secondary_current_missing_with_primary_present",
       };
-
-      if (recovery.shouldRecover) {
-        laneState.lastRecoveryAt = now;
-      }
-
-      if (DEBUG_SECONDARY_SUBS) {
-        logContent?.("secondary-track-recovery: evaluate", payload);
-      }
-
-      return payload;
     }
 
     return {
+      laneStates,
       createLaneState,
       resetLaneState,
       resetSecondaryRecoveryLane,
       updateLaneState,
-      getSecondaryTrackObservation,
-      _evaluateLaneHealth,
-      _evaluateLaneRecovery,
+      evaluateLaneRecovery,
       evaluateSecondaryRecovery,
     };
   }
 
-  root.createSecondaryTrackRecovery = createSecondaryTrackRecovery;
+  root.secondaryTrackRecovery = root.secondaryTrackRecovery || {};
+  root.secondaryTrackRecovery.createSecondaryTrackRecovery =
+    createSecondaryTrackRecovery;
 })();

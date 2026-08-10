@@ -291,6 +291,10 @@
     }
 
     function resetSecondaryRecoveryLane(reason = "manual-reset") {
+      if (secondaryTrackRecovery?.resetSecondaryRecoveryLane) {
+        return secondaryTrackRecovery.resetSecondaryRecoveryLane(reason);
+      }
+
       const before = {
         missCount: laneStates.secondary?.missCount ?? null,
         terminated: laneStates.secondary?.terminated ?? null,
@@ -1770,7 +1774,8 @@
       onCueChange,
       onPrimaryCueChange,
       getMergedSubtitleHealth: () => lastMergedSubtitleHealth,
-      getLaneStates: () => laneStates,
+      getLaneStates: () =>
+        secondaryTrackRecovery?.laneStates || laneStates,
       resetSecondaryRecoveryLane,
       evaluateSecondaryRecovery,
     };
