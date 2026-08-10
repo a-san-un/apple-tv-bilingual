@@ -1993,6 +1993,14 @@ function forwardContentLog(...args) {
   layoutController.initForPanelVisible(state.panelVisible);
 
   const { createOverlayController } = root.overlayController;
+  const createTextTrackDebug =
+    root.textTrackDebug?.createTextTrackDebug || null;
+  const createCueSequenceBuilder =
+    root.cueSequenceBuilder?.createCueSequenceBuilder || null;
+  const createCueRenderCoordinator =
+    root.cueRenderCoordinator?.createCueRenderCoordinator || null;
+  const createSecondaryTrackRecovery =
+    root.secondaryTrackRecovery?.createSecondaryTrackRecovery || null;
   const overlayController = createOverlayController({
     getOverlayRoot: () => state.overlayRoot,
     setOverlayRoot: (rootNode) => {
@@ -2005,6 +2013,53 @@ function forwardContentLog(...args) {
       getPlaybackControlsLayoutTargetsFromModule,
     PLAYBACK_CONTROLS_LAYOUT,
   });
+
+  const textTrackDebug = createTextTrackDebug
+    ? createTextTrackDebug({
+        logContent,
+        getVideoElement: () => state.video ?? null,
+        getTrackCuesLength: resolverDeps.getTrackCuesLength,
+        getTrackActiveCuesLength: resolverDeps.getTrackActiveCuesLength,
+      })
+    : null;
+
+  const cueSequenceBuilder = createCueSequenceBuilder
+    ? createCueSequenceBuilder({
+        state,
+        logContent,
+        DEBUG_SECONDARY_SUBS,
+        getCurrentTime: () => state.video?.currentTime ?? 0,
+        getCurrentCue,
+        cleanCueText: vttDeps.cleanCueText,
+        getPrimaryTrackCues: () => state.primaryTrack?.cues || [],
+        getSecondaryTrackCues: () => state.secondaryTrack?.cues || [],
+        getPreviousSubtitleBlocks: () => getSubtitleBlockSequence() || [],
+        buildSubtitleBlockSequence,
+        setSubtitleBlocks,
+        setCurrentSubtitleBlock,
+        getBoundPrimaryTrack: () => state.primaryTrack,
+        getBoundSecondaryTrack: () => state.secondaryTrack,
+      })
+    : null;
+
+  const cueRenderCoordinator = createCueRenderCoordinator
+    ? createCueRenderCoordinator({
+        getTrackActiveCuesLength: resolverDeps.getTrackActiveCuesLength,
+      })
+    : null;
+
+  const secondaryTrackRecovery = createSecondaryTrackRecovery
+    ? createSecondaryTrackRecovery({
+        state,
+        logContent,
+        getCurrentTime: () => state.video?.currentTime ?? 0,
+        getTrackCuesLength: resolverDeps.getTrackCuesLength,
+        getTrackActiveCuesLength: resolverDeps.getTrackActiveCuesLength,
+        getRequestedSecondaryLanguage: () =>
+          state.requestedSecondaryLang || state.contentSettings.secondaryLang,
+        DEBUG_SECONDARY_SUBS,
+      })
+    : null;
 
   const cueController = createCueController({
     state,
@@ -2046,6 +2101,10 @@ function forwardContentLog(...args) {
     renderPanel,
     matchesRequestedLanguage: resolverDeps.matchesRequestedLanguage,
     isForcedLikeTrack: resolverDeps.isForcedLikeTrack,
+    textTrackDebug,
+    cueSequenceBuilder,
+    cueRenderCoordinator,
+    secondaryTrackRecovery,
   });
 
   const cueTrackBinder = createCueTrackBinder

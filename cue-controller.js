@@ -44,7 +44,12 @@
     renderPanel,
     matchesRequestedLanguage,
     isForcedLikeTrack,
+    textTrackDebug = null,
+    cueSequenceBuilder = null,
+    cueRenderCoordinator = null,
+    secondaryTrackRecovery = null,
   }) {
+
     // 現在 bind されている primary listener の解除関数を保持する。
     let primaryTrackCleanup = null;
 
@@ -64,6 +69,10 @@
     let secondaryTrackOriginalMode = null;
 
     function getUsableTrackDebugPayload(track) {
+      if (textTrackDebug?.getUsableTrackDebugPayload) {
+        return textTrackDebug.getUsableTrackDebugPayload(track);
+      }
+
       return {
         language: track?.language || "",
         label: track?.label || "",
@@ -75,6 +84,13 @@
     }
 
     function dumpTextTrackSnapshot(reason = "unknown", extra = {}) {
+      if (textTrackDebug?.dumpTextTrackSnapshot) {
+        return textTrackDebug.dumpTextTrackSnapshot(reason, extra, {
+          primaryTrackBound,
+          secondaryTrackBound,
+        });
+      }
+
       const video = getVideoElement?.();
       const tracks = Array.from(video?.textTracks || []);
 
@@ -101,8 +117,6 @@
       };
 
       logContent("text track snapshot", payload);
-
-      // logContent で記録済みのため console.log は不要
 
       return payload;
     }
@@ -490,6 +504,16 @@
       sequence: _sequence,
       derived,
     }) {
+      if (secondaryTrackRecovery?.evaluateSecondaryRecovery) {
+        return secondaryTrackRecovery.evaluateSecondaryRecovery({
+          now,
+          runtime,
+          currentCue,
+          sequence: _sequence,
+          derived,
+        });
+      }
+
       const primaryLane = updateLaneState(laneStates.primary, {
         now,
         healthy: derived?.primaryHealthy === true,
@@ -530,8 +554,6 @@
         };
       }
 
-      // terminated 後も secondaryRuntimeMissing が続いている場合、
-      // SECONDARY_TERMINATED_RETRY_MS 経過後にリセットして再試行を許可する。
       if (secondaryLane.terminated && secondaryRuntimeMissing) {
         const msSinceLastDecision =
           secondaryLane.lastDecisionAt > 0
@@ -576,8 +598,6 @@
         };
       }
 
-      // 同一 cuechange の重複発火による missCount の多重加算を防ぐ。
-      // lastDecisionAt から SECONDARY_RECOVERY_DEBOUNCE_MS 未満の呼び出しはスキップする。
       const msSinceLastMiss =
         secondaryLane.lastDecisionAt > 0
           ? now - secondaryLane.lastDecisionAt
@@ -1372,7 +1392,18 @@
       sText,
       sequenceHealth,
     }) {
-      // 現在 bind / active な track 状態を runtime 観測値としてまとめる。
+      if (cueRenderCoordinator?.buildMergedSubtitleHealth) {
+        return cueRenderCoordinator.buildMergedSubtitleHealth({
+          primaryTrack,
+          secondaryTrack,
+          pCue,
+          pText,
+          sCue,
+          sText,
+          sequenceHealth,
+        });
+      }
+
       const runtime = {
         primaryTrackFound: Boolean(primaryTrack),
         secondaryTrackFound: Boolean(secondaryTrack),
@@ -1380,7 +1411,6 @@
         secondaryActiveCues: getTrackActiveCuesLength(secondaryTrack),
       };
 
-      // 現在 cue と text の有無を current cue 観測値としてまとめる。
       const currentCue = {
         hasPrimaryCue: Boolean(pCue),
         hasSecondaryCue: Boolean(sCue),
@@ -1391,7 +1421,6 @@
         hasSecondaryText: Boolean(sText),
       };
 
-      // SubtitleBlockSequence 由来の current pair health を sequence 観測値としてまとめる。
       const sequence = {
         hasCurrentBlock: Boolean(sequenceHealth?.hasCurrentBlock),
         hasCurrentPrimary: Boolean(sequenceHealth?.hasCurrentPrimary),
@@ -1408,28 +1437,23 @@
         ),
       };
 
-      // primary lane が現在十分に観測できているかを derived health として求める。
       const primaryHealthy =
         runtime.primaryTrackFound &&
         (runtime.primaryActiveCues > 0 ||
           currentCue.hasPrimaryText ||
           sequence.hasCurrentPrimary);
 
-      // secondary lane が現在十分に観測できているかを derived health として求める。
       const secondaryHealthy =
         runtime.secondaryTrackFound &&
         (runtime.secondaryActiveCues > 0 ||
           currentCue.hasSecondaryText ||
           sequence.hasCurrentSecondary);
 
-      // sequence が「current pair で secondary gap がある」と示しているかを補助 truth に使う。
       const sequenceSuggestsSecondaryGap = sequence.currentPairMissingSecondary;
 
-      // runtime missing を再試行してよい候補かを derived 判定として求める。
       const shouldRecoverSecondary =
         primaryHealthy && !secondaryHealthy && sequenceSuggestsSecondaryGap;
 
-      // consecutive gap が続く場合に force-rebind 側へ進めるべきかを derived 判定として求める。
       const shouldForceSecondaryRebind =
         shouldRecoverSecondary && sequence.consecutiveCurrentMissingSecondary;
 
@@ -1498,10 +1522,24 @@
 
     // 現在時刻近傍の cue だけで subtitle blocks を組み直し、current view / current block を更新する。
     function rebuildCurrentSceneSubtitleBlocks() {
-      const currentTime = getCurrentTime();
-
       const primaryTrack = getBoundPrimaryTrack();
       const secondaryTrack = getBoundSecondaryTrack();
+
+      if (cueSequenceBuilder?.rebuildSequence) {
+        const result = cueSequenceBuilder.rebuildSequence({
+          primaryTrack,
+          secondaryTrack,
+          rebuildReason: "rebuildCurrentSceneSubtitleBlocks",
+        });
+
+        return {
+          ...result,
+          primaryTrack,
+          secondaryTrack,
+        };
+      }
+
+      const currentTime = getCurrentTime();
 
       const primaryCue = getCurrentCue(primaryTrack, currentTime);
       const secondaryCue = getCurrentCue(secondaryTrack, currentTime);
