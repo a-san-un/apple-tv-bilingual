@@ -20,12 +20,12 @@
   // ATVB_SCHEMA が読み込まれていない場合は即時エラー
   const schema = root.ATVB_SCHEMA;
   if (!schema) {
-    console.error("[ATVB_STORE] settings-schema.js が先に読み込まれていません");
+    console.error("[ATVB_STORE] settings-schema.js が先に読み込まれていません"); // eslint-disable-line no-console
     return;
   }
 
   const {
-    DEFAULT_SYNC_SETTINGS,
+    DEFAULT_SYNC_SETTINGS: _DEFAULT_SYNC_SETTINGS,
     DEFAULT_LOCAL_SETTINGS,
     mergeSyncSettings,
     applySecondaryLangFallback,
@@ -191,7 +191,9 @@
 
   root.ATVB_STORE = ATVB_STORE;
 
+  // eslint-disable-next-line no-undef
   if (typeof module !== "undefined" && module.exports) {
+    // eslint-disable-next-line no-undef
     module.exports = ATVB_STORE;
   }
 })(typeof globalThis !== "undefined" ? globalThis : window);

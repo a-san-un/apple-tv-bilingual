@@ -122,7 +122,7 @@
           currentIndex,
         });
 
-        console.debug("[ATVB] subtitle-view-resolver debug", {
+        console.debug("[ATVB] subtitle-view-resolver debug", { // eslint-disable-line no-console
           currentIndex,
           totalBlockCount: list.length,
           resolutionSource: "currentBlock",
@@ -152,7 +152,7 @@
           resolutionSource: "holdBlock",
         });
 
-        console.debug("[ATVB] subtitle-view-resolver debug", {
+        console.debug("[ATVB] subtitle-view-resolver debug", { // eslint-disable-line no-console
           currentIndex,
           totalBlockCount: list.length,
           resolutionSource: "holdBlock",
@@ -183,7 +183,7 @@
         currentIndex: Number.isInteger(currentIndex) ? currentIndex : null,
       });
 
-      console.debug("[ATVB] subtitle-view-resolver debug", {
+      console.debug("[ATVB] subtitle-view-resolver debug", { // eslint-disable-line no-console
         currentIndex,
         totalBlockCount: list.length,
         resolutionSource: "waiting",
@@ -201,6 +201,6 @@
       resolveUiSubtitleView,
     };
   } catch (error) {
-    console.error("[ATVB] subtitle-view-resolver: failed", error);
+    console.error("[ATVB] subtitle-view-resolver: failed", error); // eslint-disable-line no-console
   }
 })();

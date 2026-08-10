@@ -248,7 +248,7 @@ self.addEventListener("activate", (event) => {
 });
 
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("[ATV-Bilingual] background.js installed/updated");
+  console.log("[ATV-Bilingual] background.js installed/updated"); // eslint-disable-line no-console
   logBackground("background.js installed/updated").catch(() => {});
 });
 

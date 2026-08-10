@@ -35,8 +35,8 @@
       getTarget,
       makeClickableSpans,
       showPopup,
-      getPlaybackControlsLayoutTargets,
-      PLAYBACK_CONTROLS_LAYOUT,
+      getPlaybackControlsLayoutTargets: _getPlaybackControlsLayoutTargets,
+      PLAYBACK_CONTROLS_LAYOUT: _PLAYBACK_CONTROLS_LAYOUT,
     } = {}) {
       // content 切替時の残留テキストを防ぐため、簡単な前回 state を保持する。
       function ensureOverlayState() {
@@ -389,7 +389,7 @@
           state.lastContentKey = contentKey;
         }
 
-        console.debug("[ATVB] overlay render debug", {
+        console.debug("[ATVB] overlay render debug", { // eslint-disable-line no-console
           contentKey,
           isVisible,
           subtitleViewPrimary: primaryText,
@@ -484,7 +484,7 @@
           container.style.display = "none";
         }
 
-        console.debug("[ATVB] overlay state cleared");
+        console.debug("[ATVB] overlay state cleared"); // eslint-disable-line no-console
       }
 
       // overlay DOM と layout tracking をまとめて破棄する。
@@ -521,6 +521,6 @@
       createOverlayController,
     };
   } catch (error) {
-    console.error("[ATVB] overlay-controller: failed", error);
+    console.error("[ATVB] overlay-controller: failed", error); // eslint-disable-line no-console
   }
 })();

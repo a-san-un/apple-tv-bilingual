@@ -37,7 +37,7 @@
             ? error.message
             : String(error);
         if (message.includes("Extension context invalidated")) return;
-        console.warn("[ATV-Bilingual] debug log queue failed:", error);
+        console.warn("[ATV-Bilingual] debug log queue failed:", error); // eslint-disable-line no-console
       });
     return logWriteQueue;
   }
@@ -188,7 +188,7 @@
             ? error.message
             : String(error);
         if (message.includes("Extension context invalidated")) return;
-        console.warn("[ATV-Bilingual] appendDebugLog failed:", error);
+        console.warn("[ATV-Bilingual] appendDebugLog failed:", error); // eslint-disable-line no-console
       }
     });
   }

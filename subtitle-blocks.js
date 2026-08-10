@@ -433,6 +433,6 @@
       resolveCurrentIndex,
     };
   } catch (error) {
-    console.error("[ATVB] subtitle-blocks: failed", error);
+    console.error("[ATVB] subtitle-blocks: failed", error); // eslint-disable-line no-console
   }
 })();
