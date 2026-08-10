@@ -21,8 +21,8 @@
     getTrackCuesLength,
     getTrackActiveCuesLength,
     getRequestedSecondaryLanguage,
-    getPrimaryTrack,
-    getSecondaryTrack,
+    getPrimaryTrack: _getPrimaryTrack,
+    getSecondaryTrack: _getSecondaryTrack,
     getCurrentCue,
     cleanCueText,
     getCurrentTime,
@@ -33,14 +33,14 @@
     buildSubtitleBlockSequence,
     setSubtitleBlocks,
     getSubtitleBlockSequence,
-    getCurrentSubtitleBlockFromSequence,
+    getCurrentSubtitleBlockFromSequence: _getCurrentSubtitleBlockFromSequence,
     setCurrentSubtitleBlock,
-    DEBUG_PANEL_PROBE,
+    DEBUG_PANEL_PROBE: _DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     renderCurrentSnapshot,
-    updateOverlay,
-    updateOverlayFromView,
-    updateOverlayFromBlock,
+    updateOverlay: _updateOverlay,
+    updateOverlayFromView: _updateOverlayFromView,
+    updateOverlayFromBlock: _updateOverlayFromBlock,
     renderPanel,
     matchesRequestedLanguage,
     isForcedLikeTrack,
@@ -102,9 +102,7 @@
 
       logContent("text track snapshot", payload);
 
-      try {
-        console.log("[ATVB] text track snapshot", payload);
-      } catch (_) {}
+      // logContent で記録済みのため console.log は不要
 
       return payload;
     }
@@ -347,7 +345,7 @@
     // secondary lane の runtime missing が一定時間続き、
     // merged assists も recovery 対象と示したときだけ recover / force-rebind / terminated を判定する。
     // 主に large seek 後の secondary missing を対象とし、通常再生での短い gap はここでは扱わない。
-    function evaluateLaneHealth({
+    function _evaluateLaneHealth({
       laneName,
       now,
       healthy,
@@ -375,7 +373,7 @@
       return laneState;
     }
 
-    function evaluateLaneRecovery({
+    function _evaluateLaneRecovery({
       laneName,
       laneState,
       shouldRecover = false,
@@ -489,7 +487,7 @@
       now,
       runtime,
       currentCue,
-      sequence,
+      sequence: _sequence,
       derived,
     }) {
       const primaryLane = updateLaneState(laneStates.primary, {
@@ -1449,12 +1447,14 @@
     }
 
     // nearby rebuild の 1 回保護状態と hold view をまとめて解除する。
+    // eslint-disable-next-line no-unused-vars 
     function clearNearbyRebuildGuard() {
       nearbyRebuildGuard = null;
       state.nearbyRebuildHoldView = null;
     }
 
     // 次の primary cue change で消費する予定だった guard だけを取り下げる。
+    // eslint-disable-next-line no-unused-vars 
     function consumeNearbyRebuildGuard() {
       nearbyRebuildGuard = null;
     }
@@ -1467,6 +1467,7 @@
     }
 
     // nearby rebuild 直後の current block を次の 1 回だけ保護する。
+    // eslint-disable-next-line no-unused-vars 
     function armNearbyRebuildGuard(currentBlock) {
       nearbyRebuildGuard = {
         consumeOnNextPrimaryCueChange: true,
@@ -1478,6 +1479,7 @@
     }
 
     // 次の primary cue change で nearby rebuild の current / hold view を優先するか判定する。
+    // eslint-disable-next-line no-unused-vars 
     function shouldPreserveNearbyRebuildCurrentBlock() {
       const guardActive = Boolean(
         nearbyRebuildGuard?.consumeOnNextPrimaryCueChange,
@@ -1600,8 +1602,7 @@
       const secondaryText = cleanCueText(secondaryCue);
 
       const sequenceApi =
-        (typeof subtitleBlockSequence !== "undefined" && subtitleBlockSequence) ||
-        (typeof window !== "undefined" && window.subtitleBlockSequence) ||
+        (typeof getSubtitleBlockSequence === "function" && getSubtitleBlockSequence()) ||
         null;
 
       const rebuildResult = rebuildCurrentSceneSubtitleBlocks();
@@ -1722,6 +1723,7 @@
       getBoundPrimaryTrack,
       unbindPrimarySubtitleTrack,
       handoffPrimarySubtitleToNative,
+      restoreNativeSubtitles,
       bindPrimarySubtitleTrack,
       getBoundSecondaryTrack,
       unbindSecondarySubtitleTrack,
