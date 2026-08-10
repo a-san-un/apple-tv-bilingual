@@ -49,6 +49,12 @@
 
     // 再生中の overlay / panel / observer を停止し、
     // 現在の playback session にだけ紐づく表示資産を破棄する。
+    //
+    // primary: handoffPrimarySubtitleToNative() でネイティブ字幕に制御を返す。
+    //   unbind 後に mode を直接書き込む二重制御は不要。
+    // secondary: restoreMode: false で unbind のみ。
+    //   teardown 時は secondary 字幕を消すことが目的なので
+    //   unbindSecondarySubtitleTrack 内で secondaryTrackBound = null になれば十分。
     function teardownForRestart() {
       stopPlaybackControlLayoutObservers?.();
       layoutController?.teardownPlaybackControlsUi?.();
@@ -61,19 +67,8 @@
 
       runtimeObservers?.stopAll?.();
 
-      const boundPrimaryTrack = cueController?.getBoundPrimaryTrack?.();
-      const boundSecondaryTrack = cueController?.getBoundSecondaryTrack?.();
-
-      cueController?.unbindPrimarySubtitleTrack?.();
-      cueController?.unbindSecondarySubtitleTrack?.();
-
-      try {
-        if (boundPrimaryTrack) boundPrimaryTrack.mode = "showing";
-      } catch (_) {}
-
-      try {
-        if (boundSecondaryTrack) boundSecondaryTrack.mode = "disabled";
-      } catch (_) {}
+      cueController?.handoffPrimarySubtitleToNative?.();
+      cueController?.unbindSecondarySubtitleTrack?.({ restoreMode: false });
     }
 
     function detachForDisabled() {

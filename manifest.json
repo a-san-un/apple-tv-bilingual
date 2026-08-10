@@ -35,6 +35,7 @@
         "secondary-subtitle-dom.js",
         "initial-cue-recovery.js",
         "cue-controller.js",
+        "modules/cue-track-binder.js",
         "overlay-controller.js",
         "runtime-observers.js",
         "playback-controls-layout.js",

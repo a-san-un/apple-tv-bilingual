@@ -1875,6 +1875,7 @@ function forwardContentLog(...args) {
     }),
   } = subtitleBlockResolverApi;
   const createCueController = window.ATVB?.cueController?.createCueController;
+  const createCueTrackBinder = window.ATVB?.cueTrackBinder?.createCueTrackBinder;
   const createSubtitleSyncController =
     window.ATVB?.subtitleSyncController?.createSubtitleSyncController;
 
@@ -2080,8 +2081,14 @@ function forwardContentLog(...args) {
     isForcedLikeTrack: resolverDeps.isForcedLikeTrack,
   });
 
+  const cueTrackBinder = createCueTrackBinder
+    ? createCueTrackBinder({ cueController })
+    : null;
+
+  root.cueTrackBinder = root.cueTrackBinder ?? {};
+  if (cueTrackBinder) root.cueTrackBinder.instance = cueTrackBinder;
+
   const subtitleSyncController = createSubtitleSyncController({
-    state,
     services: {
       logContent,
       resolver: resolverDeps,
@@ -2164,16 +2171,13 @@ let syncIntervalOrchestrator = null;
       setOverlayVisible(false);
       overlayController.clearOverlayState?.();
       // ③ cue unbind
-      cueController.unbindPrimarySubtitleTrack();
-      cueController.unbindSecondarySubtitleTrack();
+      cueController.handoffPrimarySubtitleToNative();
+      cueController.unbindSecondarySubtitleTrack(); 
       // ④ interval 停止
       if (secondaryTrackSyncInterval) {
         clearInterval(secondaryTrackSyncInterval);
         secondaryTrackSyncInterval = null;
       }
-
-      if (state.primaryTrack) state.primaryTrack.mode = "showing";
-      if (state.secondaryTrack) state.secondaryTrack.mode = "showing";
 
       logContent("panel closed: extension paused");
     },

@@ -1,246 +1,146 @@
 // =============================================================
-// Apple TV+ Bilingual Subtitles - playbackContext.js
-// version: 2.6.3
-// 役割: playback page context / content key / subtitle history context を扱う。
+// Apple TV+ Bilingual Subtitles - modules/subtitle-sync-controller.js
+//
+// 役割:
+// - secondary 字幕の同期処理をまとめる。
+// - resolver が選んだ secondary track を direct bind する。
+// - direct bind で成立しない作品だけ native menu sync へフォールバックする。
+//
+// 設計方針:
+// - state への直接書き込みは行わない。
+//   呼び出し側（content.js）が戻り値の track を見て state を更新する。
+// - bindSecondaryTrack には cueController が期待する modeDecision 形式で渡す。
 // =============================================================
-
 (() => {
+  "use strict";
+
   const root = (window.ATVB = window.ATVB || {});
 
-  function createPlaybackContextController({
-    state,
-    logContentSubtitle,
-    subtitleHistoryMaxPerContent,
-  }) {
-    // playback ページ上の video / dialog / playback view をまとめて取得する。
-    function getPlaybackContext() {
-      const video = document.querySelector("video");
-      const playbackDialog = document.querySelector("dialog.playback-view");
-      const playbackView = document.querySelector(
-        '[data-testid="playback-view"]',
-      );
-      const textTrackCount = video?.textTracks?.length ?? 0;
-      const isPlaybackReady = Boolean(video && textTrackCount > 0);
+  function createSubtitleSyncController({ services = {} }) {
+    const {
+      logContent,
+      resolver,
+      syncNativeSubtitleSelection,
+      bindSecondaryTrack,
+    } = services;
+
+    function getTrackReadability(track, currentTime = NaN) {
+      if (!track) {
+        return {
+          cuesLength: 0,
+          activeCuesLength: 0,
+          currentCueTextLength: 0,
+          hasCueOverlapAtCurrentTime: false,
+          readable: false,
+        };
+      }
+
+      const cuesLength = resolver?.getTrackCuesLength?.(track) ?? 0;
+      const activeCuesLength = resolver?.getTrackActiveCuesLength?.(track) ?? 0;
+      const currentCueTextLength = Number.isFinite(currentTime)
+        ? resolver?.getCurrentCueTextLength?.(track, currentTime) ?? 0
+        : 0;
+      const hasCueOverlapAtCurrentTime = Number.isFinite(currentTime)
+        ? Boolean(resolver?.hasCueOverlapAtTime?.(track, currentTime))
+        : false;
 
       return {
-        video,
-        playbackDialog,
-        playbackView,
-        textTrackCount,
-        isPlaybackReady,
+        cuesLength,
+        activeCuesLength,
+        currentCueTextLength,
+        hasCueOverlapAtCurrentTime,
+        readable: Boolean(
+          cuesLength > 0 ||
+            activeCuesLength > 0 ||
+            currentCueTextLength > 0 ||
+            hasCueOverlapAtCurrentTime,
+        ),
       };
     }
 
-    // 再生準備が整っているときだけ、video と dialog を返す。
-    function getVideoAndDialog() {
-      const ctx = getPlaybackContext();
-      if (!ctx.isPlaybackReady) return null;
-
-      const resolvedDialog =
-        ctx.playbackDialog || ctx.playbackView?.closest("dialog") || null;
-
+    // bindSecondaryTrack に渡す modeDecision を組み立てる。
+    // cueController.bindSecondarySubtitleTrack が期待する形式に統一する。
+    function _buildModeDecision(reason, options = {}) {
       return {
-        video: ctx.video,
-        dialog: resolvedDialog,
+        requestedMode: options.requestedMode ?? "hidden",
+        policy: options.policy ?? "subtitle-sync-controller",
+        rationale: options.rationale ?? reason,
+        reason,
+        unreadableSnapshot: options.unreadableSnapshot ?? null,
       };
     }
 
-    function isPlaybackPageReady() {
-      return getPlaybackContext().isPlaybackReady;
-    }
-
-    // debug log 用に playback context の状態を軽量 payload へ整える。
-    function getPlaybackContextLogPayload() {
-      const ctx = getPlaybackContext();
-      return {
-        hasVideo: Boolean(ctx.video),
-        hasPlaybackDialog: Boolean(ctx.playbackDialog),
-        hasPlaybackView: Boolean(ctx.playbackView),
-        textTrackCount: ctx.textTrackCount,
-        isPlaybackReady: ctx.isPlaybackReady,
-      };
-    }
-
-    // content key 用の文字列を、比較しやすい形へ正規化する。
-    function normalizeContentKeyPart(value) {
-      return String(value || "")
-        .trim()
-        .replace(/\s+/g, " ")
-        .toLowerCase();
-    }
-
-    // URL として扱えない入力用に、query/hash を除いた比較キーを作る。
-    function normalizeNonUrlMediaSourceKey(src) {
-      return String(src || "")
-        .split("?")[0]
-        .split("#")[0]
-        .trim()
-        .replace(/\s+/g, " ")
-        .toLowerCase();
-    }
-
-    // currentSrc / src 由来の URL から、比較用の安定キーを作る。
-    function normalizeMediaSourceKey(rawSrc) {
-      const src = String(rawSrc || "").trim();
-      if (!src) return "";
-
-      const looksAbsoluteUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(src);
-      const looksRelativeUrl =
-        src.startsWith("/") || src.startsWith("./") || src.startsWith("../");
-
-      // 空白を含む文字列は、URL ではなくラベル/壊れた値として扱う。
-      // new URL(value, location.href) に通すと相対 path として解釈されてしまい、
-      // characterization test の期待値とズレるため、先に文字列正規化へ倒す。
-      if (!looksAbsoluteUrl && !looksRelativeUrl && /\s/.test(src)) {
-        return normalizeNonUrlMediaSourceKey(src);
-      }
-
-      try {
-        const parsed = new URL(src, location.href);
-        return `${parsed.origin}${parsed.pathname}`.toLowerCase();
-      } catch (_) {
-        return normalizeNonUrlMediaSourceKey(src);
-      }
-    }
-
-    // document.title から Apple TV+ 接尾辞を除いた title key を作る。
-    function getPlaybackTitleKey() {
-      const rawTitle = String(document.title || "");
-      const cleanedTitle = rawTitle
-        .replace(/\s*[|｜-]\s*apple tv\+\s*$/i, "")
-        .replace(/\s+/g, " ")
-        .trim();
-
-      return normalizeContentKeyPart(cleanedTitle);
-    }
-
-    // media source を最優先にしつつ、title / aria 系属性から content key を解決する。
-    function resolvePlaybackContentKey(ctx = getPlaybackContext()) {
-      const mediaSourceKey = normalizeMediaSourceKey(
-        ctx.video?.currentSrc || ctx.video?.getAttribute("src") || "",
-      );
-      if (mediaSourceKey) {
-        return `media:${mediaSourceKey}`;
-      }
-
-      const titleKey = getPlaybackTitleKey();
-      const attrCandidates = [
-        ctx.playbackView?.getAttribute("data-automation-id"),
-        ctx.playbackView?.getAttribute("data-testid"),
-        ctx.playbackView?.getAttribute("aria-label"),
-        ctx.playbackDialog?.getAttribute("aria-label"),
-      ];
-
-      const stableIdKey = attrCandidates
-        .map((value) => normalizeContentKeyPart(value))
-        .find(Boolean);
-
-      const keyParts = [];
-      if (titleKey) keyParts.push(`title:${titleKey}`);
-      if (stableIdKey) keyParts.push(`id:${stableIdKey}`);
-      if (!keyParts.length) return "content:unknown";
-
-      return keyParts.join("|");
-    }
-
-    function getCurrentVideoSrcKey(video = state.video) {
-      return normalizeMediaSourceKey(
-        video?.currentSrc || video?.getAttribute("src") || "",
-      );
-    }
-
-    // contentKey ごとの subtitle history bucket を参照する。
-    function getHistoryBucketForContentKey(contentKey) {
-      if (!contentKey) return null;
-      return state.subtitleHistoryStore.get(contentKey) || null;
-    }
-
-    function loadHistoryForContentKey(contentKey) {
-      const bucket = getHistoryBucketForContentKey(contentKey);
-      const items = Array.isArray(bucket?.items) ? bucket.items : [];
-      state.subtitleHistory = items.slice(-subtitleHistoryMaxPerContent);
-    }
-
-    function saveHistoryForContentKey(
-      contentKey,
-      history = state.subtitleHistory,
+    // secondary track を解決して bind する。
+    // state への書き込みは行わず、bind した track（または null）を返す。
+    // 呼び出し側が戻り値を受け取って state.secondaryTrack を更新すること。
+    async function syncSecondarySubtitleTrack(
+      video,
+      requestedLang,
+      options = {},
     ) {
-      if (!contentKey) return;
-      const items = Array.isArray(history)
-        ? history.slice(-subtitleHistoryMaxPerContent)
-        : [];
+      if (!video || !requestedLang) return null;
 
-      state.subtitleHistoryStore.set(contentKey, {
-        items,
-        updatedAt: Date.now(),
-      });
-    }
+      const currentTime = Number(video.currentTime ?? NaN);
+      const selectedTrack =
+        resolver?.resolveSecondarySubtitleTrack?.(video, requestedLang) || null;
 
-    // 再生コンテンツ切り替え時に、history と lastPrimaryText の文脈を切り替える。
-    function switchHistoryContext(nextContentKey) {
-      const previousContentKey = state.currentContentKey || "";
-      if (
-        previousContentKey &&
-        previousContentKey !== nextContentKey &&
-        state.subtitleHistory.length
-      ) {
-        saveHistoryForContentKey(previousContentKey, state.subtitleHistory);
+      if (selectedTrack) {
+        const readability = getTrackReadability(selectedTrack, currentTime);
+
+        bindSecondaryTrack?.(
+          selectedTrack,
+          _buildModeDecision("secondary-sync-direct-bind", options),
+        );
+
+        logContent?.("subtitle sync direct selected track", {
+          requestedLang,
+          currentTime,
+          selectedLanguage: selectedTrack?.language ?? "",
+          selectedLabel: selectedTrack?.label ?? "",
+          selectedMode: selectedTrack?.mode ?? "",
+          readability,
+        });
+
+        return selectedTrack;
       }
 
-      state.currentContentKey = nextContentKey || "";
-      loadHistoryForContentKey(state.currentContentKey);
-      state.lastPrimaryText = "";
-    }
+      logContent?.("subtitle sync direct fallback to native", {
+        requestedLang,
+        currentTime,
+      });
 
-    // video / title / aria 情報から現在の content key を更新する。
-    function refreshPlaybackContentContext(ctx = getPlaybackContext()) {
-      const nextContentKey = resolvePlaybackContentKey(ctx);
-      if (nextContentKey === state.currentContentKey) return nextContentKey;
+      await syncNativeSubtitleSelection?.({
+        primaryLang: options?.primaryLang ?? "",
+        secondaryLang: requestedLang,
+        preferredSource: requestedLang,
+      });
 
-      switchHistoryContext(nextContentKey);
-      return nextContentKey;
-    }
+      const fallbackTrack =
+        resolver?.resolveSecondarySubtitleTrack?.(video, requestedLang) || null;
 
-    // content 切り替え直後に積み直した字幕を bucket へ保存する。
-    function persistCurrentHistoryContext() {
-      if (!state.currentContentKey) return;
-      saveHistoryForContentKey(state.currentContentKey, state.subtitleHistory);
-    }
-
-    // primary subtitle を現在 content bucket へ追記する。
-    function appendSubtitleHistory(text) {
-      if (!text) return;
-
-      state.subtitleHistory.push(text);
-      if (state.subtitleHistory.length > subtitleHistoryMaxPerContent) {
-        state.subtitleHistory = state.subtitleHistory.slice(
-          -subtitleHistoryMaxPerContent,
+      if (fallbackTrack) {
+        bindSecondaryTrack?.(
+          fallbackTrack,
+          _buildModeDecision("secondary-sync-native-fallback", options),
         );
       }
 
-      persistCurrentHistoryContext();
-      logContentSubtitle(text);
+      logContent?.("subtitle sync native fallback result", {
+        requestedLang,
+        fallbackFound: Boolean(fallbackTrack),
+        fallbackLanguage: fallbackTrack?.language ?? "",
+      });
+
+      return fallbackTrack;
     }
 
     return {
-      getPlaybackContext,
-      getVideoAndDialog,
-      isPlaybackPageReady,
-      getPlaybackContextLogPayload,
-      normalizeContentKeyPart,
-      normalizeMediaSourceKey,
-      getPlaybackTitleKey,
-      resolvePlaybackContentKey,
-      getCurrentVideoSrcKey,
-      getHistoryBucketForContentKey,
-      loadHistoryForContentKey,
-      saveHistoryForContentKey,
-      switchHistoryContext,
-      refreshPlaybackContentContext,
-      persistCurrentHistoryContext,
-      appendSubtitleHistory,
+      getTrackReadability,
+      syncSecondarySubtitleTrack,
     };
   }
 
-  root.createPlaybackContextController = createPlaybackContextController;
+  root.subtitleSyncController = root.subtitleSyncController || {};
+  root.subtitleSyncController.createSubtitleSyncController =
+    createSubtitleSyncController;
 })();
