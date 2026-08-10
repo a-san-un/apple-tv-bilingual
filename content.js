@@ -2046,6 +2046,7 @@ function forwardContentLog(...args) {
   if (cueTrackBinder) root.cueTrackBinder.instance = cueTrackBinder;
 
   const subtitleSyncController = createSubtitleSyncController({
+    state,
     services: {
       logContent,
       createSyncIntervalOrchestrator:

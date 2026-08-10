@@ -424,4 +424,38 @@ describe("subtitle-sync-controller", () => {
       reason: "first",
     });
   });
+
+  // controller 生成時に注入した state が direct bind 後に更新されることを確認する。
+  test("syncSecondarySubtitleTrack writes resolved track back to injected state", async () => {
+    const createSubtitleSyncController = await loadFactory();
+    const selectedTrack = {
+      language: "ja",
+      label: "Japanese",
+      mode: "hidden",
+    };
+    const state = { secondaryTrack: null };
+    const resolver = {
+      resolveSecondarySubtitleTrack: vi.fn(() => selectedTrack),
+      getTrackCuesLength: vi.fn(() => 1),
+      getTrackActiveCuesLength: vi.fn(() => 0),
+      getCurrentCueTextLength: vi.fn(() => 0),
+      hasCueOverlapAtTime: vi.fn(() => false),
+    };
+
+    const controller = createSubtitleSyncController({
+      state,
+      services: {
+        logContent: vi.fn(),
+        resolver,
+        bindSecondaryTrack: vi.fn(),
+        syncNativeSubtitleSelection: vi.fn(),
+      },
+    });
+
+    await expect(
+      controller.syncSecondarySubtitleTrack({ currentTime: 1 }, "ja"),
+    ).resolves.toBe(selectedTrack);
+
+    expect(state.secondaryTrack).toBe(selectedTrack);
+  });
 });
