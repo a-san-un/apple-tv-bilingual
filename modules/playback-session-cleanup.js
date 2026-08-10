@@ -28,6 +28,7 @@
       destroyOverlay,
       destroyUiHosts,
       destroyFeatureUiHosts,
+      applyLayout,
       clearInternalSubtitleState,
       cueController,
       runtimeObservers,
@@ -146,6 +147,21 @@
       // - chrome.storage.sync は触らない
     }
 
+    function handleNavigationTargetMissing({
+      reason = "navigation_target_missing",
+      url = "",
+      playbackContext = null,
+    } = {}) {
+      destroyUiHosts?.();
+      applyLayout?.(false);
+
+      logContent?.("navigation changed: playback target not ready yet", {
+        reason,
+        url,
+        ...(playbackContext || {}),
+      });
+    }
+
     // Apple TV の playback dialog 内の close button クリックだけを検知する。
     // 他の button クリックでは cleanup しない。
     function isPlaybackCloseButtonClick(event) {
@@ -189,6 +205,7 @@
       detachForDisabled,
       prepareForRestart,
       clearPlaybackSessionUiState,
+      handleNavigationTargetMissing,
       isPlaybackCloseButtonClick,
       ensureCloseClickListener,
     };

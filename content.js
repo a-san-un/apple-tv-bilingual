@@ -2373,6 +2373,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
         destroyOverlay,
         destroyUiHosts,
         destroyFeatureUiHosts,
+        applyLayout,
         clearInternalSubtitleState,
         cueController,
         runtimeObservers,
@@ -3064,13 +3065,11 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
     state.video = null;
     state.dialogEl = null;
     state.lastVideoSrcKey = "";
-    destroyUiHosts();
-    applyLayout(false);
 
-    logContent("navigation changed: playback target not ready yet", {
+    playbackSessionCleanup?.handleNavigationTargetMissing?.({
       reason,
       url: location.href,
-      ...getPlaybackContextLogPayload(),
+      playbackContext: getPlaybackContextLogPayload(),
     });
   }
 
