@@ -43,6 +43,7 @@
         "settings-runtime.js",
         "modules/playback-context-controller.js",
         "reinitialize-coordinator.js",
+        "modules/subtitle-state-reset.js",
         "modules/playback-session-cleanup.js",
         "modules/playback-startup-coordinator.js",
         "modules/subtitle-sync-controller.js",

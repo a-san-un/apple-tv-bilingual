@@ -94,15 +94,14 @@
     //   パネルDOMはフラッシュ防止のため clearInternalSubtitleState 側でスキップされる。
     //   startBilingual() が直後に呼ばれて新しい字幕で上書きされることが前提。
     function prepareForRestart() {
-      clearInternalSubtitleState?.("prepareForRestart");
-
+      clearInternalSubtitleState?.({ preserveSecondaryDom: true });
+      // ... state リセット（以下変更なし）
       state.primaryTrack = null;
       state.secondaryTrack = null;
       state.currentSubtitleBlock = null;
       state.subtitleBlockMeta = null;
       state.lastPanelRenderSnapshot = null;
       state.lastSecondarySyncContext = null;
-
       state.subtitleHistory = [];
       state.panelPastBlocks = [];
       state.subtitleBlocks = [];
@@ -133,7 +132,7 @@
       // prepareForRestart はパネルDOMをスキップするが、
       // 動画クローズ後は次の startBilingual が来ないため、
       // パネルとオーバーレイの残留字幕を確実に消去する。
-      clearInternalSubtitleState?.("videoClose");
+    clearInternalSubtitleState?.({ preserveSecondaryDom: false });
 
       state.video = null;
       state.dialogEl = null;

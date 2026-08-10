@@ -2365,8 +2365,8 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
         waitForVideo,
         attachTracks,
         startBilingual,
-        clearSubtitles: (opts) =>
-        clearInternalSubtitleState(opts?.reason ?? "startup_coordinator"),
+        clearSubtitles: () =>
+        clearInternalSubtitleState({ preserveSecondaryDom: false }),
       },
     }) ?? null;
     
@@ -2535,26 +2535,32 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
     };
   }
 
+  // subtitle-state-reset モジュール初期化
+  const subtitleStateReset = window.ATVB.createSubtitleStateReset({
+    state,
+    secondarySubtitleDom,
+    logContent,
+  });
 
-  function clearInternalSubtitleState(reason = "unknown") {
-    state.lastSecondaryText = "";
-    state.lastSecondaryTextAt = 0;
-    state.lastSecondarySignalAt = 0;
-    state.lastPrimaryText = "";
-    state.lastPrimarySnapshotAt = 0;
+  // options オブジェクト形式で呼び出し可能。
+  // 後方互換のため reason 文字列も受け付けるが、
+  // 新規呼び出しは { preserveSecondaryDom: bool } 形式を使うこと。
+  function clearInternalSubtitleState(reasonOrOptions = {}) {
+    let preserveSecondaryDom = false;
 
-    const shouldPreserveSecondaryDom =
-      reason === "prepareForRestart" || reason === "panelToggle";
-    if (!shouldPreserveSecondaryDom) {
-      secondarySubtitleDom.clearPanelSecondaryText();
+    // 後方互換: 文字列で呼ばれた場合
+    if (typeof reasonOrOptions === "string") {
+      preserveSecondaryDom =
+        reasonOrOptions === "prepareForRestart" ||
+        reasonOrOptions === "panelToggle";
+    } else {
+      preserveSecondaryDom =
+        typeof reasonOrOptions.preserveSecondaryDom === "boolean"
+          ? reasonOrOptions.preserveSecondaryDom
+          : false;
     }
 
-    logContent("internal subtitle state cleared", {
-      reason,
-      contentKey: state.currentContentKey,
-      preservedSecondaryDom: shouldPreserveSecondaryDom,
-      // hasPanelHost / hasSecondaryElement は削除（DOM参照なしになったため）
-    });
+    subtitleStateReset.clearSubtitleState({ preserveSecondaryDom });
   }
 
 

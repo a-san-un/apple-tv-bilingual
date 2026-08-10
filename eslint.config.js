@@ -4,7 +4,7 @@ import globals from "globals";
 export default [
   {
     files: ["*.js", "modules/*.js"],
-    ignores: ["vitest.config.js", "eslint.config.js", "node_modules/**"],
+    ignores: ["vitest.config.js", "eslint.config.js", "node_modules/**", "modules/cue-text.js", "modules/vtt.js"],
 
     languageOptions: {
       ecmaVersion: 2022,

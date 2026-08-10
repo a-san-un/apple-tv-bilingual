@@ -248,7 +248,7 @@
       clearManagedInlineStyle(header, "header", "marginRight");
     }
 
-    function applyManagedProgressInset(progress) {
+    function _applyManagedProgressInset(progress) {
       if (!progress) return;
 
       if (!progress.hasAttribute(PLAYBACK_PROGRESS_BASE_MIN_WIDTH_ATTR)) {
@@ -475,7 +475,7 @@
       clearManagedInlineStyle(autoSubsNote, "auto-subs-note", "display");
     }
 
-    function getPlaybackPanelLayoutAnchor() {
+    function _getPlaybackPanelLayoutAnchor() {
       return (
         document.querySelector(PLAYBACK_CONTROLS_LAYOUT.panelSelector) ||
         secondarySubtitleDom?.getElement()

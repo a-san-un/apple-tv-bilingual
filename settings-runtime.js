@@ -631,7 +631,7 @@
             });
 
             panelUi?.hideRightPanel?.();
-            detachForDisabled("disabled");
+            detachForDisabled();
             syncIntervalOrchestrator?.stop?.();
             cleanupInitialAutoStartWatch();
             state.booted = false;

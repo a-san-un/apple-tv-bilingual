@@ -53,7 +53,7 @@
   }
 
   /* truth sequence から overlay 用 view を解決する。 */
-  function resolveOverlayView(blocks, currentIndex, meta = null) {
+  function resolveOverlayView(blocks, currentIndex, _meta = null) {
     const list = Array.isArray(blocks) ? blocks : [];
     const group = findOverlayGroup(list, currentIndex);
     const currentBlock =

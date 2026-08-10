@@ -108,7 +108,9 @@
   root.ATVB_SCHEMA = ATVB_SCHEMA;
 
   // ES Module 互換のために module.exports も設定する (vitest / Node.js テスト用)
+  // eslint-disable-next-line no-undef
   if (typeof module !== "undefined" && module.exports) {
+    // eslint-disable-next-line no-undef
     module.exports = ATVB_SCHEMA;
   }
 })(typeof globalThis !== "undefined" ? globalThis : window);

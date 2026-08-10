@@ -39,7 +39,7 @@
     } = deps || {};
 
     let lastSecondaryText = '';
-    let lastSecondaryTextAt = 0;
+    let lastSecondaryTextAt = 0; // eslint-disable-line no-unused-vars
     let lastSecondarySignalAt = 0;
 
     function buildRenderLogPayload(text, track, elementCount) {

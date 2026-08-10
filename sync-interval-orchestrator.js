@@ -77,8 +77,8 @@
       void initialCueRecovery;
       void getRequestedSecondaryLang;
 
-      const SAME_TRACK_UNREADABLE_RECOVERY_MISS_COUNT = 3;
-      const SAME_TRACK_UNREADABLE_SEEK_WINDOW_MS = 30000;
+      const _SAME_TRACK_UNREADABLE_RECOVERY_MISS_COUNT = 3;
+      const _SAME_TRACK_UNREADABLE_SEEK_WINDOW_MS = 30000;
 
       // ---------------------------------------------------------
       // refreshPlaybackContext
