@@ -27,6 +27,7 @@
       renderCurrentSnapshot,
       renderPanel,
       rebuildSubtitleBlocksForPanelOpen,
+      destroyOverlay,
     } = deps;
 
     const PANEL_SLOT_LAYER_STYLE_ID = "atv-panel-slot-layer-style";
@@ -183,6 +184,31 @@
         overlayHost: target.querySelector("#atv-overlay-host"),
         toggleBtn:   document.body.querySelector("#atv-toggle-btn"),
       };
+    }
+
+    // ── UI ホストの破棄 ──────────────────────────────
+    // atv-panel-host / atv-popup-host / atv-toggle-btn を含む
+    // すべての拡張UIを破棄する。content.js から移設（責務統合）。
+    function removeHost(id) {
+      const root = getTarget();
+      const el = root.querySelector(`#${id}`) ?? document.body.querySelector(`#${id}`);
+      if (el) el.remove();
+    }
+
+    function destroyFeatureUiHosts() {
+      window.ATVB?.debugPanel?.unmount?.();
+      removeHost("atv-panel-host");
+      removeHost("atv-popup-host");
+      removeHost("atv-toggle-btn");
+      destroyOverlay?.();
+      state.panelShadowRoot = null;
+      state.popupShadowRoot = null;
+      state.debugPanelRoot = null;
+    }
+
+    function destroyUiHosts() {
+      // restart 時は UI を一度全破棄し、buildUi で再生成する。
+      destroyFeatureUiHosts();
     }
 
     // applyPanelVisibility にボタン表示制御を統合。
@@ -431,6 +457,8 @@
       applyPanelState,
       loadPanelVisibility,
       watchForPlayerTabs,
+      destroyFeatureUiHosts,
+      destroyUiHosts,
     };
   }
 

@@ -890,29 +890,6 @@ function forwardContentLog(...args) {
     });
   }
 
-  function removeHost(id) {
-    const root = getTarget();
-    const el = root.querySelector(`#${id}`) ?? document.body.querySelector(`#${id}`);
-    if (el) el.remove();
-  }
-
-  function destroyFeatureUiHosts() {
-    // 字幕パネル開閉ボタンを含むすべての拡張 UI を破棄する。
-    window.ATVB?.debugPanel?.unmount?.();
-    removeHost("atv-panel-host");
-    removeHost("atv-popup-host");
-    removeHost("atv-toggle-btn");
-    destroyOverlay();
-    state.panelShadowRoot = null;
-    state.popupShadowRoot = null;
-    state.debugPanelRoot = null;
-  }
-
-  function destroyUiHosts() {
-    // restart 時は UI を一度全破棄し、buildUi で再生成する。
-    destroyFeatureUiHosts();
-    // atv-toggle-btn は destroyFeatureUiHosts で処理済みのため個別削除不要。
-  }
 
   const LANGUAGE_SETUP_NOTICE_ID = "atv-language-setup-notice";
 
@@ -2124,6 +2101,7 @@ let syncIntervalOrchestrator = null;
     renderCurrentSnapshot,
     renderPanel,
     rebuildSubtitleBlocksForPanelOpen,
+    destroyOverlay,
     onPanelClose: () => {
       // ① まず tick を止めて renderCurrentSnapshot が走らないようにする
       syncIntervalOrchestrator?.stop?.();
@@ -2306,8 +2284,8 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
         renderSecondarySubtitle,
         overlayController,
         destroyOverlay,
-        destroyUiHosts,
-        destroyFeatureUiHosts,
+        destroyUiHosts: () => panelUi?.destroyUiHosts?.(),
+        destroyFeatureUiHosts: () => panelUi?.destroyFeatureUiHosts?.(),
         applyLayout,
         clearInternalSubtitleState,
         cueController,
@@ -2785,7 +2763,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
     const requestedSettings = state.requestedContentSettings || {};
     if (!isLanguageSelectionReady(requestedSettings)) {
       state.panelVisible = false;
-      destroyUiHosts();
+      panelUi.destroyUiHosts();
       applyLayout(false);
       showLanguageSetupNotice();
       logContentSettings(
