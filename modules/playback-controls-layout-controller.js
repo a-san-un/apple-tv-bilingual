@@ -41,6 +41,72 @@
       layoutState.controlSettlingTimers = [];
     }
 
+    function resolvePanelLayoutTargets() {
+      const opaqueVideoContainer =
+        document.querySelector(".video-container.svelte-1psbnd5.is-opaque") ||
+        document.querySelector(".video-container.is-opaque") ||
+        document.querySelector(".video-container");
+
+      return {
+        vc: document.querySelector(".video-player__video-container"),
+        content: document.querySelector(".video-player__content"),
+        htmlVideo: document.querySelector("video"),
+        opaqueVideoContainer,
+        backgroundVideo: document.querySelector(".background-video"),
+      };
+    }
+
+    function applyPanelLayoutToTargets(targets, visible) {
+      const { vc, content, htmlVideo, opaqueVideoContainer, backgroundVideo } =
+        targets || {};
+
+      if (visible) {
+        if (vc) {
+          vc.style.width = "70%";
+          vc.style.maxWidth = "70%";
+          vc.style.flexShrink = "0";
+          vc.style.marginRight = "";
+        }
+        if (content) {
+          content.style.width = "";
+          content.style.maxWidth = "";
+          content.style.flexShrink = "";
+          content.style.marginRight = "";
+        }
+        if (htmlVideo) {
+          htmlVideo.style.maxWidth = "100%";
+        }
+        if (opaqueVideoContainer) {
+          opaqueVideoContainer.style.right = "30%";
+        }
+        if (backgroundVideo) {
+          backgroundVideo.style.right = "30%";
+        }
+      } else {
+        if (vc) {
+          vc.style.width = "";
+          vc.style.maxWidth = "";
+          vc.style.flexShrink = "";
+          vc.style.marginRight = "";
+        }
+        if (content) {
+          content.style.width = "";
+          content.style.maxWidth = "";
+          content.style.flexShrink = "";
+          content.style.marginRight = "";
+        }
+        if (htmlVideo) {
+          htmlVideo.style.maxWidth = "";
+        }
+        if (opaqueVideoContainer) {
+          opaqueVideoContainer.style.right = "";
+        }
+        if (backgroundVideo) {
+          backgroundVideo.style.right = "";
+        }
+      }
+    }
+
     function runAdjustPlaybackControls(runReason) {
       if (typeof adjustPlaybackControlsForPanel !== "function") return;
       if (layoutState.playbackControlsRafId) return;
@@ -133,6 +199,24 @@
       }
     }
 
+    function applyPanelLayout(isVisible, options = {}) {
+      const {
+        reason = "applyLayout",
+        retryDelays = isVisible ? [1200] : [],
+        immediate = !isVisible,
+        settlingDelays = [180, 420, 900, 1500],
+      } = options;
+
+      applyPanelLayoutToTargets(resolvePanelLayoutTargets(), !!isVisible);
+
+      onPanelVisibilityChanged(!!isVisible, {
+        reason,
+        retryDelays,
+        immediate,
+        settlingDelays,
+      });
+    }
+
     function requestPlaybackControlsAdjustment(reason = "unknown", options = {}) {
       const {
         delays = [],
@@ -173,6 +257,7 @@
     return {
       initForPanelVisible,
       onPanelVisibilityChanged,
+      applyPanelLayout,
       requestPlaybackControlsAdjustment,
       teardownPlaybackControlsUi,
     };
