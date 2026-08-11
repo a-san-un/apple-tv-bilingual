@@ -1,19 +1,16 @@
 // =============================================================
 // Apple TV Bilingual Subtitles - panel-ui.js
-// version: 1.0.6
-// Issue #32 Round 11 後半: panel host / shell 責務へ限定し、
-// shared view を正本とする現在の構成に合わせて、panel header の
-// secondary language selector と旧 secondary subtitle DOM 依存を除去。
-// Debug panel は初期 mount のみ行い、applyPanelState では再 mount しない。
-// PR3: layout / playback controls orchestration は content.js の
-// applyLayout → layout controller 側へ寄せ、ここは薄い UI 配線に保つ。
-// Fix: applyPanelVisibility に OFF 時ボタン非表示を統合し、
-//      togglePanel 内の重複ロジックを除去。
+// 役割:
+// - 右側字幕パネルの UI ホストを作る
+// - 字幕パネル開閉ボタンを作る
+// - ネイティブトグルを再生画面へ差し込む
+// - パネル表示とボタン見た目を分けて扱う
 // =============================================================
 
 (function () {
   "use strict";
 
+  // panel-ui の公開 API 一式を組み立てる
   function createPanelUi(deps) {
     const {
       state,
@@ -32,14 +29,18 @@
 
     const PANEL_SLOT_LAYER_STYLE_ID = "atv-panel-slot-layer-style";
 
+    // パネル配置用の style 要素を 1 回だけ入れる
     function ensurePanelSlotLayerStyle() {
       if (document.getElementById(PANEL_SLOT_LAYER_STYLE_ID)) return;
+
+      // panel host 用の style タグを head に追加する
       const style = document.createElement("style");
       style.id = PANEL_SLOT_LAYER_STYLE_ID;
       style.textContent = ``;
       document.head.appendChild(style);
     }
 
+    // デバッグ領域の HTML を返す
     function buildPanelDebugShellHTML() {
       return `
         <div id="debug-section" class="debug-section">
@@ -90,8 +91,11 @@
       `;
     }
 
+    // パネル本体の HTML を返す
     function buildPanelShellHTML() {
+      // ShadowRoot 内で panel.css を読むための URL を解決する
       const panelCssUrl = chrome.runtime.getURL("panel.css");
+
       return `
         <link rel="stylesheet" href="${panelCssUrl}">
         <div id="panel" class="dual-subtitles-panel" data-dual-subtitles-panel>
@@ -109,27 +113,34 @@
       `;
     }
 
+    // ヘッダーの設定ボタンにイベントを付ける
     function wirePanelHeaderActions() {
+      // panel host の ShadowRoot を参照する
       const root = state.panelShadowRoot;
       if (!root) return;
 
       root.getElementById("settings-btn")?.addEventListener("click", () => {
         try {
+          // options ページを開く依頼を background へ送る
           chrome.runtime.sendMessage({ type: "OPEN_OPTIONS_PAGE" });
         } catch (_) {}
       });
     }
 
+    // 右側字幕パネルの host を作る
     function createRightPanel() {
+      // パネルを差し込む対象ノードを取る
       const target = getTarget?.();
       if (!target) return null;
 
+      // 既存 host があれば再利用する
       let existingHost = target.querySelector("#atv-panel-host");
       if (existingHost) {
         state.panelShadowRoot = existingHost.shadowRoot || state.panelShadowRoot;
         return existingHost;
       }
 
+      // 新しい panel host を作る
       const host = document.createElement("div");
       host.id = "atv-panel-host";
       host.style.cssText = [
@@ -143,6 +154,7 @@
         "box-sizing:border-box",
       ].join(";");
 
+      // target に host を追加して ShadowRoot を初期化する
       target.appendChild(host);
       ensurePanelSlotLayerStyle();
       state.panelShadowRoot = host.attachShadow({ mode: "open" });
@@ -152,18 +164,24 @@
       return host;
     }
 
+    // debug panel を初回だけ mount する
     function createDebugPanel() {
       if (!state.panelShadowRoot) return;
+
+      // debug panel の mount 先を panel shadow root に合わせる
       state.debugPanelRoot = state.panelShadowRoot;
 
+      // debug panel モジュール本体を取る
       const debugPanel = window.ATVB?.debugPanel;
       if (!debugPanel?.mount) return;
 
+      // 必要な getter / action を渡して mount する
       debugPanel.mount(state.debugPanelRoot, {
         getFilter: getLiveDebugLogFilter,
         getLogText: getDebugLogText,
         clearLogs: clearDebugLogs,
         downloadLogs: (text, done) => {
+          // ダウンロード処理は background に委譲する
           sendToBackground({ type: "DOWNLOAD_DEBUG_LOG", text }, (res) => {
             if (typeof done === "function") {
               done({
@@ -177,97 +195,138 @@
       });
     }
 
+    // 主要 UI 要素をまとめて返す
     function getPanelUiElements() {
+      // target 配下と body 配下の UI 要素を一か所で集める
       const target = getTarget();
+
       return {
-        panelHost:   target.querySelector("#atv-panel-host"),
+        panelHost: target.querySelector("#atv-panel-host"),
         overlayHost: target.querySelector("#atv-overlay-host"),
-        toggleBtn:   document.body.querySelector("#atv-toggle-btn"),
+        toggleBtn: document.body.querySelector("#atv-toggle-btn"),
       };
     }
 
-    // ── UI ホストの破棄 ──────────────────────────────
-    // atv-panel-host / atv-popup-host / atv-toggle-btn を含む
-    // すべての拡張UIを破棄する。content.js から移設（責務統合）。
+    // 指定 id の UI host を消す
     function removeHost(id) {
+      // panel host は target 配下、toggle button は body 配下にあるので両方見る
       const root = getTarget();
       const el = root.querySelector(`#${id}`) ?? document.body.querySelector(`#${id}`);
       if (el) el.remove();
     }
 
+    // パネル系 UI をまとめて破棄する
     function destroyFeatureUiHosts() {
+      // debug panel があれば先に unmount する
       window.ATVB?.debugPanel?.unmount?.();
+
+      // 再生画面に影響する UI host を個別に消す
       removeHost("atv-panel-host");
       removeHost("atv-popup-host");
       removeHost("atv-toggle-btn");
+
+      // overlay も破棄する
       destroyOverlay?.();
+
+      // 参照していた root を null に戻す
       state.panelShadowRoot = null;
       state.popupShadowRoot = null;
       state.debugPanelRoot = null;
     }
 
+    // restart 用に UI host をまとめて破棄する
     function destroyUiHosts() {
-      // restart 時は UI を一度全破棄し、buildUi で再生成する。
+      logContent?.("字幕パネル開閉ボタン/右側字幕パネル destroyUiHosts start", {
+        hasSubtitlePanelToggleButton: Boolean(document.body.querySelector("#atv-toggle-btn")),
+        hasPanelHost: Boolean(getTarget?.().querySelector("#atv-panel-host")),
+        panelOpen: state.panelOpen,
+      });
+
       destroyFeatureUiHosts();
+
+      logContent?.("字幕パネル開閉ボタン/右側字幕パネル destroyUiHosts done", {
+        hasSubtitlePanelToggleButton: Boolean(document.body.querySelector("#atv-toggle-btn")),
+        hasPanelHost: Boolean(getTarget?.().querySelector("#atv-panel-host")),
+        panelOpen: state.panelOpen,
+      });
     }
 
-    // applyPanelVisibility にボタン表示制御を統合。
-    // show=true  → パネル表示・ボタンをパネル左端へ移動（updateToggleButton が処理）
-    // show=false → パネル非表示・ボタンも非表示（updateToggleButton が display:none を設定）
+    // 右側字幕パネルと overlay の表示だけを切り替える
     function applyPanelVisibility(show) {
+      logContent?.("右側字幕パネル applyPanelVisibility start", {
+        requestedOpen: show,
+        panelOpen: state.panelOpen,
+        hasSubtitlePanelToggleButton: Boolean(document.body.querySelector("#atv-toggle-btn")),
+      });
+
+      // 表示対象の UI 要素を取る
       const { panelHost, overlayHost } = getPanelUiElements();
 
+      // 右側字幕パネルの表示/非表示を切り替える
       if (panelHost) panelHost.style.display = show ? "" : "none";
+
+      // overlay は幅と display をパネル開閉に合わせる
       if (overlayHost) {
         overlayHost.style.width = show ? "70%" : "100%";
         overlayHost.style.display = show ? "" : "none";
       }
 
+      // ボタンは消さず、見た目だけ開閉状態に合わせる
       updateToggleButton(show);
-      // updateToggleButton が ON/OFF 両方を管理するため後書き上書き不要
 
+      logContent?.("右側字幕パネル applyPanelVisibility done", {
+        requestedOpen: show,
+        panelOpen: state.panelOpen,
+        hasPanelHost: Boolean(panelHost),
+        hasOverlayHost: Boolean(overlayHost),
+        panelHostDisplay: panelHost?.style?.display ?? null,
+        overlayHostDisplay: overlayHost?.style?.display ?? null,
+        overlayWidth: overlayHost?.style?.width ?? null,
+      });
     }
 
-    function showRightPanel() {
-      applyPanelVisibility(true);
-    }
-
-    function hideRightPanel() {
-      applyPanelVisibility(false);
-    }
-
+    // ランタイム状態を切り替えて保存する
     function togglePanel(force) {
+      // force があればそれを使い、なければ現在値を反転する
       if (typeof force === "boolean") state.panelOpen = force;
       else state.panelOpen = !state.panelOpen;
 
+      // レイアウトとパネル表示を現在状態へ反映する
       applyLayout(state.panelOpen);
       applyPanelVisibility(state.panelOpen);
 
-      // panelOpen を chrome.storage.local に保存する。
-      // panelDefaultOpen（chrome.storage.sync）には書かない。
+      // ランタイム状態だけ local 保存へ書く
       globalThis.ATVB_PANEL_VISIBILITY.persist(state.panelOpen, logContent);
 
+      // 開閉フックがあれば通知する
       if (state.panelOpen) {
         deps.onPanelOpen?.();
       } else {
         deps.onPanelClose?.();
       }
+
+      // デバッグ用に現在状態を残す
       logContent("togglePanel", { panelOpen: state.panelOpen });
     }
 
+    // 現在の字幕状態をパネルへ反映する
     function applyPanelState(reason = "unknown") {
+      // 開いているパネル向けに字幕ブロックを再計算する
       if (typeof rebuildSubtitleBlocksForPanelOpen === "function") {
         rebuildSubtitleBlocksForPanelOpen(reason);
       }
 
+      // 現在字幕の snapshot を描画する
       if (typeof renderCurrentSnapshot === "function") {
         renderCurrentSnapshot();
       }
 
+      // 履歴パネル全体を再描画する
       if (typeof renderPanel === "function") {
         renderPanel();
       }
 
+      // パネル状態をログへ残す
       if (typeof logContent === "function") {
         logContent("panel state applied", {
           reason,
@@ -285,11 +344,21 @@
       }
     }
 
-    // [UI shell: toggle button]
-    // パネル開閉ボタンを生成する。常時表示・左半円デザイン。
+    // 字幕パネル開閉ボタンを作る
     function createToggleButton() {
-      if (document.body.querySelector("#atv-toggle-btn")) return;
+      logContent?.("字幕パネル開閉ボタン create start", {
+        alreadyExists: Boolean(document.body.querySelector("#atv-toggle-btn")),
+        panelOpen: state.panelOpen,
+      });
 
+      if (document.body.querySelector("#atv-toggle-btn")) {
+        logContent?.("字幕パネル開閉ボタン create skipped: already exists", {
+          panelOpen: state.panelOpen,
+        });
+        return;
+      }
+
+      // body 直下に置く固定ボタンを作る
       const btn = document.createElement("button");
       btn.id = "atv-toggle-btn";
       btn.textContent = "›";
@@ -314,65 +383,110 @@
         "transition:right 0.3s ease, background 0.2s",
       ].join(";");
 
+      // クリックで panelOpen を切り替える
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         togglePanel();
       });
 
+      // 作ったボタンを body に追加する
       document.body.appendChild(btn);
 
-      // window resize でボタン位置をパネル左端に追従させる
-      window.addEventListener("resize", () => {
-        if (state.panelOpen) updateToggleButton(true);
-      }, { passive: true });
+      logContent?.("字幕パネル開閉ボタン create appended", {
+        existsAfterAppend: Boolean(document.body.querySelector("#atv-toggle-btn")),
+        panelOpen: state.panelOpen,
+      });
+
+      // 初期状態の矢印と位置を反映する
+      updateToggleButton(state.panelOpen);
+
+      logContent?.("字幕パネル開閉ボタン create done", {
+        panelOpen: state.panelOpen,
+        buttonRight: btn.style.right,
+        buttonTitle: btn.title,
+        buttonText: btn.textContent,
+      });
+
+      // パネル表示中だけ resize 時の位置を再計算する
+      window.addEventListener(
+        "resize",
+        () => {
+          if (state.panelOpen) updateToggleButton(true);
+        },
+        { passive: true }
+      );
     }
 
-    // パネルの開閉状態に合わせてトグルボタンの位置・テキストを更新する。
-    // 表示/非表示の制御は applyPanelVisibility が一元管理する。
+    // ボタンの矢印と位置だけを更新する
     function updateToggleButton(isOpen) {
+      // body 上の toggle button を取る
       const btn = document.body.querySelector("#atv-toggle-btn");
+      if (!btn) {
+        logContent?.("字幕パネル開閉ボタン update skipped: button missing", {
+          requestedOpen: isOpen,
+          panelOpen: state.panelOpen,
+        });
+        return;
+      }
 
-      if (!btn) return;
       if (isOpen) {
+        // 開いているときは panel host 幅を見て左端へ追従させる
         const panelHost = getTarget()?.querySelector("#atv-panel-host");
         const panelWidthPx = panelHost
           ? panelHost.getBoundingClientRect().width
           : 0;
+
         btn.textContent = "‹";
         btn.title = "字幕パネルを閉じる";
         btn.style.right = panelWidthPx + "px";
         btn.style.display = "";
       } else {
+        // 閉じているときは右端へ戻して開く向きにする
         btn.textContent = "›";
         btn.title = "字幕パネルを開く";
         btn.style.right = "0px";
-        btn.style.display = "none";  // ← OFF 時は非表示に統一
+        btn.style.display = "";
       }
+
+      logContent?.("字幕パネル開閉ボタン update done", {
+        requestedOpen: isOpen,
+        panelOpen: state.panelOpen,
+        buttonRight: btn.style.right,
+        buttonTitle: btn.title,
+        buttonText: btn.textContent,
+        buttonDisplay: btn.style.display,
+      });
     }
 
+    // panelOpen の初期値を local から読む
     function loadPanelVisibility() {
-      // panelDefaultOpen 設定値を初期値として ATVB_PANEL_VISIBILITY.load に委譲する。
-      // local に panelOpen が未保存の場合は panelDefaultOpen の値が初期値になる。
+      // sync 設定の panelDefaultOpen は「初期値」としてだけ使う
       const panelDefaultOpenSetting = state.contentSettings?.panelDefaultOpen !== false;
+
+      // local にランタイム保存値があればそちらを優先して読む
       return globalThis.ATVB_PANEL_VISIBILITY.load(panelDefaultOpenSetting);
     }
 
-    // ── ネイティブUIへのトグル注入 ──────────────────────────────
+    // 再生画面のネイティブタブ横へ ON/OFF トグルを差し込む
     function injectNativeToggle() {
-      if (document.getElementById('atvb-native-toggle')) return;
+      if (document.getElementById("atvb-native-toggle")) return;
 
+      // Apple TV+ の Up Next タブを差し込み位置として使う
       const upNextBtn = document.querySelector(
         '[data-testid="uts.col.PlayerTabUpNext-trigger"]'
       );
       if (!upNextBtn) return;
 
-      const wrapper = document.createElement('li');
-      wrapper.style.cssText = 'display:flex;align-items:center;margin-left:14px;list-style:none';
+      // タブ列へ入れる li ラッパーを作る
+      const wrapper = document.createElement("li");
+      wrapper.style.cssText =
+        "display:flex;align-items:center;margin-left:14px;list-style:none";
 
-      const label = document.createElement('label');
-      label.id = 'atvb-native-toggle';
-      label.title = '字幕拡張 ON/OFF';
-      label.style.cssText = 'display:inline-flex;align-items:center;cursor:pointer';
+      // ネイティブトグル本体を作る
+      const label = document.createElement("label");
+      label.id = "atvb-native-toggle";
+      label.title = "字幕拡張 ON/OFF";
+      label.style.cssText = "display:inline-flex;align-items:center;cursor:pointer";
       label.innerHTML = `
         <input type="checkbox" style="display:none">
         <span id="atvb-native-slider" style="
@@ -389,34 +503,39 @@
         </span>
       `;
 
+      // 内部の checkbox を後続処理で使う
       const checkbox = label.querySelector('input[type="checkbox"]');
 
-      // storage から extensionEnabled を読んで初期状態を反映
-      chrome.storage.sync.get('extensionEnabled', ({ extensionEnabled }) => {
+      // sync に保存された extensionEnabled を初期表示へ反映する
+      chrome.storage.sync.get("extensionEnabled", ({ extensionEnabled }) => {
         const isOn = extensionEnabled === true;
-        const sl = label.querySelector('#atvb-native-slider');
-        const kn = sl.querySelector('span');
-        checkbox.checked    = isOn;
-        sl.style.background = isOn ? '#00aaff' : 'rgba(255,255,255,0.25)';
-        kn.style.left       = isOn ? '18px' : '2px';
+
+        // 見た目更新用に slider と knob を取る
+        const sl = label.querySelector("#atvb-native-slider");
+        const kn = sl.querySelector("span");
+
+        checkbox.checked = isOn;
+        sl.style.background = isOn ? "#00aaff" : "rgba(255,255,255,0.25)";
+        kn.style.left = isOn ? "18px" : "2px";
       });
 
-      checkbox.addEventListener('change', () => {
+      // ユーザー操作でネイティブトグル状態を保存する
+      checkbox.addEventListener("change", () => {
         const on = checkbox.checked;
-        const slider = label.querySelector('#atvb-native-slider');
-        const knob = slider.querySelector('span');
-        slider.style.background = on ? '#00aaff' : 'rgba(255,255,255,0.25)';
-        knob.style.left = on ? '18px' : '2px';
 
-        // ★ OFF 時：SETTINGS_CHANGED の応答を待たず即座にパネルを隠す
-        if (!on) {
-          hideRightPanel();
-        }
+        // まずトグル見た目をその場で更新する
+        const slider = label.querySelector("#atvb-native-slider");
+        const knob = slider.querySelector("span");
+        slider.style.background = on ? "#00aaff" : "rgba(255,255,255,0.25)";
+        knob.style.left = on ? "18px" : "2px";
 
-        // extensionEnabled を storage に書いて SETTINGS_CHANGED を content.js に届ける
+        // sync の既存設定を読み、extensionEnabled だけ差し替える
         chrome.storage.sync.get(null, (stored) => {
           const next = { ...stored, extensionEnabled: on };
+
+          // 更新後の settings を sync へ保存する
           chrome.storage.sync.set(next, () => {
+            // content 側へ設定反映メッセージを送る
             chrome.runtime.sendMessage({
               type: "APPLY_SETTINGS_TO_APPLE_TV",
               reason: "NATIVE_TOGGLE",
@@ -426,32 +545,38 @@
         });
       });
 
+      // 作ったトグルをタブ列へ差し込む
       wrapper.appendChild(label);
-      upNextBtn.closest('li').after(wrapper);
-      logContent('injectNativeToggle: inserted');
+      upNextBtn.closest("li").after(wrapper);
+
+      // 注入完了をログへ残す
+      logContent("injectNativeToggle: inserted");
     }
 
+    // 再生タブ出現を監視してネイティブトグルを差し込む
     function watchForPlayerTabs() {
+      // すでにタブがあれば即注入する
       if (document.querySelector('[data-testid="uts.col.PlayerTabUpNext-trigger"]')) {
         injectNativeToggle();
         return;
       }
 
+      // タブがまだ無ければ DOM 変化を監視して待つ
       const obs = new MutationObserver(() => {
         if (document.querySelector('[data-testid="uts.col.PlayerTabUpNext-trigger"]')) {
           injectNativeToggle();
           obs.disconnect();
         }
       });
+
       obs.observe(document.body, { childList: true, subtree: true });
     }
 
+    // 公開する panel-ui API
     return {
       createRightPanel,
       createDebugPanel,
       createToggleButton,
-      showRightPanel,
-      hideRightPanel,
       togglePanel,
       applyPanelVisibility,
       applyPanelState,
@@ -462,6 +587,7 @@
     };
   }
 
+  // panelUi ファクトリを公開する
   window.ATVB = window.ATVB || {};
   window.ATVB.panelUi = { createPanelUi };
 })();

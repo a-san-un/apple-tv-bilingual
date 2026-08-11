@@ -832,65 +832,6 @@ function forwardContentLog(...args) {
     });
   }
 
-
-  function _showRightPanel() {
-    if (!state.panelOpen) {
-      panelUi.togglePanel(true);
-      return;
-    }
-    applyLayout(true);
-    const panelHost = getTarget().querySelector("#atv-panel-host");
-    const overlayHost =
-      getTarget().querySelector("#atv-overlay-host") ??
-      document.querySelector("#atv-overlay-host");
-    if (panelHost) panelHost.style.display = "";
-    if (overlayHost) {
-      overlayHost.style.width = "70%";
-      overlayHost.style.display = ""; 
-    }
-  }
-
-  function _hideRightPanel() {
-    if (state.panelOpen) {
-      panelUi.togglePanel(false);
-      return;
-    }
-    applyLayout(false);
-    const panelHost = getTarget().querySelector("#atv-panel-host");
-    const overlayHost =
-      getTarget().querySelector("#atv-overlay-host") ??
-      document.querySelector("#atv-overlay-host");
-    if (panelHost) panelHost.style.display = "none";
-    if (overlayHost) {
-      overlayHost.style.width = "100%";
-    }
-  }
-
-  function _pinRightPanel() {}
-
-  function _unpinRightPanel() {}
-
-  function _applySettingsToUI(settings, options = {}) {
-    const shouldSyncPanelVisibility = options.syncPanelVisibility !== false;
-
-    if (shouldSyncPanelVisibility) {
-      const panelDefaultOpenEnabled = settings.panelDefaultOpen !== false;
-      // state.panelOpen はランタイムUI状態のため、設定変更で上書きしない。
-      // panelDefaultOpen（設定値）に基づきパネルホストの表示/非表示だけを UI に反映する。
-      panelUi.applyPanelVisibility(panelDefaultOpenEnabled);
-    }
-
-    logContent("Applied settings to UI", {
-      panelDefaultOpen: settings.panelDefaultOpen,
-      playWordAudio: settings.playWordAudio,
-      enableAiTooltip: settings.enableAiTooltip,
-      preferredAiProvider: settings.preferredAiProvider,
-      syncPanelVisibility: shouldSyncPanelVisibility,
-      panelOpen: state.panelOpen,
-    });
-  }
-
-
   const LANGUAGE_SETUP_NOTICE_ID = "atv-language-setup-notice";
 
   function isLanguageSelectionReady(settings = {}) {
@@ -2733,10 +2674,13 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
   // 未設定時は notice 表示と panel close のみを行い、通常の track attach / UI build は進めない。
   // track 選択・panelOpen 復元・UI 構築をこの経路でまとめて行う。
   async function startBilingual(options = {}) {
+    // 拡張 OFF 中は再生画面の UI 構築を進めない
     if (state.contentSettings?.extensionEnabled === false) {
       logContent("startBilingual skipped: disabled");
       return;
     }
+
+    // 起動時点の panelOpen / panelDefaultOpen / keepPanelOpen をログへ残す
     logContent("startBilingual trace", {
       panelOpen: state.panelOpen,
       keepPanelOpen:
@@ -2746,8 +2690,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       requestedContentSettings: {
         primaryLang: state.requestedContentSettings?.primaryLang || "",
         secondaryLang: state.requestedContentSettings?.secondaryLang || "",
-        panelDefaultOpen:
-          state.requestedContentSettings?.panelDefaultOpen ?? null,
+        panelDefaultOpen: state.requestedContentSettings?.panelDefaultOpen ?? null,
       },
       contentSettings: {
         primaryLang: state.contentSettings?.primaryLang || "",
@@ -2756,11 +2699,16 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       },
       requestedSecondaryLang: state.requestedSecondaryLang || "",
     });
+
     // eslint-disable-next-line no-console
     console.trace("startBilingual trace");
+
+    // video が無ければここでは初期化できない
     if (!state.video) return;
 
     const requestedSettings = state.requestedContentSettings || {};
+
+    // 言語設定が未完了なら panelOpen=false に寄せて UI を閉じる
     if (!isLanguageSelectionReady(requestedSettings)) {
       state.panelOpen = false;
       panelUi.destroyUiHosts();
@@ -2776,8 +2724,10 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       return;
     }
 
+    // 言語設定が揃っていれば setup notice は閉じる
     hideLanguageSetupNotice();
 
+    // 再生画面がまだ未準備なら後続 build を進めない
     if (!isPlaybackPageReady()) {
       logContent("startBilingual skipped: playback not ready", {
         ...getPlaybackContextLogPayload(),
@@ -2785,6 +2735,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       return;
     }
 
+    // 今回の言語入力値を resolver 前の状態としてログへ残す
     logContentSubtitle("startBilingual language inputs", {
       requestedContentSettings: {
         primaryLang: requestedSettings.primaryLang || "",
@@ -2799,11 +2750,10 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       requestedSecondaryLang: state.requestedSecondaryLang || "",
     });
 
+    // 履歴側の contentKey を現在の playback に合わせる
     syncHistoryContextWithPlayback("startBilingual");
 
-    // [debug: textTracks snapshot] track 選定直前の video.textTracks 一覧をまとめてログする。
-    // ko / ko-KR / kor / Korean などの表記ゆれ切り分け用に、
-    // language/label/kind/mode/cues を resolver 呼び出し前の「生の状態」として残す。
+    // resolver 前の textTracks 生状態をログする
     try {
       const rawTracks = Array.from(state.video?.textTracks || []);
       logContentSubtitle("textTracks snapshot before track selection", {
@@ -2833,6 +2783,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       });
     }
 
+    // 先に Apple TV 側のネイティブ字幕選択を同期する
     await window.ATVB?.resolver?.syncNativeSubtitleSelectionViaMenu?.({
       primaryLang: state.contentSettings.primaryLang || "",
       secondaryLang: state.contentSettings.secondaryLang || "",
@@ -2842,8 +2793,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
         "",
     });
 
-    // secondary の同期完了を待ってから ready フェーズへ進む。
-    // 初回自動起動で secondary 未確定のまま UI 初期化が完了するのを防ぐ。
+    // その後で primary / secondary track を確定する
     await selectPrimaryAndSecondaryTracks(
       state.video,
       state.contentSettings.primaryLang,
@@ -2851,8 +2801,13 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       "startBilingual",
     );
 
-    logContentSubtitle("secondary resolver snapshot", buildSecondaryResolverSnapshot("startBilingual"));
+    // resolver 結果をログへ残す
+    logContentSubtitle(
+      "secondary resolver snapshot",
+      buildSecondaryResolverSnapshot("startBilingual"),
+    );
 
+    // 選択できた track の詳細を確認用に残す
     logContentSubtitle("Selected tracks detail", {
       requestedPrimaryLang: state.contentSettings.primaryLang,
       requestedSecondaryLang: state.contentSettings.secondaryLang,
@@ -2885,12 +2840,18 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
         : null,
     });
 
+    // panelDefaultOpen は通常起動時の panelOpen 初期値としてだけ使う
     const panelDefaultOpenSetting = state.contentSettings.panelDefaultOpen !== false;
 
-    // panelOpen が確定してから UI 構築を実行するヘルパー。
-    function _applyPanelOpenAndBuild(panelOpen) {
+    // panelOpen を確定してから UI をまとめて build する
+    function _applyPanelVisibleAndBuild(panelOpen) {
       state.panelOpen = panelOpen;
+      logContent("字幕パネル開閉ボタン/右側字幕パネル build start", {
+        panelOpen,
+        extensionEnabled: state.contentSettings?.extensionEnabled,
+      });
 
+      // 確定した panelOpen をログへ残す
       logContent("startBilingual panelOpen applied", {
         panelOpen: state.panelOpen,
         panelDefaultOpenSetting: state.contentSettings.panelDefaultOpen,
@@ -2898,31 +2859,40 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
         requestedSecondaryLang: state.requestedSecondaryLang || "",
       });
 
+      // panelOpen に合わせて layout controller を初期化する
       layoutController.initForPanelOpen(state.panelOpen);
+      logContent("字幕パネル開閉ボタン/右側字幕パネル build done", {
+        panelOpen: state.panelOpen,
+        hasSubtitlePanelToggleButton: Boolean(document.body.querySelector("#atv-toggle-btn")),
+        hasPanelHost: Boolean(document.querySelector("#atv-panel-host")),
+      });
 
+      // 再生画面で使う UI を順番に build する
       createOverlay();
       panelUi.createToggleButton();
       panelUi.createRightPanel();
       panelUi.watchForPlayerTabs();
       createPopupHost();
       createDebugPanel();
+
+      // build 後に panelOpen を各 UI へ反映する
       applyLayout(state.panelOpen);
       renderCurrentSnapshot();
       renderPanel();
-
       panelUi.applyPanelVisibility(state.panelOpen);
     }
 
+    // restart 時は keepPanelOpen を優先する
     if (typeof options.keepPanelOpen === "boolean") {
-      // 再初期化パスなど keepPanelOpen が明示的に渡された場合はそれを使う。
-      _applyPanelOpenAndBuild(options.keepPanelOpen);
+      _applyPanelVisibleAndBuild(options.keepPanelOpen);
     } else {
-      // 通常起動: chrome.storage.local の panelOpen を復元してから UI を構築する。
+      // 通常起動時だけ panelDefaultOpen を初期値として local の保存値を復元する
       globalThis.ATVB_PANEL_VISIBILITY.load(panelDefaultOpenSetting).then((restored) => {
-        _applyPanelOpenAndBuild(restored);
+        _applyPanelVisibleAndBuild(restored);
       });
     }
 
+    // secondary track があれば初回表示を出す
     if (state.secondaryTrack) {
       renderSecondarySubtitle(
         getCurrentCueText(state.secondaryTrack),
@@ -2930,12 +2900,17 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       );
     }
 
+    // 起動直後の secondary-only 許容時間をセットする
     state.allowSecondaryOnlyUntil = Date.now() + 3000;
+
+    // パネル内の描画状態を ready として反映する
     panelUi.applyPanelState("startBilingual_ready");
 
+    // attach 直後の補助処理を起動する
     initialCueRecovery?.schedule?.("attach");
     scheduleControlSettlingBurst("startBilingual");
 
+    // 起動完了ログを残す
     logContentSubtitle("startBilingual ready", {
       injectedInto: state.dialogEl ? "dialog.playback-view" : "document.body",
       contentKey: historyStore.getCurrentKey(),
@@ -2948,7 +2923,9 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       secondaryTrackLabel: state.secondaryTrack?.label || "",
       ejdictLoaded: !!state.ejdictMap,
     });
-    ensureSecondaryTrackSyncInterval(); 
+
+    // secondary track の同期監視を有効化する
+    ensureSecondaryTrackSyncInterval();
   }
 
   let lastObservedUrl = location.href;

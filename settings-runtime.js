@@ -37,7 +37,6 @@
       cueController,
       renderSecondarySubtitle,
       syncIntervalOrchestrator,
-      panelUi,
     } = deps;
 
     let initialAutoStartCleanup = null;
@@ -630,8 +629,20 @@
               requestedExtensionEnabled: state.requestedContentSettings.extensionEnabled,
             });
 
-            panelUi?.hideRightPanel?.();
+            // ここに追加 ↓
+            logContentSettings("ネイティブトグル OFF apply start", {
+              triggerReason,
+              panelOpen: state.panelOpen,
+              extensionEnabled: state.contentSettings.extensionEnabled,
+            });
+
             detachForDisabled();
+            logContentSettings("ネイティブトグル OFF apply done", {
+              triggerReason,
+              panelOpen: state.panelOpen,
+              extensionEnabled: state.contentSettings.extensionEnabled,
+            });
+
             syncIntervalOrchestrator?.stop?.();
             cleanupInitialAutoStartWatch();
             state.booted = false;
@@ -643,6 +654,12 @@
             state.contentSettings.secondaryLang,
             triggerReason,
           );
+          // ここに追加 ↓
+          logContentSettings("ネイティブトグル ON restart begin", {
+            triggerReason,
+            panelOpen: state.panelOpen,
+            extensionEnabled: state.contentSettings.extensionEnabled,
+          });
 
           restartBilingual(
             {

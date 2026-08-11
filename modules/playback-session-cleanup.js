@@ -2,18 +2,23 @@
 // Apple TV+ Bilingual Subtitles - modules/playback-session-cleanup.js
 //
 // 役割:
-// - 再生セッションに紐づく一時的な UI 状態だけをクリアする。
-// - popup / options で保存した設定値（primaryLang / secondaryLang / panelDefaultOpen など）は保持する。
+// - 再生セッションに紐づく一時的な UI / observer / subtitle state を片付ける。
+// - popup / options で保存した設定値
+//   （primaryLang / secondaryLang / panelDefaultOpen / extensionEnabled など）は保持する。
+// - restart 用 cleanup と extensionEnabled=false 用 cleanup を分け、
+//   再起動時は再生成前提の撤収、OFF 時は再生画面の拡張 UI 完全破棄を担当する。
 //
-// clearInternalSubtitleState の reason 使い分け:
-//   "prepareForRestart" → 設定変更による再起動。パネルDOMはフラッシュ防止のため保持する。
-//   "videoClose"        → 動画クローズ / セッション完全終了。パネルDOMも含めて全消去する。
+// clearInternalSubtitleState の preserveSecondaryDom 使い分け:
+//   true  -> restart 前提。パネルDOMのフラッシュを避けるため secondary DOM を残す。
+//   false -> 動画クローズ / セッション完全終了。パネルDOMも含めて残留表示を消す。
 // =============================================================
 (() => {
   "use strict";
 
+  // モジュール公開先の ATVB 名前空間を確保する。
   const root = (window.ATVB = window.ATVB || {});
 
+  // 再生セッション終了・再起動・無効化で使う cleanup 関数群を生成する。
   function createPlaybackSessionCleanup({
     state,
     logContent,
@@ -27,7 +32,6 @@
       overlayController,
       destroyOverlay,
       destroyUiHosts,
-      destroyFeatureUiHosts,
       applyLayout,
       clearInternalSubtitleState,
       cueController,
@@ -35,7 +39,7 @@
     } = teardownDeps;
 
     // secondary track の参照と表示だけを消す。
-    // contentSettings や requested settings には触らない。
+    // 設定値や requested settings には触らない。
     function clearSecondaryTrackState() {
       state.secondaryTrack = null;
       state.lastSecondarySyncContext = null;
@@ -48,14 +52,9 @@
       renderSecondarySubtitle("", null);
     }
 
-    // 再生中の overlay / panel / observer を停止し、
-    // 現在の playback session にだけ紐づく表示資産を破棄する。
-    //
-    // primary: handoffPrimarySubtitleToNative() でネイティブ字幕に制御を返す。
-    //   unbind 後に mode を直接書き込む二重制御は不要。
-    // secondary: restoreMode: false で unbind のみ。
-    //   teardown 時は secondary 字幕を消すことが目的なので
-    //   unbindSecondarySubtitleTrack 内で secondaryTrackBound = null になれば十分。
+    // restart 前に、現在の playback session に紐づく UI / observer をいったん撤収する。
+    // 直後に startBilingual() で再生成する前提なので、字幕制御はネイティブへ戻すが
+    // secondary track の mode 復元までは行わない。
     function teardownForRestart() {
       stopPlaybackControlLayoutObservers?.();
       layoutController?.teardownPlaybackControlsUi?.();
@@ -72,6 +71,8 @@
       cueController?.unbindSecondarySubtitleTrack?.({ restoreMode: false });
     }
 
+    // extensionEnabled=false 用の cleanup。
+    // 再生画面に出していた拡張 UI を完全に外し、secondary subtitle の mode も元へ戻す。
     function detachForDisabled() {
       stopPlaybackControlLayoutObservers?.();
       layoutController?.teardownPlaybackControlsUi?.();
@@ -80,7 +81,7 @@
       clearSecondaryTrackState();
       overlayController?.clearOverlayState?.();
       destroyOverlay?.();
-      destroyFeatureUiHosts?.();
+      destroyUiHosts?.();
 
       runtimeObservers?.stopAll?.();
 
@@ -88,15 +89,11 @@
       cueController?.unbindSecondarySubtitleTrack?.({ restoreMode: true });
     }
 
-    // 字幕履歴や track 参照など、再生セッション由来の一時 state を初期化する。
-    // ユーザー設定（contentSettings / requestedContentSettings / storage）は保持する。
-    //
-    // reason="prepareForRestart": 設定変更による再起動。
-    //   パネルDOMはフラッシュ防止のため clearInternalSubtitleState 側でスキップされる。
-    //   startBilingual() が直後に呼ばれて新しい字幕で上書きされることが前提。
+    // 再起動前に、再生セッション由来の一時 state だけを初期化する。
+    // 保存済み設定は保持し、直後の startBilingual() で新しい字幕状態を積み直す前提で使う。
     function prepareForRestart() {
       clearInternalSubtitleState?.({ preserveSecondaryDom: true });
-      // ... state リセット（以下変更なし）
+
       state.primaryTrack = null;
       state.secondaryTrack = null;
       state.currentSubtitleBlock = null;
@@ -109,12 +106,8 @@
       state.subtitleCurrentIndex = -1;
     }
 
-    // 動画 close / 再生終了 / 再初期化前に、
-    // playback session にだけ紐づく UI 状態をまとめてクリアする。
-    //
-    // prepareForRestart() は reason="prepareForRestart" でパネルDOMを保持するが、
-    // 動画クローズ時はその後 startBilingual が来ないため、
-    // 直後に reason="videoClose" で明示的にパネルDOMも消去する。
+    // 動画クローズや再生終了時に、playback session 由来の UI と一時 state をまとめて消す。
+    // 設定値は保持したまま、次の playback 開始時にクリーンな状態から再初期化できるようにする。
     function clearPlaybackSessionUiState(reason = "playback_session_cleared") {
       logContent?.(reason, {
         previousVideoSrcKey: state.lastVideoSrcKey,
@@ -130,10 +123,9 @@
       teardownForRestart();
       prepareForRestart();
 
-      // prepareForRestart はパネルDOMをスキップするが、
-      // 動画クローズ後は次の startBilingual が来ないため、
-      // パネルとオーバーレイの残留字幕を確実に消去する。
-    clearInternalSubtitleState?.({ preserveSecondaryDom: false });
+      // prepareForRestart は secondary DOM を残すので、
+      // 動画クローズ後はここで残留字幕を明示的に消す。
+      clearInternalSubtitleState?.({ preserveSecondaryDom: false });
 
       state.video = null;
       state.dialogEl = null;
@@ -147,6 +139,8 @@
       // - chrome.storage.sync は触らない
     }
 
+    // playback target が一時的に見つからないときに、残っていた UI を外して layout を戻す。
+    // URL 遷移や dialog 差し替え直後の中間状態で使う。
     function handleNavigationTargetMissing({
       reason = "navigation_target_missing",
       url = "",
@@ -162,7 +156,7 @@
       });
     }
 
-    // Apple TV の playback dialog 内の close button クリックだけを検知する。
+    // Apple TV の playback dialog 内の close button クリックかどうかだけを判定する。
     // 他の button クリックでは cleanup しない。
     function isPlaybackCloseButtonClick(event) {
       const path =
@@ -186,8 +180,8 @@
       return Boolean(closeButton && playbackDialog);
     }
 
-    // close button 監視は 1 回だけ登録する。
-    // close 時は設定を残したまま playback UI state のみクリアする。
+    // close button 監視を 1 回だけ登録する。
+    // close 時は設定を残しつつ playback session 由来 state だけを消す。
     function ensureCloseClickListener() {
       if (state.playbackCloseClickHandler) return;
 
@@ -199,6 +193,7 @@
       document.addEventListener("click", state.playbackCloseClickHandler, true);
     }
 
+    // settings-runtime や他モジュールから使う cleanup 関数群を返す。
     return {
       clearSecondaryTrackState,
       teardownForRestart,
@@ -211,5 +206,6 @@
     };
   }
 
+  // cleanup factory を ATVB 名前空間へ公開する。
   root.createPlaybackSessionCleanup = createPlaybackSessionCleanup;
 })();
