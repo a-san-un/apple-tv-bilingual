@@ -6,12 +6,12 @@
 // 依存: modules/settings-schema.js (globalThis.ATVB_SCHEMA)
 //
 // 設計原則:
-//   - 永続設定 (sync): enabled, primaryLang, secondaryLang,
-//                      showSidebar, playWordAudio, enableAiTooltip,
+//   - 永続設定 (sync): extensionEnabled, primaryLang, secondaryLang,
+//                      panelDefaultOpen, playWordAudio, enableAiTooltip,
 //                      preferredAiProvider
 //   - 永続設定 (local): googleAiStudioApiKey, groqApiKey
-//   - ランタイムUI状態 (保存しない): panelVisible など
-//   - showSidebar は永続設定。panelVisible と混同しないこと。
+//   - ランタイムUI状態 (保存しない): panelOpen など
+//   - panelDefaultOpen は永続設定。panelOpen と混同しないこと。
 // =============================================================
 
 (function (root) {
@@ -88,17 +88,17 @@
   /**
    * sync 設定を保存する。
    * 渡した generalSettings オブジェクトのキーだけを storage に書き込む。
-   * enabled は呼び出し元が「今の enabled 値」を含めて渡す責任を持つ。
-   * showSidebar は永続設定なのでここで保存する。
-   * panelVisible は渡してはいけない（ランタイムUI状態は保存しない）。
+   * extensionEnabled は呼び出し元が「今の extensionEnabled 値」を含めて渡す責任を持つ。
+   * panelDefaultOpen は永続設定なのでここで保存する。
+   * panelOpen は渡してはいけない（ランタイムUI状態は保存しない）。
    *
    * @param {Object} generalSettings - SETTINGS_KEYS_SYNC のキーを含むオブジェクト
    */
   function saveSyncSettings(generalSettings) {
     return new Promise((resolve, reject) => {
-      // panelVisible が誤って混入した場合に除去（防御）
+      // panelOpen が誤って混入した場合に除去（防御）
       const safeSettings = { ...generalSettings };
-      delete safeSettings.panelVisible;
+      delete safeSettings.panelOpen;
 
       chrome.storage.sync.set(safeSettings, () => {
         if (chrome.runtime.lastError) {
@@ -135,7 +135,7 @@
    */
   function saveAllSettings(generalSettings, localSettings) {
     const safeGeneral = { ...generalSettings };
-    delete safeGeneral.panelVisible;
+    delete safeGeneral.panelOpen;
 
     return Promise.all([
       saveSyncSettings(safeGeneral),
@@ -144,28 +144,28 @@
   }
 
   /**
-   * enabled だけを sync から読み込む（popup.js の applySettings で使う）。
+   * extensionEnabled だけを sync から読み込む（popup.js の applySettings で使う）。
    * @returns {Promise<boolean>}
    */
   function loadEnabledFlag() {
     return new Promise((resolve, reject) => {
-      chrome.storage.sync.get(["enabled"], (result) => {
+      chrome.storage.sync.get(["extensionEnabled"], (result) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
         }
-        resolve(schema.normalizeEnabled(result.enabled));
+        resolve(schema.normalizeExtensionEnabled(result.extensionEnabled));
       });
     });
   }
 
   /**
-   * enabled だけを sync に保存する。
-   * @param {boolean} enabled
+   * extensionEnabled だけを sync に保存する。
+   * @param {boolean} extensionEnabled
    */
-  function saveEnabledFlag(enabled) {
+  function saveEnabledFlag(extensionEnabled) {
     return new Promise((resolve, reject) => {
-      chrome.storage.sync.set({ enabled: enabled === true }, () => {
+      chrome.storage.sync.set({ extensionEnabled: extensionEnabled === true }, () => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;

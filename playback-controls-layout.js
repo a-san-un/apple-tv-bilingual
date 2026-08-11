@@ -10,7 +10,7 @@
     autoSubsNoteSelector: ".video-player__auto-subs-note",
     skipOverlaySelector:
       ".skip-overlay__button-container, .skip-overlay__controls-container",
-    footerSelector: ".video-player__footer.scrubbing-enabled",
+    footerSelector: ".video-player__footer.scrubbing-extensionEnabled",
     footerFallbackSelector: ".video-player__footer",
     unifiedSelector: ".unified-controls",
     volumeSelector: "amp-volume-control-unified",

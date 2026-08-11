@@ -1266,8 +1266,8 @@
 
     // primary cue change を基準に full rebuild を行い、必要なら 1 回だけ nearby current / hold view を優先する。
     function onPrimaryCueChange() {
-      // ★ enabled チェック
-      if (state?.contentSettings?.enabled === false) return;
+      // ★ extensionEnabled チェック
+      if (state?.contentSettings?.extensionEnabled === false) return;
       const currentTime = getCurrentTime();
 
       const primaryTrack = getBoundPrimaryTrack();

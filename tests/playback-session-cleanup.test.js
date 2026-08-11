@@ -32,7 +32,7 @@ function createState(overrides = {}) {
     primaryTrack: { language: "en" },
     currentSubtitleBlock: { text: "hello" },
     subtitleBlockMeta: { index: 1 },
-    lastPanelRenderSnapshot: { panelVisible: true },
+    lastPanelRenderSnapshot: { panelOpen: true },
     subtitleHistory: [{ id: 1 }],
     panelPastBlocks: [{ id: "past" }],
     subtitleBlocks: [{ id: "current" }],
@@ -45,12 +45,12 @@ function createState(overrides = {}) {
     contentSettings: {
       primaryLang: "en",
       secondaryLang: "ja",
-      showSidebar: true,
+      panelDefaultOpen: true,
     },
     requestedContentSettings: {
       primaryLang: "en",
       secondaryLang: "ja",
-      showSidebar: true,
+      panelDefaultOpen: true,
     },
     requestedSecondaryLang: "ja",
     ...overrides,
@@ -215,12 +215,12 @@ describe("playback-session-cleanup", () => {
     expect(state.contentSettings).toEqual({
       primaryLang: "en",
       secondaryLang: "ja",
-      showSidebar: true,
+      panelDefaultOpen: true,
     });
     expect(state.requestedContentSettings).toEqual({
       primaryLang: "en",
       secondaryLang: "ja",
-      showSidebar: true,
+      panelDefaultOpen: true,
     });
 
     expect(logContent).toHaveBeenCalledWith(
@@ -231,7 +231,7 @@ describe("playback-session-cleanup", () => {
         preservedSettings: expect.objectContaining({
           primaryLang: "en",
           secondaryLang: "ja",
-          showSidebar: true,
+          panelDefaultOpen: true,
           requestedSecondaryLang: "ja",
         }),
       }),

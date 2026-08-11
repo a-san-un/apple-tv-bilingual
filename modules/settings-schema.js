@@ -15,10 +15,10 @@
   // 設定キー定義
   // -------------------------------------------------------
   const SETTINGS_KEYS_SYNC = Object.freeze([
-    "enabled",
+    "extensionEnabled",
     "primaryLang",
     "secondaryLang",
-    "showSidebar",
+    "panelDefaultOpen",
     "playWordAudio",
     "enableAiTooltip",
     "preferredAiProvider",
@@ -32,13 +32,13 @@
   // -------------------------------------------------------
   // デフォルト値の正本 (全ファイル共通)
   // enableAiTooltip は false に統一 (options.js の true を修正)
-  // enabled は storage に保存されるが、未保存時は false
+  // extensionEnabled は storage に保存されるが、未保存時は false
   // -------------------------------------------------------
   const DEFAULT_SYNC_SETTINGS = Object.freeze({
-    enabled: false,
+    extensionEnabled: false,
     primaryLang: "en",
     secondaryLang: "",
-    showSidebar: true,
+    panelDefaultOpen: true,
     playWordAudio: true,
     enableAiTooltip: false,
     preferredAiProvider: "auto",
@@ -53,13 +53,13 @@
   // 正規化ルール
   // -------------------------------------------------------
 
-  // enabled: storage 上の値が厳密に true のときだけ true とみなす
-  function normalizeEnabled(value) {
+  // extensionEnabled: storage 上の値が厳密に true のときだけ true とみなす
+  function normalizeExtensionEnabled(value) {
     return value === true;
   }
 
-  // showSidebar: undefined / null のときは true (デフォルト) 扱い
-  function normalizeShowSidebar(value) {
+  // panelDefaultOpen: undefined / null のときは true (デフォルト) 扱い
+  function normalizePanelDefaultOpen(value) {
     return value !== false;
   }
 
@@ -75,12 +75,12 @@
   }
 
   // sync 設定を正規化してマージする
-  // stored の値を DEFAULT_SYNC_SETTINGS で補完し、enabled / showSidebar を正規化する
+  // stored の値を DEFAULT_SYNC_SETTINGS で補完し、extensionEnabled / panelDefaultOpen を正規化する
   function mergeSyncSettings(stored) {
     const merged = { ...DEFAULT_SYNC_SETTINGS, ...(stored || {}) };
-    merged.enabled = normalizeEnabled(merged.enabled);
-    // showSidebar は永続設定として保存される (panelVisible とは別)
-    merged.showSidebar = normalizeShowSidebar(merged.showSidebar);
+    merged.extensionEnabled = normalizeExtensionEnabled(merged.extensionEnabled);
+    // panelDefaultOpen は永続設定として保存される (panelOpen とは別)
+    merged.panelDefaultOpen = normalizePanelDefaultOpen(merged.panelDefaultOpen);
     return merged;
   }
 
@@ -97,8 +97,8 @@
     SETTINGS_KEYS_LOCAL,
     DEFAULT_SYNC_SETTINGS,
     DEFAULT_LOCAL_SETTINGS,
-    normalizeEnabled,
-    normalizeShowSidebar,
+    normalizeExtensionEnabled,
+    normalizePanelDefaultOpen,
     applySecondaryLangFallback,
     mergeSyncSettings,
     isLanguageSelectionReady,

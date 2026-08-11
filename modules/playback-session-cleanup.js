@@ -3,7 +3,7 @@
 //
 // 役割:
 // - 再生セッションに紐づく一時的な UI 状態だけをクリアする。
-// - popup / options で保存した設定値（primaryLang / secondaryLang / showSidebar など）は保持する。
+// - popup / options で保存した設定値（primaryLang / secondaryLang / panelDefaultOpen など）は保持する。
 //
 // clearInternalSubtitleState の reason 使い分け:
 //   "prepareForRestart" → 設定変更による再起動。パネルDOMはフラッシュ防止のため保持する。
@@ -122,7 +122,7 @@
         preservedSettings: {
           primaryLang: state.contentSettings?.primaryLang || "",
           secondaryLang: state.contentSettings?.secondaryLang || "",
-          showSidebar: state.contentSettings?.showSidebar,
+          panelDefaultOpen: state.contentSettings?.panelDefaultOpen,
           requestedSecondaryLang: state.requestedSecondaryLang || "",
         },
       });

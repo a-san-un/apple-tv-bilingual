@@ -46,7 +46,7 @@
       return {
         primaryLang: state.requestedContentSettings?.primaryLang || "",
         secondaryLang: state.requestedContentSettings?.secondaryLang || "",
-        showSidebar: state.requestedContentSettings?.showSidebar ?? null,
+        panelDefaultOpen: state.requestedContentSettings?.panelDefaultOpen ?? null,
       };
     }
 

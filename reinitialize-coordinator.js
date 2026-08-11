@@ -82,7 +82,7 @@
       logContent("panel state reapplied", {
         reason,
         contentKey: state.currentContentKey,
-        panelVisible: state.panelVisible,
+        panelOpen: state.panelOpen,
       });
 
       return {

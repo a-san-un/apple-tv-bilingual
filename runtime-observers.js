@@ -107,7 +107,7 @@
         reason = "unknown",
         options = {},
       ) => {
-        if (!state.panelVisible) return;
+        if (!state.panelOpen) return;
 
         refreshPlaybackControlResizeObserverTargets();
         scheduleAdjustPlaybackControls(
@@ -168,7 +168,7 @@
         if (mutationRoot) {
           playbackControlsMutationObserver = new MutationObserver(
             (mutations) => {
-              if (!state.panelVisible) return;
+              if (!state.panelOpen) return;
 
               const hasRelevantMutation = mutations.some((mutation) => {
                 const target = mutation.target;

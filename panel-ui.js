@@ -237,22 +237,22 @@
     }
 
     function togglePanel(force) {
-      if (typeof force === "boolean") state.panelVisible = force;
-      else state.panelVisible = !state.panelVisible;
+      if (typeof force === "boolean") state.panelOpen = force;
+      else state.panelOpen = !state.panelOpen;
 
-      applyLayout(state.panelVisible);
-      applyPanelVisibility(state.panelVisible);
+      applyLayout(state.panelOpen);
+      applyPanelVisibility(state.panelOpen);
 
-      // panelVisible を chrome.storage.local に保存する。
-      // showSidebar（chrome.storage.sync）には書かない。
-      globalThis.ATVB_PANEL_VISIBILITY.persist(state.panelVisible, logContent);
+      // panelOpen を chrome.storage.local に保存する。
+      // panelDefaultOpen（chrome.storage.sync）には書かない。
+      globalThis.ATVB_PANEL_VISIBILITY.persist(state.panelOpen, logContent);
 
-      if (state.panelVisible) {
+      if (state.panelOpen) {
         deps.onPanelOpen?.();
       } else {
         deps.onPanelClose?.();
       }
-      logContent("togglePanel", { panelVisible: state.panelVisible });
+      logContent("togglePanel", { panelOpen: state.panelOpen });
     }
 
     function applyPanelState(reason = "unknown") {
@@ -272,7 +272,7 @@
         logContent("panel state applied", {
           reason,
           contentKey: state.currentContentKey,
-          panelVisible: state.panelVisible,
+          panelOpen: state.panelOpen,
           hasPanelHost: Boolean(getTarget?.().querySelector("#atv-panel-host")),
           hasPanelShadowRoot: Boolean(state.panelShadowRoot),
           historySize: Array.isArray(state.subtitleHistory)
@@ -323,7 +323,7 @@
 
       // window resize でボタン位置をパネル左端に追従させる
       window.addEventListener("resize", () => {
-        if (state.panelVisible) updateToggleButton(true);
+        if (state.panelOpen) updateToggleButton(true);
       }, { passive: true });
     }
 
@@ -351,10 +351,10 @@
     }
 
     function loadPanelVisibility() {
-      // showSidebar 設定値を初期値として ATVB_PANEL_VISIBILITY.load に委譲する。
-      // local に panelVisible が未保存の場合は showSidebar の値が初期値になる。
-      const showSidebarSetting = state.contentSettings?.showSidebar !== false;
-      return globalThis.ATVB_PANEL_VISIBILITY.load(showSidebarSetting);
+      // panelDefaultOpen 設定値を初期値として ATVB_PANEL_VISIBILITY.load に委譲する。
+      // local に panelOpen が未保存の場合は panelDefaultOpen の値が初期値になる。
+      const panelDefaultOpenSetting = state.contentSettings?.panelDefaultOpen !== false;
+      return globalThis.ATVB_PANEL_VISIBILITY.load(panelDefaultOpenSetting);
     }
 
     // ── ネイティブUIへのトグル注入 ──────────────────────────────
@@ -391,9 +391,9 @@
 
       const checkbox = label.querySelector('input[type="checkbox"]');
 
-      // storage から enabled を読んで初期状態を反映
-      chrome.storage.sync.get('enabled', ({ enabled }) => {
-        const isOn = enabled === true;
+      // storage から extensionEnabled を読んで初期状態を反映
+      chrome.storage.sync.get('extensionEnabled', ({ extensionEnabled }) => {
+        const isOn = extensionEnabled === true;
         const sl = label.querySelector('#atvb-native-slider');
         const kn = sl.querySelector('span');
         checkbox.checked    = isOn;
@@ -413,9 +413,9 @@
           hideRightPanel();
         }
 
-        // enabled を storage に書いて SETTINGS_CHANGED を content.js に届ける
+        // extensionEnabled を storage に書いて SETTINGS_CHANGED を content.js に届ける
         chrome.storage.sync.get(null, (stored) => {
-          const next = { ...stored, enabled: on };
+          const next = { ...stored, extensionEnabled: on };
           chrome.storage.sync.set(next, () => {
             chrome.runtime.sendMessage({
               type: "APPLY_SETTINGS_TO_APPLE_TV",

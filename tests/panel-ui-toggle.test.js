@@ -23,7 +23,7 @@ import { JSDOM } from "jsdom";
 // jsdom 環境セットアップヘルパー
 // ------------------------------------------------------------------
 
-function makeEnv({ panelVisible = false } = {}) {
+function makeEnv({ panelOpen = false } = {}) {
   const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>", {
     url: "https://tv.apple.com/",
   });
@@ -69,7 +69,7 @@ function makeEnv({ panelVisible = false } = {}) {
     renderPanel:           vi.fn(),
     getSubtitleView:       vi.fn(() => null),
     rebuildSubtitleBlocksForPanelOpen: vi.fn(),
-    getState:              vi.fn(() => ({ panelVisible })),
+    getState:              vi.fn(() => ({ panelOpen })),
     setState:              vi.fn(),
     getTarget:             vi.fn(() => {
       let host = document.getElementById("atv-panel-host");
@@ -98,7 +98,7 @@ function makeEnv({ panelVisible = false } = {}) {
         const factory = window.ATVB?.panelUi?.createPanelUi;
         if (!factory) return null;
         return factory({
-          state: { panelVisible: false, contentSettings: { showSidebar: true } },
+          state: { panelOpen: false, contentSettings: { panelDefaultOpen: true } },
           getTarget: window.__testGetTarget,
           getLiveDebugLogFilter: () => "",
           getDebugLogText: () => "",
@@ -143,7 +143,7 @@ describe("updateToggleButton: OFF 時は display:none を設定する (Step 3-A)
   let env;
 
   beforeEach(() => {
-    env = makeEnv({ panelVisible: false });
+    env = makeEnv({ panelOpen: false });
   });
 
   afterEach(() => {
@@ -195,7 +195,7 @@ describe("updateToggleButton: OFF 時は display:none を設定する (Step 3-A)
 
 describe("applyPanelVisibility: updateToggleButton 呼び出しが 1 回で display 制御が完結する (Step 3-B)", () => {
   it("applyPanelVisibility(false) 呼び出し後に display:none が維持される", () => {
-    const env = makeEnv({ panelVisible: false });
+    const env = makeEnv({ panelOpen: false });
     addToggleButton(env.document, { display: "" });
 
     env.panelUi?.applyPanelVisibility?.(false);
@@ -248,11 +248,11 @@ describe("updateToggleButton: テキスト・right 位置の制御", () => {
 });
 
 // =============================================================
-// showSidebar と panelVisible の責務分離（不変条件）
+// panelDefaultOpen と panelOpen の責務分離（不変条件）
 // =============================================================
 
-describe("applyPanelVisibility: showSidebar と panelVisible を混同しない", () => {
-  it("applyPanelVisibility は chrome.storage.sync（showSidebar）に書かない", () => {
+describe("applyPanelVisibility: panelDefaultOpen と panelOpen を混同しない", () => {
+  it("applyPanelVisibility は chrome.storage.sync（panelDefaultOpen）に書かない", () => {
     const env = makeEnv();
     env.window.chrome.storage.sync = { set: vi.fn(), get: vi.fn() };
     addToggleButton(env.document);

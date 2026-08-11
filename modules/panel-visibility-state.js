@@ -1,16 +1,16 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - modules/panel-visibility-state.js
 //
-// 役割: panelVisible（ランタイムUI状態）の load / persist を管理する (Step 2)
+// 役割: panelOpen（ランタイムUI状態）の load / persist を管理する (Step 2)
 //
 // 設計原則:
-//   - panelVisible = パネル開閉のランタイムUI状態。chrome.storage.local に保存。
-//   - showSidebar  = 永続設定。chrome.storage.sync に保存。
+//   - panelOpen = パネル開閉のランタイムUI状態。chrome.storage.local に保存。
+//   - panelDefaultOpen  = 永続設定。chrome.storage.sync に保存。
 //   - 両者を混同・相互保存しないこと。
-//   - load:    chrome.storage.local から panelVisible を読む。
-//              キーが未保存の場合は引数 showSidebarSetting（設定値）を初期値とする。
-//   - persist: chrome.storage.local に panelVisible だけ書く。
-//              chrome.storage.sync（showSidebar）には一切書かない。
+//   - load:    chrome.storage.local から panelOpen を読む。
+//              キーが未保存の場合は引数 panelDefaultOpenSetting（設定値）を初期値とする。
+//   - persist: chrome.storage.local に panelOpen だけ書く。
+//              chrome.storage.sync（panelDefaultOpen）には一切書かない。
 //
 // 利用方法:
 //   manifest.json の content_scripts に追加して
@@ -20,19 +20,19 @@
 (function (root) {
   "use strict";
 
-  const STORAGE_KEY = "panelVisible";
+  const STORAGE_KEY = "panelOpen";
 
   /**
    * パネル表示状態を chrome.storage.local から読み込む。
    *
-   * local にキーが未保存の場合は showSidebarSetting（settings.showSidebar）を
+   * local にキーが未保存の場合は panelDefaultOpenSetting（settings.panelDefaultOpen）を
    * 初期値として返す。設定値は起動時の1回だけ初期値として参照する。
    *
-   * @param {boolean} showSidebarSetting - state.contentSettings.showSidebar の値
+   * @param {boolean} panelDefaultOpenSetting - state.contentSettings.panelDefaultOpen の値
    * @returns {Promise<boolean>}
    */
-  function load(showSidebarSetting) {
-    const fallback = showSidebarSetting !== false;
+  function load(panelDefaultOpenSetting) {
+    const fallback = panelDefaultOpenSetting !== false;
     return new Promise((resolve) => {
       try {
         chrome.storage.local.get(STORAGE_KEY, (result = {}) => {
@@ -56,27 +56,27 @@
   /**
    * パネル表示状態を chrome.storage.local に保存する。
    *
-   * chrome.storage.sync（showSidebar）には書かない。
+   * chrome.storage.sync（panelDefaultOpen）には書かない。
    *
-   * @param {boolean} panelVisible
+   * @param {boolean} panelOpen
    * @param {Function} [logFn] - オプションのログ関数
    */
-  function persist(panelVisible, logFn) {
+  function persist(panelOpen, logFn) {
     try {
-      chrome.storage.local.set({ [STORAGE_KEY]: panelVisible }, () => {
+      chrome.storage.local.set({ [STORAGE_KEY]: panelOpen }, () => {
         if (chrome.runtime.lastError) {
-          logFn?.("panelVisible persist failed", {
+          logFn?.("panelOpen persist failed", {
             error: chrome.runtime.lastError.message,
-            panelVisible,
+            panelOpen,
           });
           return;
         }
-        logFn?.("panelVisible persisted", { panelVisible });
+        logFn?.("panelOpen persisted", { panelOpen });
       });
     } catch (e) {
-      logFn?.("panelVisible persist exception", {
+      logFn?.("panelOpen persist exception", {
         error: e?.message,
-        panelVisible,
+        panelOpen,
       });
     }
   }

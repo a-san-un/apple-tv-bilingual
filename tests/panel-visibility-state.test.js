@@ -73,40 +73,40 @@ function loadModule(chromeMock) {
 
 describe("PanelVisibilityState.load: chrome.storage.local に値がある場合", () => {
   it("true が保存されているとき true を返す", async () => {
-    const mock = makeChromeMock({ panelVisible: true });
+    const mock = makeChromeMock({ panelOpen: true });
     const sut = loadModule(mock);
     const result = await sut.load(false);
     expect(result).toBe(true);
   });
 
   it("false が保存されているとき false を返す", async () => {
-    const mock = makeChromeMock({ panelVisible: false });
+    const mock = makeChromeMock({ panelOpen: false });
     const sut = loadModule(mock);
     const result = await sut.load(true);
     expect(result).toBe(false);
   });
 
-  it("保存値が true のとき showSidebarSetting=false を上書きする", async () => {
-    const mock = makeChromeMock({ panelVisible: true });
+  it("保存値が true のとき panelDefaultOpenSetting=false を上書きする", async () => {
+    const mock = makeChromeMock({ panelOpen: true });
     const sut = loadModule(mock);
     expect(await sut.load(false)).toBe(true);
   });
 });
 
 describe("PanelVisibilityState.load: chrome.storage.local に値がない場合（初回起動）", () => {
-  it("showSidebarSetting=true のとき true を返す", async () => {
-    const mock = makeChromeMock({});  // panelVisible キーなし
+  it("panelDefaultOpenSetting=true のとき true を返す", async () => {
+    const mock = makeChromeMock({});  // panelOpen キーなし
     const sut = loadModule(mock);
     expect(await sut.load(true)).toBe(true);
   });
 
-  it("showSidebarSetting=false のとき false を返す", async () => {
+  it("panelDefaultOpenSetting=false のとき false を返す", async () => {
     const mock = makeChromeMock({});
     const sut = loadModule(mock);
     expect(await sut.load(false)).toBe(false);
   });
 
-  it("showSidebarSetting=undefined のとき true を返す (デフォルト ON)", async () => {
+  it("panelDefaultOpenSetting=undefined のとき true を返す (デフォルト ON)", async () => {
     const mock = makeChromeMock({});
     const sut = loadModule(mock);
     expect(await sut.load(undefined)).toBe(true);
@@ -114,14 +114,14 @@ describe("PanelVisibilityState.load: chrome.storage.local に値がない場合�
 });
 
 describe("PanelVisibilityState.load: chrome.runtime.lastError が発生した場合", () => {
-  it("エラー時は showSidebarSetting=true にフォールバックする", async () => {
+  it("エラー時は panelDefaultOpenSetting=true にフォールバックする", async () => {
     const mock = makeChromeMock({});
     const sut = loadModule(mock);
     mock.storage.local._setError(true);
     expect(await sut.load(true)).toBe(true);
   });
 
-  it("エラー時は showSidebarSetting=false にフォールバックする", async () => {
+  it("エラー時は panelDefaultOpenSetting=false にフォールバックする", async () => {
     const mock = makeChromeMock({});
     const sut = loadModule(mock);
     mock.storage.local._setError(true);
@@ -134,27 +134,27 @@ describe("PanelVisibilityState.load: chrome.runtime.lastError が発生した場
 // =============================================================
 
 describe("PanelVisibilityState.persist: chrome.storage.local への保存", () => {
-  it("true を渡すと panelVisible=true が local に保存される", async () => {
+  it("true を渡すと panelOpen=true が local に保存される", async () => {
     const mock = makeChromeMock({});
     const sut = loadModule(mock);
     sut.persist(true);
     expect(mock.storage.local.set).toHaveBeenCalledWith(
-      { panelVisible: true },
+      { panelOpen: true },
       expect.any(Function)
     );
   });
 
-  it("false を渡すと panelVisible=false が local に保存される", async () => {
+  it("false を渡すと panelOpen=false が local に保存される", async () => {
     const mock = makeChromeMock({});
     const sut = loadModule(mock);
     sut.persist(false);
     expect(mock.storage.local.set).toHaveBeenCalledWith(
-      { panelVisible: false },
+      { panelOpen: false },
       expect.any(Function)
     );
   });
 
-  it("storage.sync（showSidebar）には一切書かない", () => {
+  it("storage.sync（panelDefaultOpen）には一切書かない", () => {
     const mock = makeChromeMock({});
     mock.storage.sync = { set: vi.fn(), get: vi.fn() };
     const sut = loadModule(mock);
@@ -168,8 +168,8 @@ describe("PanelVisibilityState.persist: chrome.storage.local への保存", () =
     const logFn = vi.fn();
     sut.persist(true, logFn);
     expect(logFn).toHaveBeenCalledWith(
-      "panelVisible persisted",
-      { panelVisible: true }
+      "panelOpen persisted",
+      { panelOpen: true }
     );
   });
 
@@ -180,8 +180,8 @@ describe("PanelVisibilityState.persist: chrome.storage.local への保存", () =
     const logFn = vi.fn();
     sut.persist(true, logFn);
     expect(logFn).toHaveBeenCalledWith(
-      "panelVisible persist failed",
-      expect.objectContaining({ panelVisible: true })
+      "panelOpen persist failed",
+      expect.objectContaining({ panelOpen: true })
     );
   });
 
@@ -193,10 +193,10 @@ describe("PanelVisibilityState.persist: chrome.storage.local への保存", () =
 });
 
 // =============================================================
-// 責務分離の不変条件（showSidebar への書き込み禁止）
+// 責務分離の不変条件（panelDefaultOpen への書き込み禁止）
 // =============================================================
 
-describe("PanelVisibilityState: showSidebar と panelVisible の責務分離", () => {
+describe("PanelVisibilityState: panelDefaultOpen と panelOpen の責務分離", () => {
   it("persist が storage.local のみに書き、storage.sync には書かない", () => {
     const mock = makeChromeMock({});
     mock.storage.sync = { set: vi.fn(), get: vi.fn() };
@@ -208,7 +208,7 @@ describe("PanelVisibilityState: showSidebar と panelVisible の責務分離", (
   });
 
   it("load が storage.local のみを参照し、storage.sync は参照しない", async () => {
-    const mock = makeChromeMock({ panelVisible: true });
+    const mock = makeChromeMock({ panelOpen: true });
     mock.storage.sync = { set: vi.fn(), get: vi.fn() };
     const sut = loadModule(mock);
     await sut.load(false);

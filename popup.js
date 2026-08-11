@@ -12,7 +12,7 @@
 // - デバッグ用ログを残して調査しやすくする
 //
 // 補足:
-// - enabled が未保存でも、popup 初回保存時に false を明示保存する
+// - extensionEnabled が未保存でも、popup 初回保存時に false を明示保存する
 // - 拡張が OFF のときでも、言語設定保存後は popup を自動で閉じる
 // =============================================================
 
@@ -27,10 +27,10 @@ const SUPPORTED_LANGS = [
 ];
 
 // popup 起動時に読む一般設定キー。
-// enabled は保存時に個別取得・正規化するため、ここには含めない。
+// extensionEnabled は保存時に個別取得・正規化するため、ここには含めない。
 // ATVB_SCHEMA (modules/settings-schema.js) がこのスクリプトより先に実行されていること。
 const GENERAL_KEYS = (globalThis.ATVB_SCHEMA?.SETTINGS_KEYS_SYNC ?? []).filter(
-  (k) => k !== "enabled"
+  (k) => k !== "extensionEnabled"
 );
 
 const DEBUG_LOGS_KEY = "debugLogs";
@@ -293,7 +293,7 @@ async function initPopup() {
 }
 
 // Apply 押下時は、言語設定を保存する。
-// enabled が未保存なら false として正規化し、一緒に sync へ保存する。
+// extensionEnabled が未保存なら false として正規化し、一緒に sync へ保存する。
 applyBtn.addEventListener("click", async () => {
   const validation = getValidationResult();
 
@@ -316,16 +316,16 @@ applyBtn.addEventListener("click", async () => {
   const primaryLang = primarySel.value;
   const secondaryLang = secondarySel.value;
 
-  const currentSettings = await chrome.storage.sync.get(["enabled"]);
+  const currentSettings = await chrome.storage.sync.get(["extensionEnabled"]);
   const schema = globalThis.ATVB_SCHEMA;
   const normalizedEnabled = schema
-    ? schema.normalizeEnabled(currentSettings.enabled)
-    : currentSettings.enabled === true;
+    ? schema.normalizeExtensionEnabled(currentSettings.extensionEnabled)
+    : currentSettings.extensionEnabled === true;
 
   const settingsToSave = {
     primaryLang,
     secondaryLang,
-    enabled: normalizedEnabled,
+    extensionEnabled: normalizedEnabled,
   };
 
   const lineSave = debugLog("popup", "Saving popup settings", {

@@ -18,7 +18,7 @@
       playbackControlsLayoutApi || {};
 
     const layoutState = {
-      panelVisible: false,
+      panelOpen: false,
       playbackControlsRafId: 0,
       playbackControlsApplying: false,
       playbackControlsRetryTimers: [],
@@ -156,7 +156,7 @@
 
       delays.forEach((delayMs) => {
         const timerId = setTimeoutFn(() => {
-          if (!layoutState.panelVisible) return;
+          if (!layoutState.panelOpen) return;
 
           scheduleAdjustPlaybackControls(`${reason}-settle-${delayMs}`, [], {
             immediate: true,
@@ -166,8 +166,8 @@
       });
     }
 
-    function initForPanelVisible(initialVisible) {
-      layoutState.panelVisible = !!initialVisible;
+    function initForPanelOpen(initialVisible) {
+      layoutState.panelOpen = !!initialVisible;
     }
 
     function onPanelVisibilityChanged(isVisible, options = {}) {
@@ -178,11 +178,11 @@
         settlingDelays = [180, 420, 900, 1500],
       } = options;
 
-      layoutState.panelVisible = !!isVisible;
+      layoutState.panelOpen = !!isVisible;
 
       scheduleAdjustPlaybackControls(reason, retryDelays, { immediate });
 
-      if (layoutState.panelVisible) {
+      if (layoutState.panelOpen) {
         scheduleControlSettlingBurst(reason, settlingDelays);
       } else {
         clearControlSettlingTimers();
@@ -190,7 +190,7 @@
 
       if (typeof logContent === "function") {
         logContent("layoutController.panelVisibilityChanged", {
-          panelVisible: layoutState.panelVisible,
+          panelOpen: layoutState.panelOpen,
           reason,
           retryDelays,
           immediate,
@@ -227,7 +227,7 @@
 
       scheduleAdjustPlaybackControls(reason, delays, { immediate });
 
-      if (settle && layoutState.panelVisible) {
+      if (settle && layoutState.panelOpen) {
         scheduleControlSettlingBurst(reason, settleDelays);
       }
     }
@@ -249,13 +249,13 @@
 
       if (typeof logContent === "function") {
         logContent("layoutController.teardownPlaybackControlsUi", {
-          panelVisible: layoutState.panelVisible,
+          panelOpen: layoutState.panelOpen,
         });
       }
     }
 
     return {
-      initForPanelVisible,
+      initForPanelOpen,
       onPanelVisibilityChanged,
       applyPanelLayout,
       requestPlaybackControlsAdjustment,

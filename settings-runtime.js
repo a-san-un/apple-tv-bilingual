@@ -126,8 +126,8 @@
 
         startBilingual({
           reason: `settings_runtime:${reason}:${triggerReason}`,
-          // ランタイムUI状態をそのまま引き継ぐ（設定値 showSidebar ではない）。
-          keepPanelVisible: state.panelVisible,
+          // ランタイムUI状態をそのまま引き継ぐ（設定値 panelDefaultOpen ではない）。
+          keepPanelOpen: state.panelOpen,
         });
 
         return true;
@@ -355,7 +355,7 @@
             return;
           }
 
-          if (state.contentSettings.enabled !== true) {
+          if (state.contentSettings.extensionEnabled !== true) {
             logContent?.("initial auto-start skipped: disabled");
             mountToggleOnlyUi?.();
           } else {
@@ -502,7 +502,7 @@
     function restartBilingual(nextSettings = null, reason = "unknown", options = {}) {
       logContent("restartBilingual trace", {
         reason,
-        panelVisible: state.panelVisible,
+        panelOpen: state.panelOpen,
       });
       // eslint-disable-next-line no-console
       console.trace("restartBilingual trace");
@@ -535,13 +535,13 @@
           requestedSecondaryLang: state.requestedSecondaryLang,
         });
 
-        const wasPanelVisible =
-          typeof options.keepPanelVisible === "boolean"
-            ? options.keepPanelVisible
-            : state.panelVisible;
+        const wasPanelOpen =
+          typeof options.keepPanelOpen === "boolean"
+            ? options.keepPanelOpen
+            : state.panelOpen;
 
         prepareForRestart();
-        startBilingual({ keepPanelVisible: wasPanelVisible });
+        startBilingual({ keepPanelOpen: wasPanelOpen });
 
         logContentSettings("restartBilingual done", { reason });
       } finally {
@@ -569,13 +569,13 @@
 
         const triggerReason = message.reason || "unknown";
         const incoming = { ...(message.settings || {}) };
-        // フォールバックは設定値（showSidebar）にする。ランタイム状態（panelVisible）は使わない。
-        const resolvedShowSidebar =
-          incoming.showSidebar ?? state.contentSettings.showSidebar;
+        // フォールバックは設定値（panelDefaultOpen）にする。ランタイム状態（panelOpen）は使わない。
+        const resolvedPanelDefaultOpen =
+          incoming.panelDefaultOpen ?? state.contentSettings.panelDefaultOpen;
         const next = applySecondaryLangFallback({
           ...state.contentSettings,
           ...incoming,
-          showSidebar: resolvedShowSidebar,
+          panelDefaultOpen: resolvedPanelDefaultOpen,
         });
 
         state.requestedSecondaryLang =
@@ -584,19 +584,19 @@
         state.requestedContentSettings = {
           ...state.requestedContentSettings,
           ...incoming,
-          showSidebar: resolvedShowSidebar,
+          panelDefaultOpen: resolvedPanelDefaultOpen,
         };
 
         state.contentSettings = {
           ...state.contentSettings,
           ...next,
-          showSidebar: resolvedShowSidebar,
+          panelDefaultOpen: resolvedPanelDefaultOpen,
         };
 
-        // panelVisible は incoming に showSidebar が明示されている場合のみ更新する。
-        // 言語変更など showSidebar を含まない設定変更では上書きしない。
-        if ("showSidebar" in incoming) {
-          state.panelVisible = incoming.showSidebar !== false;
+        // panelOpen は incoming に panelDefaultOpen が明示されている場合のみ更新する。
+        // 言語変更など panelDefaultOpen を含まない設定変更では上書きしない。
+        if ("panelDefaultOpen" in incoming) {
+          state.panelOpen = incoming.panelDefaultOpen !== false;
         }
 
         logContentSettings("SETTINGS_CHANGED received", {
@@ -610,24 +610,24 @@
 
         const applySettingsAsync = async () => {
 
-          const nextEnabled = ('enabled' in incoming)
-            ? incoming.enabled
-            : state.contentSettings.enabled;
+          const nextExtensionEnabled = ('extensionEnabled' in incoming)
+            ? incoming.extensionEnabled
+            : state.contentSettings.extensionEnabled;
 
-          // enabled=false の早期リターン直前に UI 隠し処理を追加
-          if (nextEnabled !== true) {
-            state.contentSettings.enabled = false;
+          // extensionEnabled=false の早期リターン直前に UI 隠し処理を追加
+          if (nextExtensionEnabled !== true) {
+            state.contentSettings.extensionEnabled = false;
             state.requestedContentSettings = {
               ...state.requestedContentSettings,
-              enabled: false,
+              extensionEnabled: false,
             };
-            state.panelVisible = false;
+            state.panelOpen = false;
 
             logContentSettings("SETTINGS_CHANGED disable-branch", {
               triggerReason,
               incoming,
-              contentEnabled: state.contentSettings.enabled,
-              requestedEnabled: state.requestedContentSettings.enabled,
+              contentExtensionEnabled: state.contentSettings.extensionEnabled,
+              requestedExtensionEnabled: state.requestedContentSettings.extensionEnabled,
             });
 
             panelUi?.hideRightPanel?.();
@@ -650,8 +650,8 @@
             },
             "SETTINGS_CHANGED",
             {
-              // ランタイムUI状態をそのまま引き継ぐ（設定値 showSidebar ではない）。
-              keepPanelVisible: state.panelVisible,
+              // ランタイムUI状態をそのまま引き継ぐ（設定値 panelDefaultOpen ではない）。
+              keepPanelOpen: state.panelOpen,
             },
           );
 

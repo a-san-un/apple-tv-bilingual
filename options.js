@@ -19,10 +19,10 @@ const SUPPORTED_LANGS = [
 const DEFAULT_GENERAL_SETTINGS = globalThis.ATVB_SCHEMA
   ? { ...globalThis.ATVB_SCHEMA.DEFAULT_SYNC_SETTINGS }
   : {
-      enabled: false,
+      extensionEnabled: false,
       primaryLang: "en",
       secondaryLang: "",
-      showSidebar: true,
+      panelDefaultOpen: true,
       playWordAudio: true,
       enableAiTooltip: false,
       preferredAiProvider: "auto",
@@ -56,7 +56,7 @@ const els = {
   form: document.getElementById("optionsForm"),
   primaryLang: document.getElementById("primaryLang"),
   secondaryLang: document.getElementById("secondaryLang"),
-  showSidebar: document.getElementById("showSidebar"),
+  panelDefaultOpen: document.getElementById("panelDefaultOpen"),
   playWordAudio: document.getElementById("playWordAudio"),
   enableAiTooltip: document.getElementById("enableAiTooltip"),
   googleAiStudioApiKey: document.getElementById("googleAiStudioApiKey"),
@@ -441,7 +441,7 @@ async function loadSettings() {
     true,
   );
 
-  els.showSidebar.checked = Boolean(general.showSidebar);
+  els.panelDefaultOpen.checked = Boolean(general.panelDefaultOpen);
   els.playWordAudio.checked = Boolean(general.playWordAudio);
   els.enableAiTooltip.checked = Boolean(general.enableAiTooltip);
 
@@ -513,7 +513,7 @@ async function saveSettings() {
   const generalSettings = {
     primaryLang,
     secondaryLang,
-    showSidebar: els.showSidebar.checked,
+    panelDefaultOpen: els.panelDefaultOpen.checked,
     playWordAudio: els.playWordAudio.checked,
     enableAiTooltip: els.enableAiTooltip.checked,
     preferredAiProvider: getPreferredAiProvider(),
@@ -580,7 +580,7 @@ async function saveSettings() {
   );
   await appendDebugLog(lineReadback);
 
-  const enabledState = await chrome.storage.sync.get(["enabled"]);
+  const enabledState = await chrome.storage.sync.get(["extensionEnabled"]);
   const languageSettingsPayload = buildLanguageSettingsPayload(
     generalSettings,
   );
@@ -591,7 +591,7 @@ async function saveSettings() {
     reason: "extension-disabled",
   };
 
-  if (enabledState.enabled === true) {
+  if (enabledState.extensionEnabled === true) {
     dispatchResult = await dispatchSettingsChangedFromOptions(
       languageSettingsPayload,
     );
@@ -603,7 +603,7 @@ async function saveSettings() {
     "options dispatch APPLY_SETTINGS_TO_APPLE_TV result",
     {
       payload: languageSettingsPayload,
-      enabled: enabledState.enabled,
+      extensionEnabled: enabledState.extensionEnabled,
       result: dispatchResult,
     },
   );
@@ -612,7 +612,7 @@ async function saveSettings() {
   if (dispatchResult?.ok) {
     showSaveStatus("Saved and applied.");
   } else if (dispatchResult?.skipped) {
-    showSaveStatus("Saved. It will apply when the extension is enabled.");
+    showSaveStatus("Saved. Changes apply when the extension is enabled.");
   } else {
     showSaveStatus("Saved. Open Apple TV+ tab to apply immediately.");
   }
