@@ -13,10 +13,10 @@
 (function () {
   ("use strict");
   const DEFAULT_SETTINGS = {
-    enabled: false,
+    extensionEnabled: false,
     primaryLang: "en",
     secondaryLang: "",
-    showSidebar: true,
+    panelDefaultOpen: true,
     playWordAudio: true,
     enableAiTooltip: false,
     preferredAiProvider: "auto",
@@ -73,7 +73,7 @@
     lastSecondaryText: "",
     lastSecondaryTextAt: 0,
     lastSecondarySignalAt: 0,
-    panelVisible: false,
+    panelOpen: false,
     ejdictMap: null,
     secondaryHideTimer: null,
     overlayRoot: null,
@@ -834,7 +834,7 @@ function forwardContentLog(...args) {
 
 
   function _showRightPanel() {
-    if (!state.panelVisible) {
+    if (!state.panelOpen) {
       panelUi.togglePanel(true);
       return;
     }
@@ -851,7 +851,7 @@ function forwardContentLog(...args) {
   }
 
   function _hideRightPanel() {
-    if (state.panelVisible) {
+    if (state.panelOpen) {
       panelUi.togglePanel(false);
       return;
     }
@@ -874,19 +874,19 @@ function forwardContentLog(...args) {
     const shouldSyncPanelVisibility = options.syncPanelVisibility !== false;
 
     if (shouldSyncPanelVisibility) {
-      const sidebarEnabled = settings.showSidebar !== false;
-      // state.panelVisible はランタイムUI状態のため、設定変更で上書きしない。
-      // showSidebar（設定値）に基づきパネルホストの表示/非表示だけを UI に反映する。
-      panelUi.applyPanelVisibility(sidebarEnabled);
+      const panelDefaultOpenEnabled = settings.panelDefaultOpen !== false;
+      // state.panelOpen はランタイムUI状態のため、設定変更で上書きしない。
+      // panelDefaultOpen（設定値）に基づきパネルホストの表示/非表示だけを UI に反映する。
+      panelUi.applyPanelVisibility(panelDefaultOpenEnabled);
     }
 
     logContent("Applied settings to UI", {
-      showSidebar: settings.showSidebar,
+      panelDefaultOpen: settings.panelDefaultOpen,
       playWordAudio: settings.playWordAudio,
       enableAiTooltip: settings.enableAiTooltip,
       preferredAiProvider: settings.preferredAiProvider,
       syncPanelVisibility: shouldSyncPanelVisibility,
-      panelVisible: state.panelVisible,
+      panelOpen: state.panelOpen,
     });
   }
 
@@ -1900,7 +1900,7 @@ function forwardContentLog(...args) {
     clearTimeout: window.clearTimeout.bind(window),
   });
 
-  layoutController.initForPanelVisible(state.panelVisible);
+  layoutController.initForPanelOpen(state.panelOpen);
 
   const { createOverlayController } = root.overlayController;
   const createTextTrackDebug =
@@ -1923,6 +1923,9 @@ function forwardContentLog(...args) {
       getPlaybackControlsLayoutTargetsFromModule,
     PLAYBACK_CONTROLS_LAYOUT,
   });
+
+  const { setOverlayVisible, destroyOverlay, createOverlay } =
+    overlayController;
 
   const textTrackDebug = createTextTrackDebug
     ? createTextTrackDebug({
@@ -2263,9 +2266,6 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
     return syncIntervalOrchestrator;
   }
 
-  const { setOverlayVisible, destroyOverlay, createOverlay } =
-    overlayController;
-
   const {
     waitForVideo,
     refreshPlaybackControlResizeObserverTargets: _refreshPlaybackControlResizeObserverTargets,
@@ -2309,12 +2309,12 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
     }) ?? null;
     
   function _loadPanelVisibility() {
-    const showSidebar = state.contentSettings?.showSidebar;
-    return globalThis.ATVB_PANEL_VISIBILITY.load(showSidebar !== false);
+    const panelDefaultOpen = state.contentSettings?.panelDefaultOpen;
+    return globalThis.ATVB_PANEL_VISIBILITY.load(panelDefaultOpen !== false);
   }
 
   function persistPanelVisibility() {
-    globalThis.ATVB_PANEL_VISIBILITY.persist(state.panelVisible, (msg, data) => {
+    globalThis.ATVB_PANEL_VISIBILITY.persist(state.panelOpen, (msg, data) => {
       logContent(msg, data);
     });
   }
@@ -2503,7 +2503,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
 
 
   function _refreshSettingsOnPanelOpen() {
-    if (!state.panelVisible) return;
+    if (!state.panelOpen) return;
 
     reinitializeCoordinator?.reloadSettingsAndReinitialize(
       "panel_open_settings_reloaded",
@@ -2731,28 +2731,28 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
   // [startup path: initial bilingual start]
   // 設定完了時の通常起動入口。
   // 未設定時は notice 表示と panel close のみを行い、通常の track attach / UI build は進めない。
-  // track 選択・panelVisible 復元・UI 構築をこの経路でまとめて行う。
+  // track 選択・panelOpen 復元・UI 構築をこの経路でまとめて行う。
   async function startBilingual(options = {}) {
-    if (state.contentSettings?.enabled === false) {
+    if (state.contentSettings?.extensionEnabled === false) {
       logContent("startBilingual skipped: disabled");
       return;
     }
     logContent("startBilingual trace", {
-      panelVisible: state.panelVisible,
-      keepPanelVisible:
-        typeof options.keepPanelVisible === "boolean"
-          ? options.keepPanelVisible
+      panelOpen: state.panelOpen,
+      keepPanelOpen:
+        typeof options.keepPanelOpen === "boolean"
+          ? options.keepPanelOpen
           : null,
       requestedContentSettings: {
         primaryLang: state.requestedContentSettings?.primaryLang || "",
         secondaryLang: state.requestedContentSettings?.secondaryLang || "",
-        showSidebar:
-          state.requestedContentSettings?.showSidebar ?? null,
+        panelDefaultOpen:
+          state.requestedContentSettings?.panelDefaultOpen ?? null,
       },
       contentSettings: {
         primaryLang: state.contentSettings?.primaryLang || "",
         secondaryLang: state.contentSettings?.secondaryLang || "",
-        showSidebar: state.contentSettings?.showSidebar ?? null,
+        panelDefaultOpen: state.contentSettings?.panelDefaultOpen ?? null,
       },
       requestedSecondaryLang: state.requestedSecondaryLang || "",
     });
@@ -2762,7 +2762,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
 
     const requestedSettings = state.requestedContentSettings || {};
     if (!isLanguageSelectionReady(requestedSettings)) {
-      state.panelVisible = false;
+      state.panelOpen = false;
       panelUi.destroyUiHosts();
       applyLayout(false);
       showLanguageSetupNotice();
@@ -2789,12 +2789,12 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       requestedContentSettings: {
         primaryLang: requestedSettings.primaryLang || "",
         secondaryLang: requestedSettings.secondaryLang || "",
-        showSidebar: requestedSettings.showSidebar ?? null,
+        panelDefaultOpen: requestedSettings.panelDefaultOpen ?? null,
       },
       contentSettings: {
         primaryLang: state.contentSettings.primaryLang || "",
         secondaryLang: state.contentSettings.secondaryLang || "",
-        showSidebar: state.contentSettings.showSidebar ?? null,
+        panelDefaultOpen: state.contentSettings.panelDefaultOpen ?? null,
       },
       requestedSecondaryLang: state.requestedSecondaryLang || "",
     });
@@ -2885,20 +2885,20 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
         : null,
     });
 
-    const sidebarEnabledSetting = state.contentSettings.showSidebar !== false;
+    const panelDefaultOpenSetting = state.contentSettings.panelDefaultOpen !== false;
 
-    // panelVisible が確定してから UI 構築を実行するヘルパー。
-    function _applyPanelVisibleAndBuild(panelVisible) {
-      state.panelVisible = panelVisible;
+    // panelOpen が確定してから UI 構築を実行するヘルパー。
+    function _applyPanelOpenAndBuild(panelOpen) {
+      state.panelOpen = panelOpen;
 
-      logContent("startBilingual panelVisible applied", {
-        panelVisible: state.panelVisible,
-        showSidebarSetting: state.contentSettings.showSidebar,
+      logContent("startBilingual panelOpen applied", {
+        panelOpen: state.panelOpen,
+        panelDefaultOpenSetting: state.contentSettings.panelDefaultOpen,
         secondaryLang: state.contentSettings.secondaryLang || "",
         requestedSecondaryLang: state.requestedSecondaryLang || "",
       });
 
-      layoutController.initForPanelVisible(state.panelVisible);
+      layoutController.initForPanelOpen(state.panelOpen);
 
       createOverlay();
       panelUi.createToggleButton();
@@ -2906,20 +2906,20 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       panelUi.watchForPlayerTabs();
       createPopupHost();
       createDebugPanel();
-      applyLayout(state.panelVisible);
+      applyLayout(state.panelOpen);
       renderCurrentSnapshot();
       renderPanel();
 
-      panelUi.applyPanelVisibility(state.panelVisible);
+      panelUi.applyPanelVisibility(state.panelOpen);
     }
 
-    if (typeof options.keepPanelVisible === "boolean") {
-      // 再初期化パスなど keepPanelVisible が明示的に渡された場合はそれを使う。
-      _applyPanelVisibleAndBuild(options.keepPanelVisible);
+    if (typeof options.keepPanelOpen === "boolean") {
+      // 再初期化パスなど keepPanelOpen が明示的に渡された場合はそれを使う。
+      _applyPanelOpenAndBuild(options.keepPanelOpen);
     } else {
-      // 通常起動: chrome.storage.local の panelVisible を復元してから UI を構築する。
-      globalThis.ATVB_PANEL_VISIBILITY.load(sidebarEnabledSetting).then((restored) => {
-        _applyPanelVisibleAndBuild(restored);
+      // 通常起動: chrome.storage.local の panelOpen を復元してから UI を構築する。
+      globalThis.ATVB_PANEL_VISIBILITY.load(panelDefaultOpenSetting).then((restored) => {
+        _applyPanelOpenAndBuild(restored);
       });
     }
 
