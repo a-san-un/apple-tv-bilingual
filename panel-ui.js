@@ -197,21 +197,21 @@
 
     // 主要 UI 要素をまとめて返す
     function getPanelUiElements() {
-      // target 配下と body 配下の UI 要素を一か所で集める
+      // target 配下の UI 要素を一か所で集める
       const target = getTarget();
 
       return {
         panelHost: target.querySelector("#atv-panel-host"),
         overlayHost: target.querySelector("#atv-overlay-host"),
-        toggleBtn: document.body.querySelector("#atv-toggle-btn"),
+        toggleBtn: target.querySelector("#atv-toggle-btn"),
       };
     }
 
     // 指定 id の UI host を消す
     function removeHost(id) {
-      // panel host は target 配下、toggle button は body 配下にあるので両方見る
+      // panel host / toggle button ともに target 配下を見る
       const root = getTarget();
-      const el = root.querySelector(`#${id}`) ?? document.body.querySelector(`#${id}`);
+      const el = root.querySelector(`#${id}`);
       if (el) el.remove();
     }
 
@@ -237,7 +237,7 @@
     // restart 用に UI host をまとめて破棄する
     function destroyUiHosts() {
       logContent?.("字幕パネル開閉ボタン/右側字幕パネル destroyUiHosts start", {
-        hasSubtitlePanelToggleButton: Boolean(document.body.querySelector("#atv-toggle-btn")),
+        hasSubtitlePanelToggleButton: Boolean(getTarget?.().querySelector("#atv-toggle-btn")),
         hasPanelHost: Boolean(getTarget?.().querySelector("#atv-panel-host")),
         panelOpen: state.panelOpen,
       });
@@ -245,7 +245,7 @@
       destroyFeatureUiHosts();
 
       logContent?.("字幕パネル開閉ボタン/右側字幕パネル destroyUiHosts done", {
-        hasSubtitlePanelToggleButton: Boolean(document.body.querySelector("#atv-toggle-btn")),
+        hasSubtitlePanelToggleButton: Boolean(getTarget?.().querySelector("#atv-toggle-btn")),
         hasPanelHost: Boolean(getTarget?.().querySelector("#atv-panel-host")),
         panelOpen: state.panelOpen,
       });
@@ -256,7 +256,7 @@
       logContent?.("右側字幕パネル applyPanelVisibility start", {
         requestedOpen: show,
         panelOpen: state.panelOpen,
-        hasSubtitlePanelToggleButton: Boolean(document.body.querySelector("#atv-toggle-btn")),
+        hasSubtitlePanelToggleButton: Boolean(getTarget?.().querySelector("#atv-toggle-btn")),
       });
 
       // 表示対象の UI 要素を取る
@@ -347,18 +347,18 @@
     // 字幕パネル開閉ボタンを作る
     function createToggleButton() {
       logContent?.("字幕パネル開閉ボタン create start", {
-        alreadyExists: Boolean(document.body.querySelector("#atv-toggle-btn")),
+        alreadyExists: Boolean(getTarget().querySelector("#atv-toggle-btn")),
         panelOpen: state.panelOpen,
       });
 
-      if (document.body.querySelector("#atv-toggle-btn")) {
+      if (getTarget().querySelector("#atv-toggle-btn")) {
         logContent?.("字幕パネル開閉ボタン create skipped: already exists", {
           panelOpen: state.panelOpen,
         });
         return;
       }
 
-      // body 直下に置く固定ボタンを作る
+      // target 直下に置く固定ボタンを作る
       const btn = document.createElement("button");
       btn.id = "atv-toggle-btn";
       btn.textContent = "›";
@@ -389,11 +389,11 @@
         togglePanel();
       });
 
-      // 作ったボタンを body に追加する
-      document.body.appendChild(btn);
+      // 作ったボタンを target に追加する
+      getTarget().appendChild(btn);
 
       logContent?.("字幕パネル開閉ボタン create appended", {
-        existsAfterAppend: Boolean(document.body.querySelector("#atv-toggle-btn")),
+        existsAfterAppend: Boolean(getTarget().querySelector("#atv-toggle-btn")),
         panelOpen: state.panelOpen,
       });
 
@@ -407,6 +407,30 @@
         buttonText: btn.textContent,
       });
 
+      {
+        const rect = btn.getBoundingClientRect();
+        const style = window.getComputedStyle(btn);
+        logContent?.("字幕パネル開閉ボタン diagnostics", {
+          reason: "createToggleButton",
+          isConnected: btn.isConnected,
+          rect: {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+          },
+          display: style.display,
+          visibility: style.visibility,
+          opacity: style.opacity,
+          position: style.position,
+          zIndex: style.zIndex,
+          pointerEvents: style.pointerEvents,
+          parentTag: btn.parentElement?.tagName || null,
+          parentId: btn.parentElement?.id || null,
+          parentClassName: btn.parentElement?.className || null,
+        });
+      }
+
       // パネル表示中だけ resize 時の位置を再計算する
       window.addEventListener(
         "resize",
@@ -419,8 +443,8 @@
 
     // ボタンの矢印と位置だけを更新する
     function updateToggleButton(isOpen) {
-      // body 上の toggle button を取る
-      const btn = document.body.querySelector("#atv-toggle-btn");
+      // target 上の toggle button を取る
+      const btn = getTarget().querySelector("#atv-toggle-btn");
       if (!btn) {
         logContent?.("字幕パネル開閉ボタン update skipped: button missing", {
           requestedOpen: isOpen,
@@ -550,7 +574,27 @@
       upNextBtn.closest("li").after(wrapper);
 
       // 注入完了をログへ残す
-      logContent("injectNativeToggle: inserted");
+      {
+        const rect = wrapper.getBoundingClientRect();
+        const style = window.getComputedStyle(wrapper);
+        logContent("injectNativeToggle: inserted", {
+          isConnected: wrapper.isConnected,
+          rect: {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+          },
+          display: style.display,
+          visibility: style.visibility,
+          opacity: style.opacity,
+          position: style.position,
+          zIndex: style.zIndex,
+          parentTag: wrapper.parentElement?.tagName || null,
+          parentId: wrapper.parentElement?.id || null,
+          parentClassName: wrapper.parentElement?.className || null,
+        });
+      }
     }
 
     // 再生タブ出現を監視してネイティブトグルを差し込む
