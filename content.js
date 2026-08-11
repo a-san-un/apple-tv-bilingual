@@ -2868,18 +2868,52 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       });
 
       // 再生画面で使う UI を順番に build する
+      logContent("startBilingual ui build step", {
+        step: "before_createOverlay",
+        panelOpen: state.panelOpen,
+      });
       createOverlay();
+
+      logContent("startBilingual ui build step", {
+        step: "before_createToggleButton",
+        panelOpen: state.panelOpen,
+      });
       panelUi.createToggleButton();
+
+      logContent("startBilingual ui build step", {
+        step: "after_createToggleButton",
+        hasToggleButton: Boolean(document.body.querySelector("#atv-toggle-btn")),
+      });
       panelUi.createRightPanel();
+
+      logContent("startBilingual ui build step", {
+        step: "after_createRightPanel",
+        hasPanelHost: Boolean(document.querySelector("#atv-panel-host")),
+      });
       panelUi.watchForPlayerTabs();
+
+      logContent("startBilingual ui build step", {
+        step: "after_watchForPlayerTabs",
+        hasNativeToggle: Boolean(document.getElementById("atvb-native-toggle")),
+      });
       createPopupHost();
       createDebugPanel();
 
       // build 後に panelOpen を各 UI へ反映する
+      logContent("startBilingual ui build step", {
+        step: "before_applyPanelVisibility",
+        panelOpen: state.panelOpen,
+      });
       applyLayout(state.panelOpen);
       renderCurrentSnapshot();
       renderPanel();
       panelUi.applyPanelVisibility(state.panelOpen);
+
+      logContent("startBilingual ui build step", {
+        step: "after_applyPanelVisibility",
+        hasToggleButton: Boolean(document.body.querySelector("#atv-toggle-btn")),
+        hasPanelHost: Boolean(document.querySelector("#atv-panel-host")),
+      });
     }
 
     // restart 時は keepPanelOpen を優先する
