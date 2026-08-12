@@ -187,22 +187,41 @@ async function sendSettingsChangedWithRecovery(
     try {
       const { jsFiles, cssFiles } = getAppleTvContentScriptAssets();
 
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        files: jsFiles,
-      });
-      if (cssFiles.length > 0) {
-        await chrome.scripting.insertCSS({
+      // Bugfix-B: reinject 前に alive チェック（二重 inject 防止）
+      let alreadyAlive = false;
+      try {
+        const aliveResult = await chrome.scripting.executeScript({
           target: { tabId },
-          files: cssFiles,
+          func: () => window.__atvbContentInjected === true,
+        });
+        alreadyAlive = aliveResult?.[0]?.result === true;
+      } catch (_) {
+        alreadyAlive = false;
+      }
+
+      if (alreadyAlive) {
+        await logBackground("content script alive, skip reinject", {
+          tabId,
+          reason,
+        });
+      } else {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          files: jsFiles,
+        });
+        if (cssFiles.length > 0) {
+          await chrome.scripting.insertCSS({
+            target: { tabId },
+            files: cssFiles,
+          });
+        }
+        await logBackground("content script reinjected", {
+          tabId,
+          reason,
+          jsFiles,
+          cssFiles,
         });
       }
-      await logBackground("content script reinjected", {
-        tabId,
-        reason,
-        jsFiles,
-        cssFiles,
-      });
     } catch (injectError) {
       const injectErrorText = String(injectError);
       await logBackground("content script reinject failed", {
