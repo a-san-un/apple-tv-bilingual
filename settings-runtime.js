@@ -35,7 +35,7 @@
       cueController,
       renderSecondarySubtitle,
       syncIntervalOrchestrator,
-      mountToggleOnlyUi,
+      panelUi,
     } = deps;
 
     let initialAutoStartCleanup = null;
@@ -355,7 +355,6 @@
 
           if (state.contentSettings.extensionEnabled !== true) {
             logContent?.("initial auto-start skipped: disabled");
-            mountToggleOnlyUi?.();
           } else {
             startBilingualWhenTracksReady("initial_load");
 }
@@ -628,13 +627,13 @@
               requestedExtensionEnabled: state.requestedContentSettings.extensionEnabled,
             });
 
-            // ここに追加 ↓
             logContentSettings("ネイティブトグル OFF apply start", {
               triggerReason,
               panelOpen: state.panelOpen,
               extensionEnabled: state.contentSettings.extensionEnabled,
             });
 
+            panelUi?.destroyUiHosts?.();  // ★ Bugfix-A: OFF 時に UI を明示的に除去
             detachForDisabled();
             logContentSettings("ネイティブトグル OFF apply done", {
               triggerReason,
