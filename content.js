@@ -1209,7 +1209,9 @@ function forwardContentLog(...args) {
   
   async function updateLiveDebugPanel() {
     try {
-      await window.ATVB?.debugPanel?.update?.();
+      const root = state.debugPanelRoot;
+      if (!root) return;                         // ← root 未確立なら即 return
+      await window.ATVB?.debugPanel?.update?.(root);
     } catch (error) {
       // eslint-disable-next-line no-console
       console.warn("[ATV-Bilingual] updateLiveDebugPanel failed:", error);
