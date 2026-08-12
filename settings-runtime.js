@@ -636,7 +636,6 @@
             });
 
             detachForDisabled();
-            mountToggleOnlyUi?.();
             logContentSettings("ネイティブトグル OFF apply done", {
               triggerReason,
               panelOpen: state.panelOpen,
