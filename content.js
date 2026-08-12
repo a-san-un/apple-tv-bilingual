@@ -12,6 +12,13 @@
 
 (function () {
   ("use strict");
+
+  // 二重 inject ガード（SPA reinject 対策）
+  if (window.__atvbContentInjected) {
+    return;
+  }
+  window.__atvbContentInjected = true;
+
   const DEFAULT_SETTINGS = {
     extensionEnabled: false,
     primaryLang: "en",
