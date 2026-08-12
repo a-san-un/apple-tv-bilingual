@@ -1,4 +1,3 @@
-/* global mountToggleOnlyUi */
 // =============================================================
 // Apple TV+ Bilingual Subtitles - settings-runtime.js
 //
@@ -27,7 +26,6 @@
       logContentError,
       logContentSettings,
       getVideoAndDialog,
-      _teardownForRestart,
       detachForDisabled,
       prepareForRestart,
       startBilingual,
@@ -37,6 +35,7 @@
       cueController,
       renderSecondarySubtitle,
       syncIntervalOrchestrator,
+      mountToggleOnlyUi,
     } = deps;
 
     let initialAutoStartCleanup = null;
@@ -637,6 +636,7 @@
             });
 
             detachForDisabled();
+            mountToggleOnlyUi?.();
             logContentSettings("ネイティブトグル OFF apply done", {
               triggerReason,
               panelOpen: state.panelOpen,
