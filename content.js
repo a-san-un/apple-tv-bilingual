@@ -2120,7 +2120,7 @@ let syncIntervalOrchestrator = null;
     isPlaybackPageReady,
     getPlaybackContextLogPayload,
     getUniqueTracks: resolverDeps.getUniqueTracks,
-    cueController,
+    get cueController() { return cueController; },
     renderSecondarySubtitle,
     get syncIntervalOrchestrator() { return syncIntervalOrchestrator; },
     mountToggleOnlyUi: () => panelUi?.watchForPlayerTabs?.(),
@@ -2157,7 +2157,7 @@ let syncIntervalOrchestrator = null;
 
   const initialCueRecovery = window.ATVB?.createInitialCueRecovery?.({
     state,
-    cueController,
+    get cueController() { return cueController; },
     services: {
       logContent,
       panelUi,

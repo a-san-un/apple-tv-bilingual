@@ -1396,6 +1396,15 @@
       }
     }
 
+    // インスタンスが不要になったとき内部リソースを解放する。
+    // unbind → 内部依存モジュールの destroy の順で呼ぶ。
+    function destroy() {
+      unbindPrimarySubtitleTrack();
+      unbindSecondarySubtitleTrack({ restoreMode: false });
+      secondaryTrackRecovery?.destroy?.();
+      cueRenderCoordinator?.destroy?.();
+    }
+
     return {
       ensureSubtitleTracksUsable,
       getBoundPrimaryTrack,
@@ -1413,6 +1422,7 @@
       getLaneStates: () => secondaryTrackRecovery?.laneStates || null,
       resetSecondaryRecoveryLane,
       evaluateSecondaryRecovery,
+      destroy,                          // ← 追加
     };
   }
 

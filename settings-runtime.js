@@ -633,6 +633,7 @@
               extensionEnabled: state.contentSettings.extensionEnabled,
             });
 
+            cueController?.restoreNativeSubtitles?.();  // ★ Bugfix-E: ネイティブ字幕を復元（追加）
             panelUi?.destroyUiHosts?.();  // ★ Bugfix-A: OFF 時に UI を明示的に除去
             detachForDisabled();
             logContentSettings("ネイティブトグル OFF apply done", {
@@ -669,16 +670,8 @@
               keepPanelOpen: state.panelOpen,
             },
           );
-
-          if (state.video && state.contentSettings.secondaryLang) {
-            cueController.syncSecondarySubtitleTrack(
-              state.video,
-              state.contentSettings.secondaryLang,
-              renderSecondarySubtitle,
-            );
-            state.secondaryTrack = cueController.getBoundSecondaryTrack();
-            cueController.onPrimaryCueChange?.();
-          }
+          // D-2: syncSecondarySubtitleTrack / onPrimaryCueChange は
+          // restartBilingual → startBilingual 内で呼ばれるため、ここでの二重呼び出しを削除。
 
           logContentSettings("content applied settings to tracks", {
             triggerReason,

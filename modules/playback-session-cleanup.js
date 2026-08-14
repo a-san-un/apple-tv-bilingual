@@ -69,6 +69,7 @@
 
       cueController?.handoffPrimarySubtitleToNative?.();
       cueController?.unbindSecondarySubtitleTrack?.({ restoreMode: false });
+      cueController?.destroy?.();       // ← 追加
     }
 
     // extensionEnabled=false 用の cleanup。
@@ -87,6 +88,7 @@
 
       cueController?.handoffPrimarySubtitleToNative?.();
       cueController?.unbindSecondarySubtitleTrack?.({ restoreMode: true });
+      cueController?.destroy?.();       // ← 追加
     }
 
     // 再起動前に、再生セッション由来の一時 state だけを初期化する。
