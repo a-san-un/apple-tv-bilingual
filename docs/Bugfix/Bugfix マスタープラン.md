@@ -1,6 +1,5 @@
-
-## Bugfix マスタープラン 2026-08-13（改訂版）
-**作成日:** 2026-08-13 ／ **ブランチ:** issue-32-content-core-split
+## Bugfix マスタープラン 2026-08-14（改訂版）
+**作成日:** 2026-08-13 ／ **最終更新:** 2026-08-14 ／ **ブランチ:** issue-32-content-core-split
 **入口資料：** 新しいスレッドでもこの資料1枚を読めばプロジェクトの文脈がわかります。
 
 ***
@@ -14,6 +13,7 @@
 | 資料③ | Bugfix 実装シート | 今の症状・今やる修正箇所・検証手順 | 完了で archive |
 | 資料④ | Bugfix 将来作業計画 | 将来作業の計画 | 残っている計画だけにする |
 | 資料⑤ | Bugfix-ABCD-plan | 辞書 | 参考資料 |
+
 ***
 
 ## 最終目標
@@ -47,84 +47,80 @@
 
 ***
 
-## 現状精査（2026-08-13 時点）
+## 現状精査（2026-08-14 テスト結果反映）
 
-前回セッションのログ・コード確認から判明した事実：
-
-### ✅ 完了済み
+### ✅ 完了済み・動作確認済み
 
 - `vtt-normalizer.js`、`debug-logger.js` など多数のモジュールが `content_scripts` に正しく列挙されている
-- `state.booted` フラグは `content.js` 内に存在する（ただし early-return ガードは未実装）
-- `manifest.json` の `content_scripts` エントリ自体は1つで、二重 inject の直接原因ではないことを確認
+- `state.booted` フラグは `content.js` 内に存在する
+- manifest.json の `content_scripts` エントリ自体は1つ（二重 inject の直接原因ではないことを確認）
+- **字幕パネル表示・primary / secondary 同期は正常動作**（2026-08-14 実機確認済み）
+- **二重表示・ちらつきなし**（Bugfix-D2 / settings-runtime.js 変更の部分効果）
+- **restart 後の復帰は字幕パネル開時に限り動作する**
 
-### 🔴 未完了（着手中）— Bugfix-D
+### 🔴 未完了・不具合（2026-08-14 テスト判明）
 
-- `content.js` 先頭に **`window.__atvbContentInjected` ガードが存在しない**
-  - `content message listener registered` が同一 ms に2回出力されており、リスナー二重登録が発生中
-  - SPA ナビゲーション時の reinject で二重起動が再現することを確認
-- `restartBilingual` の二重呼び出しが解消されていない（panel/overlay/toggle が DOM に出ない根本原因）
+#### F-1: パネル閉じ時オーバーレイ字幕が消える（新規・高優先）
+- **症状:** 字幕パネルを閉じると、オーバーレイ字幕（画面上の2言語表示）も消える
+- **原因仮説:** `panelOpen=false` の状態変化がオーバーレイの表示制御に誤って連動している
+- **調査対象:** `content.js` の `panelOpen` 変更ハンドラ → オーバーレイ表示フロー
 
-### ⏸ 未着手 — Bugfix-A
+#### F-2: restart 後にネイティブトグルが表示されない（新規・高優先）
+- **症状:** 別エピソード移動時・別作品を開いたとき、`#atvb-native-toggle` が DOM に出ない
+- **字幕パネルを開閉すると復帰する**ため、初期化フローの途中で止まっていると推定
+- **原因仮説:** `restartBilingual` が UI 再構築を完走していない（ネイティブトグル再生成が抜けている）
+- **調査対象:** `restartBilingual` → `startBilingual` → ネイティブトグル生成フロー
 
-- OFF 時の `apply start → apply done` が 3ms で完了しており、実質 **`destroyUiHosts()` が呼ばれていない**ことを確認
-- `settings-runtime.js` の OFF ブランチに `destroyUiHosts()` の呼び出しが欠落している
+#### F-3: 言語設定変更が再起動なしに反映されない（新規）
+- **症状:** secondary を ja→ko に変えてもメインしか表示されない。ja/en 以外は表示されなくなる
+- **原因仮説:** `applySettingsAsync` が言語変更時に字幕トラック再バインドを行っていない（設定反映が設定保存に留まり、動作中のトラック制御まで届いていない）
+- **調査対象:** `settings-runtime.js` の `applySettingsAsync` → `bindPrimarySubtitleTrack` / `bindSecondarySubtitleTrack` 呼び出し経路
 
-### ⏸ 未着手 — Bugfix-E / B / C
+#### F-4: メッセージチャネルクローズエラー（新規）
+- **症状:** `Uncaught (in promise) Error: A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received`
+- **発生箇所:** `applySettingsAsync @ settings-runtime.js:663` / `onRuntimeMessage @ settings-runtime.js:690`
+- **原因:** `onRuntimeMessage` が `true` を返して非同期応答を宣言しているが、`sendResponse` を呼ばずに処理が終わるケースがある
+- **影響:** 初回のみ発生・その後は再現しない（チャネル生存期間とタイミングの問題）
 
-- Bugfix-D・A が完了するまで着手しない
+#### F-5: Bugfix-E（ネイティブ字幕復元）未動作
+- **症状:** OFF 後にネイティブ字幕が表示されない
+- **状態:** 未着手（F-1/F-2 より後）
+
+#### F-6: デバッグパネルが OFF 時に確認不可（運用上の問題）
+- **症状:** トグル OFF 時はデバッグパネルが表示できず、ログ確認が不能
+- **暫定対策:** F12 コンソールで直接確認するしかない
 
 ***
 
-## Bugfix 依存ツリー
+## Bugfix 依存ツリー（2026-08-14 更新）
 
 ```
 【根本症状】
-  UI が再生ページで初期化されない
-  （panel / overlay / toggle がすべて null）
+  restart 後に UI が部分的にしか復元されない
+  （ネイティブトグルが出ない、パネル閉でオーバーレイ消える）
         ↓
-  [Bugfix-D] init/destroy 経路の二重所有を修正　← 最優先・基盤
-        ↓ UI が DOM に出るようになったら
-  [Bugfix-A] OFF 時の全 UI destroy を完成させる
-        ↓ destroy が確実にできたら
-  [Bugfix-E] OFF 時にネイティブ字幕 track を復元する
-        ↓ 副作用を確認しながら
-  [Bugfix-B/C] module 初期化順・recovery module（後回し可）
+  [F-2] restart 後のネイティブトグル生成漏れを修正　← 最優先
+        ↓
+  [F-1] panelOpen=false がオーバーレイを停止させている誤連動を切り離す
+        ↓
+  [F-3] 言語設定変更時のトラック再バインドを実装する
+        ↓
+  [F-4] onRuntimeMessage の sendResponse 漏れを修正する
+        ↓
+  [F-5=Bugfix-E] OFF 時のネイティブ字幕 track 復元
 ```
 
 ***
 
-## 優先順位テーブル（2026-08-13 改訂）
+## 優先順位テーブル（2026-08-14 改訂）
 
-| 順序 | Bugfix | やること | 完成の判定 | 状態 |
+| 順序 | ID | やること | 完成の判定 | 状態 |
 |---|---|---|---|---|
-| ① 今すぐ | D-1 | `content.js` 先頭に `window.__atvbContentInjected` ガード追加 | `startup completed` が 1 回のみ、リスナー登録も 1 回のみ | 🔴 **着手中・未適用** |
-| ② 今すぐ | D-2 | `restartBilingual` 二重呼び出し解消 | panel / overlay / toggle が DOM に出る | 🔴 **着手中** |
-| ③ 次 | A | `settings-runtime.js` OFF ブランチに `destroyUiHosts()` 追加 | OFF で全要素 null・native toggle だけ残る | ⏸ D 完了後 |
-| ④ その次 | E | OFF → `subtitle track.mode` を `showing` に戻す | Apple TV+ 字幕が OFF 後に動く | ⏸ A 完了後 |
-| ⑤ 後回し | B/C | module 初期化順・recovery module 修正 | `recovery_module_unavailable` ログが消える | ⏸ A/E 後 |
-
-***
-
-## 次の具体的アクション（D-1）
-
-`content.js` の IIFE 冒頭に以下を追加するだけで二重起動を防止できます：
-
-```js
-(function () {
-  ("use strict");
-
-  // ★ Bugfix-D-1: 二重 inject ガード
-  if (window.__atvbContentInjected) {
-    console.warn('[ATVB] content.js already injected, skipping.');
-    return;
-  }
-  window.__atvbContentInjected = true;
-
-  // --- 既存コードここから ---
-  const DEFAULT_SETTINGS = { ... };
-```
-
-適用後、`content message listener registered` が **1 回だけ** になることをログで確認してから D-2 に進んでください。
+| ① 今すぐ | F-2 | `restartBilingual` 後のネイティブトグル再生成を保証する | 別エピソード移動後も `#atvb-native-toggle` が DOM に存在する | 🔴 未着手 |
+| ② 今すぐ | F-1 | `panelOpen` 変更がオーバーレイ表示を停止しないようにする | パネルを閉じても画面上のオーバーレイ字幕が表示され続ける | 🔴 未着手 |
+| ③ 次 | F-3 | 言語設定変更時にトラック再バインドを実行する | ja→ko 変更後すぐに secondary が切り替わる | 🔴 未着手 |
+| ④ 次 | F-4 | `onRuntimeMessage` の `sendResponse` 漏れを修正する | コンソールにチャネルクローズエラーが出なくなる | 🔴 未着手 |
+| ⑤ その後 | F-5 | OFF 時に subtitle track.mode を `showing` に戻す | Apple TV+ 字幕が OFF 後に動く | ⏸ F-1/2 後 |
 
 ***
 
@@ -134,5 +130,3 @@
 - AI tooltip / 単語ポップアップ機能
 - `overlay-block-resolver` の挙動変更
 - パフォーマンス最適化
-
-情報源
