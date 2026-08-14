@@ -13,6 +13,7 @@
 | 資料③ | Bugfix 実装シート | 今の症状・今やる修正箇所・検証手順 | 完了で archive |
 | 資料④ | Bugfix 将来作業計画 | 将来作業の計画 | 残っている計画だけにする |
 | 資料⑤ | Bugfix-ABCD-plan | 辞書 | 参考資料 |
+| 資料⑥ | Bugfix-仕様確定書 | 確定仕様の正本 | 仕様変更時のみ更新 |
 
 ***
 
@@ -73,7 +74,7 @@
 
 #### F-3: 言語設定変更が再起動なしに反映されない（新規）
 - **症状:** secondary を ja→ko に変えてもメインしか表示されない。ja/en 以外は表示されなくなる
-- **原因仮説:** `applySettingsAsync` が言語変更時に字幕トラック再バインドを行っていない（設定反映が設定保存に留まり、動作中のトラック制御まで届いていない）
+- **原因仮説:** `applySettingsAsync` が言語変更時に字幕トラック再バインドを行っていない
 - **調査対象:** `settings-runtime.js` の `applySettingsAsync` → `bindPrimarySubtitleTrack` / `bindSecondarySubtitleTrack` 呼び出し経路
 
 #### F-4: メッセージチャネルクローズエラー（新規）
@@ -84,6 +85,7 @@
 
 #### F-5: Bugfix-E（ネイティブ字幕復元）未動作
 - **症状:** OFF 後にネイティブ字幕が表示されない
+- **実装方針:** `cue-controller.js` の `restoreNativeSubtitles()` を呼ぶ（仕様確定書 §2 参照）
 - **状態:** 未着手（F-1/F-2 より後）
 
 #### F-6: デバッグパネルが OFF 時に確認不可（運用上の問題）
@@ -107,7 +109,7 @@
         ↓
   [F-4] onRuntimeMessage の sendResponse 漏れを修正する
         ↓
-  [F-5=Bugfix-E] OFF 時のネイティブ字幕 track 復元
+  [F-5=Bugfix-E] cue-controller.restoreNativeSubtitles() でネイティブ字幕 track 復元
 ```
 
 ***
@@ -120,13 +122,15 @@
 | ② 今すぐ | F-1 | `panelOpen` 変更がオーバーレイ表示を停止しないようにする | パネルを閉じても画面上のオーバーレイ字幕が表示され続ける | 🔴 未着手 |
 | ③ 次 | F-3 | 言語設定変更時にトラック再バインドを実行する | ja→ko 変更後すぐに secondary が切り替わる | 🔴 未着手 |
 | ④ 次 | F-4 | `onRuntimeMessage` の `sendResponse` 漏れを修正する | コンソールにチャネルクローズエラーが出なくなる | 🔴 未着手 |
-| ⑤ その後 | F-5 | OFF 時に subtitle track.mode を `showing` に戻す | Apple TV+ 字幕が OFF 後に動く | ⏸ F-1/2 後 |
+| ⑤ その後 | F-5 | `cue-controller.restoreNativeSubtitles()` でネイティブ字幕 track を復元する | Apple TV+ 字幕が OFF 後に動く | ⏸ F-1/2 後 |
 
 ***
 
 ## スコープ外（このフェーズでは触らない）
 
 - Issue-32 のリファクタ（`content.js` 分割）本体
+  - ただし **バグ調査中に「ここが読みにくい」と感じた箇所を先行して整理することは妨げない**
+  - 整理はバグ修正の完了を条件としない。調査の障害になる部分は随時整理してよい
 - AI tooltip / 単語ポップアップ機能
 - `overlay-block-resolver` の挙動変更
 - パフォーマンス最適化

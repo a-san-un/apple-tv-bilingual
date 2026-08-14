@@ -176,16 +176,17 @@ function onRuntimeMessage(message, sender, sendResponse) {
 
 **ファイル:** `settings-runtime.js`（`extensionEnabled === false` ブランチ）
 
+**仕様:** `cue-controller.js` の `restoreNativeSubtitles()` を使う（仕様確定書 §2 参照）。
+この関数は `primaryTrackOriginalMode`（bind 前に保存した元の mode）に track.mode を戻す。
+拡張が track.mode の値を自分で決定しないことが重要。
+
 **修正方針:**
 
 ```js
+// settings-runtime.js の OFF ブランチ
 if (!extensionEnabled) {
-  destroyUiHosts();
-
-  // ★ F-5: OFF 時にネイティブ字幕を復元する
-  const tracks = Array.from(document.querySelectorAll('video track[kind="subtitles"], video track[kind="captions"]'));
-  tracks.forEach(t => { t.mode = 'showing'; });
-
+  cueController?.restoreNativeSubtitles?.();  // ★ F-5: 元の mode に戻す（値は自分で決めない）
+  destroyUiHosts();                           // ★ Bugfix-A: UI を破棄
   applyDone();
   return;
 }
@@ -203,64 +204,34 @@ console.log('native-toggle:', document.getElementById('atvb-native-toggle'));
 console.log('panel-root:', document.getElementById('atv-panel-root'));
 console.log('overlay-root:', document.getElementById('atv-overlay-root'));
 
-// === パネル閉直後のオーバーレイ状態 ===
-// パネルを閉じた直後に実行する
-console.log('overlay display:', document.getElementById('atv-overlay-root')?.style.display);
-console.log('overlay hidden:', document.getElementById('atv-overlay-root')?.hidden);
-console.log('overlay class:', document.getElementById('atv-overlay-root')?.className);
+// === TextTrack の mode 状態確認 ===
+Array.from(document.querySelector('video')?.textTracks ?? [])
+  .forEach(t => console.log(t.language, t.kind, t.mode));
 
-// === 字幕トラック状態確認 ===
-Array.from(document.querySelectorAll('video track')).forEach(t =>
-  console.log(t.kind, t.srclang, t.mode)
-);
+// === panelOpen の現在値確認 ===
+chrome.storage.local.get(['panelOpen'], r => console.log('panelOpen:', r.panelOpen));
+chrome.storage.sync.get(['extensionEnabled'], r => console.log('extensionEnabled:', r.extensionEnabled));
 ```
 
 ---
 
-## 検証手順
+## 検証チェックリスト
 
 ### F-2 検証
-
-1. 再生中のエピソードから別エピソードへ移動（SPA ナビ）
-2. 上記「DOM 状態確認」コマンドを実行
-3. `#atvb-native-toggle` が **null でない** こと
-4. `#atv-panel-root` `#atv-overlay-root` が **null でない** こと
+- [ ] 別エピソードに移動した直後（パネル操作なし）で `#atvb-native-toggle` が DOM に存在する
+- [ ] 別作品を開いた直後（パネル操作なし）で `#atvb-native-toggle` が DOM に存在する
 
 ### F-1 検証
-
-1. 字幕パネルが開いている状態で「閉じる」ボタンを押す
-2. `#atv-overlay-root` の表示状態確認コマンドを実行
-3. `display: none` / `hidden: true` でないこと（オーバーレイが残っていること）
-4. 画面上に2言語字幕が表示されていること
+- [ ] 字幕パネルを閉じた後もオーバーレイ字幕（画面上の2言語表示）が表示され続ける
+- [ ] `extensionEnabled=ON` の状態で `panelOpen` を切り替えてもオーバーレイに影響がない
 
 ### F-3 検証
-
-1. Settings で secondary を `ja` → `ko` に変更
-2. secondary のトラック srclang が `ko` に変わること（字幕トラック状態確認コマンドで確認）
-3. 実際に韓国語字幕が表示されること
+- [ ] オプション画面で secondary を `ja` → `ko` に変更した直後に secondary 字幕が切り替わる
+- [ ] `ja` / `en` 以外の言語を選択しても secondary が表示される
 
 ### F-4 検証
+- [ ] F12 コンソールにチャネルクローズエラーが出なくなる（初回ロード時も含む）
 
-1. ON/OFF 切り替えを繰り返す
-2. F12 コンソールにチャネルクローズエラーが出ないこと
-
----
-
-## 完了条件（シート archive の判断基準）
-
-- [ ] F-2: 別エピソード移動後も `#atvb-native-toggle` が DOM に存在する
-- [ ] F-1: パネルを閉じてもオーバーレイ字幕が表示される
-- [ ] F-3: 言語変更が即時反映される（ja/en 以外も動作）
-- [ ] F-4: チャネルクローズエラーがコンソールに出ない
-- [ ] F-5: OFF 後にネイティブ字幕が復元される（最後）
-
-上記がすべて ✅ になったら、このシートを `docs/Bugfix/archive/` へ移動してください。
-
----
-
-## スコープ外（このシートでは扱わない）
-
-- Issue-32 リファクタ（`content.js` 分割）本体
-- AI tooltip / 単語ポップアップ機能
-- `overlay-block-resolver` の挙動変更
-- パフォーマンス最適化
+### F-5 検証
+- [ ] トグル OFF 後に Apple TV+ のネイティブ字幕設定から字幕を有効にできる
+- [ ] 字幕の二重表示や競合が発生しない
