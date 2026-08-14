@@ -1,0 +1,271 @@
+<mxfile host="65bd71144e">
+    <diagram id="apple-tv-footer1" name="Apple TV+ Footer (source-accurate)">
+        <mxGraphModel dx="4891" dy="1815" grid="1" gridSize="10" guides="1" tooltips="1" connect="0" arrows="0" fold="1" page="1" pageScale="1" pageWidth="1653" pageHeight="220" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="footerBg" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#171717;opacity=90;strokeColor=none;" parent="1" vertex="1">
+                    <mxGeometry width="1653" height="220" as="geometry"/>
+                </mxCell>
+                <mxCell id="metaSubtitle" value="シーズン3、エピソード3 · ダークウェブ" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#BDBDBD;fontSize=14;align=left;" parent="1" vertex="1">
+                    <mxGeometry x="30" y="10" width="420" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="metaTitle" value="サイロ" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#FFFFFF;fontSize=26;fontStyle=1;align=left;" parent="1" vertex="1">
+                    <mxGeometry x="30" y="28" width="220" height="34" as="geometry"/>
+                </mxCell>
+                <mxCell id="elapsed" value="13:59" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#E2E2E2;fontSize=13;align=left;" parent="1" vertex="1">
+                    <mxGeometry x="30" y="72" width="50" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="progressRangeShadow" value="" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#F6F6F6;opacity=36;strokeColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="82" y="79" width="1488" height="3" as="geometry"/>
+                </mxCell>
+                <mxCell id="progressTrack" value="" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#5E5E5E;opacity=68;strokeColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="82" y="79" width="1488" height="4" as="geometry"/>
+                </mxCell>
+                <mxCell id="progressFill" value="" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="82" y="79" width="331" height="4" as="geometry"/>
+                </mxCell>
+                <mxCell id="progressThumb" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="406" y="73" width="14" height="14" as="geometry"/>
+                </mxCell>
+                <mxCell id="remaining" value="-39:24" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#E2E2E2;fontSize=13;align=right;" parent="1" vertex="1">
+                    <mxGeometry x="1573" y="72" width="50" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="controlsContainerGuide" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#4A4A4A;dashed=1;" parent="1" vertex="1">
+                    <mxGeometry x="1407" y="105" width="216" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="captionsSvg" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%2280.2%2031.67%20107.62%20101.03%22%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22M110.23%20132.697c2.393%200%204.053-1.27%207.032-3.907l16.846-14.99h31.347c14.551%200%2022.363-8.056%2022.363-22.363V54.035c0-14.307-7.812-22.364-22.363-22.364h-62.89c-14.551%200-22.364%208.008-22.364%2022.364v37.402c0%2014.355%207.813%2022.363%2022.364%2022.363h2.343v12.695c0%203.76%201.905%206.202%205.323%206.202Zm2.003-8.936v-14.16c0-2.637-1.026-3.662-3.663-3.662h-6.005c-9.864%200-14.502-5.03-14.502-14.55V54.034c0-9.522%204.638-14.502%2014.502-14.502h62.89c9.815%200%2014.502%204.98%2014.502%2014.502v37.353c0%209.522-4.687%2014.55-14.502%2014.55h-31.64c-2.735%200-4.102.391-5.957%202.296ZM103.15%2078.4h20.117c1.562%200%202.832-1.27%202.832-2.881%200-1.514-1.27-2.783-2.832-2.783H103.15c-1.563%200-2.832%201.27-2.832%202.783%200%201.611%201.269%202.88%202.832%202.88Zm30.224%200h31.592c1.562%200%202.783-1.27%202.783-2.881a2.782%202.782%200%200%200-2.783-2.783h-31.592c-1.562%200-2.832%201.27-2.832%202.783%200%201.611%201.27%202.88%202.832%202.88Zm-30.224%2012.744h8.3a2.751%202.751%200%200%200%202.784-2.783c0-1.612-1.221-2.881-2.784-2.881h-8.3c-1.563%200-2.832%201.27-2.832%202.88%200%201.563%201.269%202.784%202.832%202.784Zm18.359%200h24.463c1.562%200%202.832-1.22%202.832-2.783%200-1.612-1.27-2.881-2.832-2.881H121.51c-1.563%200-2.783%201.27-2.783%202.88a2.751%202.751%200%200%200%202.783%202.784Zm34.57%200h8.887a2.751%202.751%200%200%200%202.783-2.783c0-1.612-1.22-2.881-2.783-2.881h-8.887c-1.562%200-2.832%201.27-2.832%202.88%200%201.563%201.27%202.784%202.832%202.784Z%22/%3E%3C/svg%3E;strokeColor=none;fillColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="1407" y="107" width="20" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="audioSvg" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20version=%221.1%22%20viewBox=%2284.21%2029.23%2099.61%2099.61%22%3E%3Cg%20transform=%22matrix(1%200%200%201%2075.46503906249995%20114.2884521484375)%22%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22M58.5449%2014.5508C85.791%2014.5508%20108.35-8.05664%20108.35-35.2539C108.35-62.5%2085.7422-85.0586%2058.4961-85.0586C31.2988-85.0586%208.74023-62.5%208.74023-35.2539C8.74023-8.05664%2031.3477%2014.5508%2058.5449%2014.5508ZM58.5449%206.25C35.498%206.25%2017.0898-12.207%2017.0898-35.2539C17.0898-58.3008%2035.4492-76.7578%2058.4961-76.7578C81.543-76.7578%20100-58.3008%20100.049-35.2539C100.098-12.207%2081.5918%206.25%2058.5449%206.25ZM53.5645-3.32031C55.1758-3.32031%2056.4453-4.58984%2056.4453-6.29883L56.4453-64.3066C56.4453-65.9668%2055.1758-67.2363%2053.5645-67.2363C51.9043-67.2363%2050.5859-65.9668%2050.5859-64.3066L50.5859-6.29883C50.5859-4.54102%2051.8555-3.32031%2053.5645-3.32031ZM73.3398-10.1562C75-10.1562%2076.2695-11.4258%2076.2695-13.0859L76.2695-57.5195C76.2695-59.1797%2075-60.4492%2073.3398-60.4492C71.6797-60.4492%2070.4102-59.1797%2070.4102-57.5195L70.4102-13.0859C70.4102-11.4258%2071.6797-10.1562%2073.3398-10.1562ZM43.6523-16.3086C45.3125-16.3086%2046.582-17.627%2046.582-19.2871L46.582-51.3672C46.582-53.0273%2045.3125-54.2969%2043.6523-54.2969C41.9922-54.2969%2040.7227-53.0273%2040.7227-51.3672L40.7227-19.2871C40.7227-17.627%2041.9922-16.3086%2043.6523-16.3086ZM63.4277-20.2148C65.0879-20.2148%2066.3574-21.5332%2066.3574-23.1445L66.3574-47.4609C66.3574-49.0723%2065.0879-50.3906%2063.4277-50.3906C61.8164-50.3906%2060.498-49.0723%2060.498-47.4609L60.498-23.1445C60.498-21.5332%2061.8164-20.2148%2063.4277-20.2148ZM83.3008-25.6348C84.9609-25.6348%2086.1816-26.8555%2086.1816-28.5645L86.1816-42.041C86.1816-43.75%2084.9609-44.9707%2083.3008-44.9707C81.5918-44.9707%2080.3223-43.7012%2080.3223-42.041L80.3223-28.5645C80.3223-26.9043%2081.5918-25.6348%2083.3008-25.6348ZM33.6914-28.0762C35.4004-28.0762%2036.6699-29.3945%2036.6699-31.0059L36.6699-39.5996C36.6699-41.2109%2035.4004-42.5293%2033.6914-42.5293C32.0801-42.5293%2030.8105-41.2109%2030.8105-39.5996L30.8105-31.0059C30.8105-29.3945%2032.0801-28.0762%2033.6914-28.0762Z%22/%3E%3C/g%3E%3C/svg%3E;strokeColor=none;fillColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="1441" y="105" width="24" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="shareSvg" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2086.639%20110.16%22%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22M15.318%20110.16H71.32c10.233%200%2015.32-5.107%2015.32-15.163v-48.65c0-10.067-5.087-15.165-15.319-15.165H57.736v7.896h13.46c4.784%200%207.591%202.62%207.591%207.652v47.884c-.001%205.083-2.808%207.64-7.591%207.64H15.444c-4.878.001-7.591-2.556-7.591-7.639V46.73c0-5.032%202.713-7.652%207.59-7.652h13.481v-7.895H15.318C5.138%2031.183%200%2036.26%200%2046.346v48.651c0%2010.077%205.138%2015.163%2015.318%2015.163%22/%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22M43.294%2071.932c2.124%200%203.926-1.752%203.926-3.823V18.013l-.32-7.34%203.27%203.489%207.403%207.868a3.66%203.66%200%200%200%202.642%201.16c2.051%200%203.595-1.44%203.595-3.398%200-1.088-.435-1.844-1.202-2.56L46.122%201.306C45.148.332%2044.33%200%2043.294%200c-.985%200-1.814.332-2.829%201.305L23.97%2017.233c-.716.715-1.151%201.471-1.151%202.559%200%201.958%201.481%203.398%203.543%203.398.933%200%201.98-.394%202.684-1.16l7.412-7.868%203.282-3.5-.321%207.351V68.11c0%202.07%201.803%203.822%203.875%203.822%22/%3E%3C/svg%3E;strokeColor=none;fillColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="1481" y="106" width="24" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="fullscreenSvg" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%2287.48%2032.45%2093.07%2093.16%22%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22M91.969%2071.954c2.587%200%204.443-1.953%204.443-4.54v-4.102l-.977-17.041%2012.842%2013.525%2015.04%2015.137c.83.879%201.903%201.27%203.075%201.27%202.784%200%204.834-1.807%204.834-4.542%200-1.318-.44-2.49-1.318-3.369L114.82%2053.253l-13.525-12.842%2017.09.977h4.052c2.588%200%204.59-1.807%204.59-4.443%200-2.637-1.953-4.492-4.59-4.492h-27.1c-4.98%200-7.86%202.88-7.86%207.86v27.1c0%202.54%201.904%204.541%204.492%204.541Zm53.564%2053.663h27.1c4.98%200%207.91-2.881%207.91-7.862v-27.1c0-2.538-1.905-4.54-4.54-4.54-2.54%200-4.445%201.953-4.445%204.54v4.102l1.026%2017.041-12.89-13.525-14.991-15.137c-.83-.879-1.953-1.27-3.125-1.27-2.734%200-4.834%201.807-4.834%204.542%200%201.318.488%202.49%201.367%203.369l15.04%2015.039%2013.573%2012.842-17.09-.977h-4.101c-2.588%200-4.59%201.807-4.59%204.443%200%202.637%202.002%204.493%204.59%204.493Z%22/%3E%3C/svg%3E;strokeColor=none;fillColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="1519" y="107" width="20" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="fullscreenLabel" value="フルスクリーン" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#FFFFFF;fontSize=12;align=left;" parent="1" vertex="1">
+                    <mxGeometry x="1543" y="107" width="80" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="infoTab" value="情報" style="rounded=1;arcSize=18;whiteSpace=wrap;html=1;fillColor=#2B2B2B;strokeColor=#5B5B5B;fontColor=#FFFFFF;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+                    <mxGeometry x="34" y="154" width="58" height="32" as="geometry"/>
+                </mxCell>
+                <mxCell id="upNextTab" value="続きを観る" style="rounded=1;arcSize=18;whiteSpace=wrap;html=1;fillColor=#2B2B2B;strokeColor=#FFFFFF;fontColor=#FFFFFF;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="154" width="103" height="32" as="geometry"/>
+                </mxCell>
+                <mxCell id="128" value="" style="group" parent="1" vertex="1" connectable="0">
+                    <mxGeometry x="-20" y="730" width="1653" height="620" as="geometry"/>
+                </mxCell>
+                <mxCell id="131" value="" style="group" parent="128" vertex="1" connectable="0">
+                    <mxGeometry y="70" width="1653" height="370" as="geometry"/>
+                </mxCell>
+                <mxCell id="73" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#171717;opacity=90;strokeColor=none;movable=1;resizable=1;rotatable=1;deletable=1;editable=1;locked=0;connectable=1;" parent="131" vertex="1">
+                    <mxGeometry x="20" width="1653" height="370" as="geometry"/>
+                </mxCell>
+                <mxCell id="74" value="情報" style="rounded=1;arcSize=18;whiteSpace=wrap;html=1;fillColor=#2B2B2B;strokeColor=#FFFFFF;fontColor=#FFFFFF;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" parent="131" vertex="1">
+                    <mxGeometry x="30" y="16" width="58" height="32" as="geometry"/>
+                </mxCell>
+                <mxCell id="75" value="続きを観る" style="rounded=1;arcSize=18;whiteSpace=wrap;html=1;fillColor=#2B2B2B;strokeColor=#5B5B5B;fontColor=#FFFFFF;fontSize=14;align=center;verticalAlign=middle;" parent="131" vertex="1">
+                    <mxGeometry x="96" y="16" width="103" height="32" as="geometry"/>
+                </mxCell>
+                <mxCell id="76" value="" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#14212C;strokeColor=#3A3A3A;" parent="131" vertex="1">
+                    <mxGeometry x="30" y="70" width="400" height="225" as="geometry"/>
+                </mxCell>
+                <mxCell id="77" value="artwork-component (400x225)" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#8A8A8A;fontSize=11;align=center;verticalAlign=middle;" parent="131" vertex="1">
+                    <mxGeometry x="30" y="70" width="400" height="225" as="geometry"/>
+                </mxCell>
+                <mxCell id="127" value="" style="group" parent="131" vertex="1" connectable="0">
+                    <mxGeometry x="820" y="120" width="150" height="114" as="geometry"/>
+                </mxCell>
+                <mxCell id="118" value="" style="group" parent="127" vertex="1" connectable="0">
+                    <mxGeometry y="72" width="150" height="42" as="geometry"/>
+                </mxCell>
+                <mxCell id="119" value="" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#2B2B2B;strokeColor=#4A4A4A;" parent="118" vertex="1">
+                    <mxGeometry width="150" height="42" as="geometry"/>
+                </mxCell>
+                <mxCell id="120" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2020.733%2020.379%22%3E%3Cg%20fill=%22%23FFFFFF%22%3E%3Cpath%20d=%22M10.185%2020.37c5.625%200%2010.187-4.563%2010.187-10.186C20.372%204.563%2015.81%200%2010.185%200%204.562%200%200%204.562%200%2010.185c0%205.622%204.562%2010.184%2010.185%2010.184m0-2.239a7.94%207.94%200%200%201-7.947-7.946%207.94%207.94%200%200%201%207.947-7.947%207.943%207.943%200%200%201%207.95%207.947%207.943%207.943%200%200%201-7.95%207.946%22/%3E%3Cpath%20d=%22M8.479%2015.486h3.897c.456%200%20.815-.33.815-.796%200-.437-.36-.783-.815-.783h-.994v-4.34c0-.615-.307-1.02-.886-1.02H8.654c-.46%200-.815.35-.815.787%200%20.466.356.796.815.796h.942v3.777H8.48c-.457%200-.816.346-.816.783%200%20.465.36.796.816.796m1.664-8.364c.757%200%201.357-.61%201.357-1.357%200-.762-.6-1.366-1.357-1.366a1.361%201.361%200%200%200%200%202.723%22/%3E%3C/g%3E%3C/svg%3E;strokeColor=none;fillColor=none;" parent="118" vertex="1">
+                    <mxGeometry x="16" y="13" width="16" height="16" as="geometry"/>
+                </mxCell>
+                <mxCell id="123" value="" style="group" parent="127" vertex="1" connectable="0">
+                    <mxGeometry width="150" height="42" as="geometry"/>
+                </mxCell>
+                <mxCell id="124" value="" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#2B2B2B;strokeColor=#4A4A4A;" parent="123" vertex="1">
+                    <mxGeometry width="150" height="42" as="geometry"/>
+                </mxCell>
+                <mxCell id="125" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%2216%22%20height=%2216%22%20viewBox=%220%200%2016%2016%22%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22m4.4%2015.14%2010.386-6.096c.842-.459.794-1.64%200-2.097L4.401.85c-.87-.53-2-.12-2%20.82v12.625c0%20.966%201.06%201.4%202%20.844z%22/%3E%3C/svg%3E;strokeColor=none;fillColor=none;" parent="123" vertex="1">
+                    <mxGeometry x="16" y="13" width="16" height="16" as="geometry"/>
+                </mxCell>
+                <mxCell id="129" value="" style="group" parent="131" vertex="1" connectable="0">
+                    <mxGeometry x="460" y="70" width="400" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="78" value="ダークウェブ" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#FFFFFF;fontSize=20;fontStyle=1;align=left;" parent="129" vertex="1">
+                    <mxGeometry width="400" height="28" as="geometry"/>
+                </mxCell>
+                <mxCell id="79" value="ジュリエットは回復すべく、ある行動に出る。自ら調査を進めたヘレンは、その報いを受ける。" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#D0D0D0;fontSize=14;align=left;whiteSpace=wrap;" parent="129" vertex="1">
+                    <mxGeometry y="32" width="400" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="80" value="SF · 49分" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#9A9A9A;fontSize=13;align=left;" parent="129" vertex="1">
+                    <mxGeometry y="96" width="200" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="81" value="15+" style="rounded=1;arcSize=30;whiteSpace=wrap;html=1;fillColor=#2B2B2B;strokeColor=#5B5B5B;fontColor=#FFFFFF;fontSize=10;align=center;verticalAlign=middle;" parent="129" vertex="1">
+                    <mxGeometry y="120" width="34" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="82" value="4K" style="rounded=1;arcSize=30;whiteSpace=wrap;html=1;fillColor=#2B2B2B;strokeColor=#5B5B5B;fontColor=#FFFFFF;fontSize=10;align=center;verticalAlign=middle;" parent="129" vertex="1">
+                    <mxGeometry x="38" y="120" width="34" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="83" value="Dolby Vision" style="rounded=1;arcSize=30;whiteSpace=wrap;html=1;fillColor=#2B2B2B;strokeColor=#5B5B5B;fontColor=#FFFFFF;fontSize=9;align=center;verticalAlign=middle;" parent="129" vertex="1">
+                    <mxGeometry x="76" y="120" width="80" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="84" value="Dolby Atmos" style="rounded=1;arcSize=30;whiteSpace=wrap;html=1;fillColor=#2B2B2B;strokeColor=#5B5B5B;fontColor=#FFFFFF;fontSize=9;align=center;verticalAlign=middle;" parent="129" vertex="1">
+                    <mxGeometry x="160" y="120" width="80" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="85" value="CC" style="rounded=1;arcSize=30;whiteSpace=wrap;html=1;fillColor=#2B2B2B;strokeColor=#5B5B5B;fontColor=#FFFFFF;fontSize=10;align=center;verticalAlign=middle;" parent="129" vertex="1">
+                    <mxGeometry x="244" y="120" width="30" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="86" value="SDH" style="rounded=1;arcSize=30;whiteSpace=wrap;html=1;fillColor=#2B2B2B;strokeColor=#5B5B5B;fontColor=#FFFFFF;fontSize=10;align=center;verticalAlign=middle;" parent="129" vertex="1">
+                    <mxGeometry x="278" y="120" width="36" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="87" value="AD" style="rounded=1;arcSize=30;whiteSpace=wrap;html=1;fillColor=#2B2B2B;strokeColor=#5B5B5B;fontColor=#FFFFFF;fontSize=10;align=center;verticalAlign=middle;" parent="129" vertex="1">
+                    <mxGeometry x="318" y="120" width="30" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="130" value="" style="group" parent="131" vertex="1" connectable="0">
+                    <mxGeometry x="1460" y="56" width="100" height="114" as="geometry"/>
+                </mxCell>
+                <mxCell id="121" value="番組へ移動" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#FFFFFF;fontSize=13;align=left;verticalAlign=middle;" parent="130" vertex="1">
+                    <mxGeometry y="72" width="100" height="42" as="geometry"/>
+                </mxCell>
+                <mxCell id="126" value="最初から" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#FFFFFF;fontSize=13;align=left;verticalAlign=middle;" parent="130" vertex="1">
+                    <mxGeometry width="100" height="42" as="geometry"/>
+                </mxCell>
+                <mxCell id="132" value="" style="group" parent="1" vertex="1" connectable="0">
+                    <mxGeometry y="250" width="1653" height="420" as="geometry"/>
+                </mxCell>
+                <mxCell id="2" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#171717;opacity=90;strokeColor=none;movable=1;resizable=1;rotatable=1;deletable=1;editable=1;locked=0;connectable=1;" parent="132" vertex="1">
+                    <mxGeometry width="1653" height="420" as="geometry"/>
+                </mxCell>
+                <mxCell id="3" value="情報" style="rounded=1;arcSize=18;whiteSpace=wrap;html=1;fillColor=#2B2B2B;strokeColor=#5B5B5B;fontColor=#FFFFFF;fontSize=14;align=center;verticalAlign=middle;" parent="132" vertex="1">
+                    <mxGeometry x="30" y="6" width="58" height="32" as="geometry"/>
+                </mxCell>
+                <mxCell id="4" value="続きを観る" style="rounded=1;arcSize=18;whiteSpace=wrap;html=1;fillColor=#2B2B2B;strokeColor=#FFFFFF;fontColor=#FFFFFF;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" parent="132" vertex="1">
+                    <mxGeometry x="96" y="6" width="103" height="32" as="geometry"/>
+                </mxCell>
+                <mxCell id="5" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%209%2031%22%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22M5.275%2029.46a1.61%201.61%200%200%200%201.456%201.077c1.018%200%201.772-.737%201.772-1.737%200-.526-.277-1.186-.449-1.62l-4.68-11.912L8.05%203.363c.172-.442.45-1.116.45-1.625A1.7%201.7%200%200%200%206.728.002a1.6%201.6%200%200%200-1.456%201.09L.675%2012.774c-.301.775-.677%201.744-.677%202.495%200%20.754.376%201.705.677%202.498L5.272%2029.46Z%22/%3E%3C/svg%3E;strokeColor=none;fillColor=none;disabled=1;opacity=40;" parent="132" vertex="1">
+                    <mxGeometry x="30" y="220" width="9" height="31" as="geometry"/>
+                </mxCell>
+                <mxCell id="16" value="" style="group" parent="132" vertex="1" connectable="0">
+                    <mxGeometry x="60" y="70" width="340" height="246" as="geometry"/>
+                </mxCell>
+                <mxCell id="6" value="" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#14212C;strokeColor=#3A3A3A;" parent="16" vertex="1">
+                    <mxGeometry width="340" height="221" as="geometry"/>
+                </mxCell>
+                <mxCell id="8" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#000000;opacity=45;strokeColor=none;gradientColor=none;" parent="16" vertex="1">
+                    <mxGeometry y="141" width="340" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="9" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2089.893%20120%22%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22M12.461%2094.439c0%205.33%203.149%207.927%206.94%207.927%201.617%200%203.36-.495%205.005-1.409l57.665-33.658c4.198-2.469%205.903-4.317%205.903-7.331%200-3.013-1.705-4.861-5.903-7.33L24.406%2018.98c-1.645-.915-3.388-1.41-5.005-1.41-3.791%200-6.94%202.598-6.94%207.927z%22/%3E%3C/svg%3E;strokeColor=none;fillColor=none;" parent="16" vertex="1">
+                    <mxGeometry x="12" y="158" width="16" height="21" as="geometry"/>
+                </mxCell>
+                <mxCell id="10" value="" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#5E5E5E;opacity=60;strokeColor=none;" parent="16" vertex="1">
+                    <mxGeometry x="38" y="167" width="200" height="4" as="geometry"/>
+                </mxCell>
+                <mxCell id="11" value="" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=none;" parent="16" vertex="1">
+                    <mxGeometry x="38" y="167" width="158" height="4" as="geometry"/>
+                </mxCell>
+                <mxCell id="12" value="シーズン1、エピソード5 · 9分" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#E8E8E8;fontSize=11;align=left;" parent="16" vertex="1">
+                    <mxGeometry x="12" y="182" width="260" height="16" as="geometry"/>
+                </mxCell>
+                <mxCell id="13" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20width=%2228%22%20height=%2228%22%20viewBox=%220%200%2028%2028%22%20xmlns=%22http://www.w3.org/2000/svg%22%3E%3Ccircle%20fill=%22%23000000%22%20opacity=%220.3%22%20cx=%2214%22%20cy=%2214%22%20r=%2214%22/%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22M10.105%2014c0-.87-.687-1.55-1.564-1.55-.862%200-1.557.695-1.557%201.55%200%20.848.695%201.55%201.557%201.55.855%200%201.564-.702%201.564-1.55zm5.437%200c0-.87-.68-1.55-1.542-1.55A1.55%201.55%200%200012.45%2014c0%20.848.695%201.55%201.55%201.55.848%200%201.542-.702%201.542-1.55zm5.474%200c0-.87-.687-1.55-1.557-1.55-.87%200-1.564.695-1.564%201.55%200%20.848.694%201.55%201.564%201.55.848%200%201.557-.702%201.557-1.55z%22/%3E%3C/svg%3E;strokeColor=none;fillColor=none;" parent="16" vertex="1">
+                    <mxGeometry x="304" y="175" width="28" height="28" as="geometry"/>
+                </mxCell>
+                <mxCell id="14" value="作品A, 作品タイトル, シーズン1、エピソード5, 残り9分" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#6C6C6C;fontSize=10;align=left;fontStyle=2;" parent="16" vertex="1">
+                    <mxGeometry y="230" width="340" height="16" as="geometry"/>
+                </mxCell>
+                <mxCell id="45" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%209%2031%22%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22M5.275%2029.46a1.61%201.61%200%200%200%201.456%201.077c1.018%200%201.772-.737%201.772-1.737%200-.526-.277-1.186-.449-1.62l-4.68-11.912L8.05%203.363c.172-.442.45-1.116.45-1.625A1.7%201.7%200%200%200%206.728.002a1.6%201.6%200%200%200-1.456%201.09L.675%2012.774c-.301.775-.677%201.744-.677%202.495%200%20.754.376%201.705.677%202.498L5.272%2029.46Z%22/%3E%3C/svg%3E;strokeColor=none;fillColor=none;disabled=1;opacity=40;flipH=1;" parent="132" vertex="1">
+                    <mxGeometry x="1593.5" y="220" width="9" height="31" as="geometry"/>
+                </mxCell>
+                <mxCell id="46" value="" style="group" parent="132" vertex="1" connectable="0">
+                    <mxGeometry x="450" y="70" width="340" height="246" as="geometry"/>
+                </mxCell>
+                <mxCell id="47" value="" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#14212C;strokeColor=#3A3A3A;" parent="46" vertex="1">
+                    <mxGeometry width="340" height="221" as="geometry"/>
+                </mxCell>
+                <mxCell id="48" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#000000;opacity=45;strokeColor=none;gradientColor=none;" parent="46" vertex="1">
+                    <mxGeometry y="141" width="340" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="49" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2089.893%20120%22%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22M12.461%2094.439c0%205.33%203.149%207.927%206.94%207.927%201.617%200%203.36-.495%205.005-1.409l57.665-33.658c4.198-2.469%205.903-4.317%205.903-7.331%200-3.013-1.705-4.861-5.903-7.33L24.406%2018.98c-1.645-.915-3.388-1.41-5.005-1.41-3.791%200-6.94%202.598-6.94%207.927z%22/%3E%3C/svg%3E;strokeColor=none;fillColor=none;" parent="46" vertex="1">
+                    <mxGeometry x="12" y="158" width="16" height="21" as="geometry"/>
+                </mxCell>
+                <mxCell id="50" value="" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#5E5E5E;opacity=60;strokeColor=none;" parent="46" vertex="1">
+                    <mxGeometry x="38" y="167" width="200" height="4" as="geometry"/>
+                </mxCell>
+                <mxCell id="51" value="" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=none;" parent="46" vertex="1">
+                    <mxGeometry x="38" y="167" width="158" height="4" as="geometry"/>
+                </mxCell>
+                <mxCell id="52" value="シーズン1、エピソード5 · 9分" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#E8E8E8;fontSize=11;align=left;" parent="46" vertex="1">
+                    <mxGeometry x="12" y="182" width="260" height="16" as="geometry"/>
+                </mxCell>
+                <mxCell id="53" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20width=%2228%22%20height=%2228%22%20viewBox=%220%200%2028%2028%22%20xmlns=%22http://www.w3.org/2000/svg%22%3E%3Ccircle%20fill=%22%23000000%22%20opacity=%220.3%22%20cx=%2214%22%20cy=%2214%22%20r=%2214%22/%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22M10.105%2014c0-.87-.687-1.55-1.564-1.55-.862%200-1.557.695-1.557%201.55%200%20.848.695%201.55%201.557%201.55.855%200%201.564-.702%201.564-1.55zm5.437%200c0-.87-.68-1.55-1.542-1.55A1.55%201.55%200%200012.45%2014c0%20.848.695%201.55%201.55%201.55.848%200%201.542-.702%201.542-1.55zm5.474%200c0-.87-.687-1.55-1.557-1.55-.87%200-1.564.695-1.564%201.55%200%20.848.694%201.55%201.564%201.55.848%200%201.557-.702%201.557-1.55z%22/%3E%3C/svg%3E;strokeColor=none;fillColor=none;" parent="46" vertex="1">
+                    <mxGeometry x="304" y="175" width="28" height="28" as="geometry"/>
+                </mxCell>
+                <mxCell id="54" value="作品A, 作品タイトル, シーズン1、エピソード5, 残り9分" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#6C6C6C;fontSize=10;align=left;fontStyle=2;" parent="46" vertex="1">
+                    <mxGeometry y="230" width="340" height="16" as="geometry"/>
+                </mxCell>
+                <mxCell id="55" value="" style="group" parent="132" vertex="1" connectable="0">
+                    <mxGeometry x="840" y="70" width="340" height="246" as="geometry"/>
+                </mxCell>
+                <mxCell id="56" value="" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#14212C;strokeColor=#3A3A3A;" parent="55" vertex="1">
+                    <mxGeometry width="340" height="221" as="geometry"/>
+                </mxCell>
+                <mxCell id="57" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#000000;opacity=45;strokeColor=none;gradientColor=none;" parent="55" vertex="1">
+                    <mxGeometry y="141" width="340" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="58" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2089.893%20120%22%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22M12.461%2094.439c0%205.33%203.149%207.927%206.94%207.927%201.617%200%203.36-.495%205.005-1.409l57.665-33.658c4.198-2.469%205.903-4.317%205.903-7.331%200-3.013-1.705-4.861-5.903-7.33L24.406%2018.98c-1.645-.915-3.388-1.41-5.005-1.41-3.791%200-6.94%202.598-6.94%207.927z%22/%3E%3C/svg%3E;strokeColor=none;fillColor=none;" parent="55" vertex="1">
+                    <mxGeometry x="12" y="158" width="16" height="21" as="geometry"/>
+                </mxCell>
+                <mxCell id="59" value="" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#5E5E5E;opacity=60;strokeColor=none;" parent="55" vertex="1">
+                    <mxGeometry x="38" y="167" width="200" height="4" as="geometry"/>
+                </mxCell>
+                <mxCell id="60" value="" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=none;" parent="55" vertex="1">
+                    <mxGeometry x="38" y="167" width="158" height="4" as="geometry"/>
+                </mxCell>
+                <mxCell id="61" value="シーズン1、エピソード5 · 9分" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#E8E8E8;fontSize=11;align=left;" parent="55" vertex="1">
+                    <mxGeometry x="12" y="182" width="260" height="16" as="geometry"/>
+                </mxCell>
+                <mxCell id="62" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20width=%2228%22%20height=%2228%22%20viewBox=%220%200%2028%2028%22%20xmlns=%22http://www.w3.org/2000/svg%22%3E%3Ccircle%20fill=%22%23000000%22%20opacity=%220.3%22%20cx=%2214%22%20cy=%2214%22%20r=%2214%22/%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22M10.105%2014c0-.87-.687-1.55-1.564-1.55-.862%200-1.557.695-1.557%201.55%200%20.848.695%201.55%201.557%201.55.855%200%201.564-.702%201.564-1.55zm5.437%200c0-.87-.68-1.55-1.542-1.55A1.55%201.55%200%200012.45%2014c0%20.848.695%201.55%201.55%201.55.848%200%201.542-.702%201.542-1.55zm5.474%200c0-.87-.687-1.55-1.557-1.55-.87%200-1.564.695-1.564%201.55%200%20.848.694%201.55%201.564%201.55.848%200%201.557-.702%201.557-1.55z%22/%3E%3C/svg%3E;strokeColor=none;fillColor=none;" parent="55" vertex="1">
+                    <mxGeometry x="304" y="175" width="28" height="28" as="geometry"/>
+                </mxCell>
+                <mxCell id="63" value="作品A, 作品タイトル, シーズン1、エピソード5, 残り9分" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#6C6C6C;fontSize=10;align=left;fontStyle=2;" parent="55" vertex="1">
+                    <mxGeometry y="230" width="340" height="16" as="geometry"/>
+                </mxCell>
+                <mxCell id="64" value="" style="group" parent="132" vertex="1" connectable="0">
+                    <mxGeometry x="1230" y="70" width="340" height="246" as="geometry"/>
+                </mxCell>
+                <mxCell id="65" value="" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#14212C;strokeColor=#3A3A3A;" parent="64" vertex="1">
+                    <mxGeometry width="340" height="221" as="geometry"/>
+                </mxCell>
+                <mxCell id="66" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#000000;opacity=45;strokeColor=none;gradientColor=none;" parent="64" vertex="1">
+                    <mxGeometry y="141" width="340" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="67" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2089.893%20120%22%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22M12.461%2094.439c0%205.33%203.149%207.927%206.94%207.927%201.617%200%203.36-.495%205.005-1.409l57.665-33.658c4.198-2.469%205.903-4.317%205.903-7.331%200-3.013-1.705-4.861-5.903-7.33L24.406%2018.98c-1.645-.915-3.388-1.41-5.005-1.41-3.791%200-6.94%202.598-6.94%207.927z%22/%3E%3C/svg%3E;strokeColor=none;fillColor=none;" parent="64" vertex="1">
+                    <mxGeometry x="12" y="158" width="16" height="21" as="geometry"/>
+                </mxCell>
+                <mxCell id="68" value="" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#5E5E5E;opacity=60;strokeColor=none;" parent="64" vertex="1">
+                    <mxGeometry x="38" y="167" width="200" height="4" as="geometry"/>
+                </mxCell>
+                <mxCell id="69" value="" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=none;" parent="64" vertex="1">
+                    <mxGeometry x="38" y="167" width="158" height="4" as="geometry"/>
+                </mxCell>
+                <mxCell id="70" value="シーズン1、エピソード5 · 9分" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#E8E8E8;fontSize=11;align=left;" parent="64" vertex="1">
+                    <mxGeometry x="12" y="182" width="260" height="16" as="geometry"/>
+                </mxCell>
+                <mxCell id="71" value="" style="shape=image;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%20width=%2228%22%20height=%2228%22%20viewBox=%220%200%2028%2028%22%20xmlns=%22http://www.w3.org/2000/svg%22%3E%3Ccircle%20fill=%22%23000000%22%20opacity=%220.3%22%20cx=%2214%22%20cy=%2214%22%20r=%2214%22/%3E%3Cpath%20fill=%22%23FFFFFF%22%20d=%22M10.105%2014c0-.87-.687-1.55-1.564-1.55-.862%200-1.557.695-1.557%201.55%200%20.848.695%201.55%201.557%201.55.855%200%201.564-.702%201.564-1.55zm5.437%200c0-.87-.68-1.55-1.542-1.55A1.55%201.55%200%200012.45%2014c0%20.848.695%201.55%201.55%201.55.848%200%201.542-.702%201.542-1.55zm5.474%200c0-.87-.687-1.55-1.557-1.55-.87%200-1.564.695-1.564%201.55%200%20.848.694%201.55%201.564%201.55.848%200%201.557-.702%201.557-1.55z%22/%3E%3C/svg%3E;strokeColor=none;fillColor=none;" parent="64" vertex="1">
+                    <mxGeometry x="304" y="175" width="28" height="28" as="geometry"/>
+                </mxCell>
+                <mxCell id="72" value="作品A, 作品タイトル, シーズン1、エピソード5, 残り9分" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#6C6C6C;fontSize=10;align=left;fontStyle=2;" parent="64" vertex="1">
+                    <mxGeometry y="230" width="340" height="16" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
