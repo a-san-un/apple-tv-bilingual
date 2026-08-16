@@ -14,10 +14,10 @@
   ("use strict");
 
   // 二重 inject ガード（SPA reinject 対策）
-  if (window.__atvbContentInjected) {
+  if (window.atvbContentInjected) {
     return;
   }
-  window.__atvbContentInjected = true;
+  window.atvbContentInjected = true;
 
   const DEFAULT_SETTINGS = {
     extensionEnabled: false,

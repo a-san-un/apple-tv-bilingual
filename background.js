@@ -192,7 +192,7 @@ async function sendSettingsChangedWithRecovery(
       try {
         const aliveResult = await chrome.scripting.executeScript({
           target: { tabId },
-          func: () => window.__atvbContentInjected === true,
+          func: () => window.atvbContentInjected === true,
         });
         alreadyAlive = aliveResult?.[0]?.result === true;
       } catch (_) {
