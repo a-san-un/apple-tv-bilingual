@@ -1,6 +1,7 @@
 # Bugfix 仕様確定書
 
-**作成日:** 2026-08-14  
+**作成日:** 2026-08-14
+**最終更新:** 2026-08-16
 **ブランチ:** `issue-32-content-core-split`  
 **位置づけ:** このセッションで固まった仕様の正本。マスタープランと合わせて参照すること。
 
@@ -113,6 +114,39 @@ const { extensionEnabled = false } =
   await chrome.storage.sync.get('extensionEnabled');
 //  ↑ キーが存在しない初回は false（OFF）がデフォルト
 ```
+
+### ⚠️ 実装上の注意（2026-08-16 追記）
+
+`extensionEnabled` を `injectNativeToggle` 内で参照するとき、
+`chrome.storage.sync.get` の完了前に関数が呼ばれると値が `undefined` になり、
+`!extensionEnabled` が `true` と評価されて**無言でトグルが注入されない**バグが発生する。
+
+```js
+// ❌ 現状（undefined が falsy 扱いになる）
+if (!settings.extensionEnabled) return;
+
+// ✅ 修正後
+const { extensionEnabled = false } = settings ?? {};
+if (!extensionEnabled) return;
+```
+
+また `injectNativeToggle` 内の**早期 `return` は必ず `console.warn` を添える**。
+無言 return は `isPlaybackReady: true` / `upNextBtn: true` が揃っていても
+`atvb-native-toggle` が `null` のままになる原因になる（2026-08-16 実機確認）。
+
+```js
+// ❌ 無言終了
+if (!toolbar) return;
+
+// ✅ 修正後
+if (!toolbar) {
+  console.warn('[ATVB] injectNativeToggle: 注入先が見つからない', { tried: '.playback-toolbar' });
+  return;
+}
+```
+
+> **診断コマンド (F-3):** `atvb-native-toggle: false` かつ `isPlaybackReady: true` のとき、
+> 注入先セレクタの存在・`__ATVB_DEBUG__.state.contentSettings` の内容を確認する。
 
 ---
 
