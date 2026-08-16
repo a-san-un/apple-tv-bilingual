@@ -10,11 +10,11 @@
 
 | # | 症状 | 観察事実 | 関連 ID | 状態 |
 |---|---|---|---|---|
-| 1 | 字幕パネル開閉でオーバーレイ字幕の表示位置がズレる | パネル開閉に再生画面が追従しない | F-1 | 🔴 未着手 |
-| 2 | restart 後にネイティブトグルが DOM に出ない | 別エピソード・別作品移動時。パネル開閉で復帰 | F-2 | ✅ 完了 |
-| 3 | 言語設定変更がリアルタイムに反映されない | ja→ko 変更後もメインのみ。ja/en 以外は非表示 | F-3 | 🔴 未着手 |
-| 4 | メッセージチャネルクローズエラー（初回のみ） | `onRuntimeMessage @ settings-runtime.js:690` | F-4 | 🔴 未着手 |
-| 5 | ネイティブ字幕が OFF 後に復元されない | Bugfix-E 未実装 | F-5 | ⏸ F-1 後 |
+| 1 | restart 後にネイティブトグルが DOM に出ない | 別エピソード・別作品移動時。パネル開閉で復帰 | F-2 | ✅ 完了 |
+| 2 | 言語設定変更がリアルタイムに反映されない | ja→ko 変更後もメインのみ。ja/en 以外は非表示 | F-3 | 🔴 未着手 |
+| 3 | メッセージチャネルクローズエラー（初回のみ） | `onRuntimeMessage @ settings-runtime.js:690` | F-4 | 🔴 未着手 |
+| 4 | ネイティブ字幕が OFF 後に復元されない | Bugfix-E 未実装 | F-5 | ⏸ F-3 後 |
+| 5 | トグル OFF 時にデバッグパネルが見られない | F12 コンソール依存 | F-6 | 保留 |
 
 ### ✅ 動作確認済み（2026-08-16 テストで確認）
 
@@ -22,10 +22,17 @@
 - 二重表示・ちらつきなし
 - 字幕パネルが開いているときの ON→OFF→ON 復帰は正常
 - 別エピソード・別作品遷移後も `#atvb-native-toggle` が表示される（F-2 完了）
+- **字幕パネル開閉時の overlay 位置追従は正常**（F-1 完了）
+- **パネル開閉時も overlay 字幕サイズは維持される**（F-1 完了）
 
 ---
 
 ## 修正対象ファイル一覧
+
+- `content.js`
+- `panel-ui.js`
+- `overlay-controller.js`
+- `settings-runtime.js`
 
 ---
 
@@ -46,59 +53,58 @@
 
 ---
 
-### F-1（最優先）: 字幕パネル開閉で表示位置が追従しない
+### ✅ F-1（完了）: 字幕パネル開閉で表示位置が追従しない
 
-**ファイル:** `content.js`（`panelOpen` 変更ハンドラ、またはパネル開閉時のレイアウト追従処理）
+**対象ファイル:**
+- `content.js`
+- `panel-ui.js`
+- `overlay-controller.js`
 
 **症状の再現パターン:**
-- 字幕パネルの「閉じる」ボタンを押す
-- `panelOpen = false` がセットされる
-- オーバーレイ（`#atv-overlay-root`）の表示位置が再生画面に追従しない ← **本来は独立かつ追従するはず**
+- 字幕パネルを開くと、overlay が動画中央のままで右パネルぶんを考慮しない
+- 字幕パネルを閉じると、overlay が動画中央へ戻る保証が弱い
+- 位置調整後に文字サイズまで小さくなった
 
-**調査ポイント:**
+**原因:**
+- `panel-ui.js` の `applyPanelVisibility(show)` が overlay host の width 直接変更だけを行い、`overlay-controller.js` 側の正本再配置を呼んでいなかった
+- `overlay-controller.js` の `syncOverlayPositionToPlayer()` が引数なし再同期経路では `panelOpen` を知らず、再描画や resize 後に閉状態基準へ戻る余地があった
+- `applyOverlayTypography({ ...rect, width: visibleWidth })` により、位置補正用の可視領域幅が字幕サイズ計算にも流入していた
 
-```js
-// パネル閉直後にオーバーレイの display 状態と位置を確認
-document.getElementById('atv-overlay-root')?.style.display
-document.getElementById('atv-overlay-root')?.hidden
-document.getElementById('atv-overlay-root')?.getBoundingClientRect()
-document.querySelector('video')?.getBoundingClientRect()
-```
+**修正内容:**
+- `content.js`
+  - `createOverlayController({...})` に `getPanelOpen: () => state.panelOpen` を注入
+- `panel-ui.js`
+  - `applyPanelVisibility(show)` で overlay host の width 直接変更を削除
+  - `requestAnimationFrame()` 内で `deps.overlayController?.syncOverlayPositionToPlayer?.({ panelOpen: show, reason: "panel-visibility-change" })` を呼ぶよう変更
+- `overlay-controller.js`
+  - `syncOverlayPositionToPlayer(options = {})` 化
+  - `panelOpen` は `options.panelOpen` を優先し、未指定時は `getPanelOpen()` fallback を参照
+  - 位置と幅は `visibleWidth = rect.width - panelWidth` を使って計算
+  - フォントサイズ計算は `applyOverlayTypography(rect)` に戻し、player 全体矩形ベースへ統一
 
-**原因仮説と修正方針:**
+**実機確認ログ:**
+- パネル開状態
+  - `panelDisplay='block'`
+  - `panelWidth=418.796875`
+  - `videoWidth=1396`
+  - `overlayCenterX=488.59375`
+  - 左側可視領域中央と一致
+- パネル閉状態
+  - `panelDisplay='none'`
+  - `panelWidth=0`
+  - `videoWidth=1396`
+  - `overlayCenterX=698`
+  - 動画中央と一致
+- フォントサイズ
+  - `primaryFontSize='28.192px'`
+  - `secondaryFontSize='23.787px'`
+  - パネル開閉で変化しない
 
-`panelOpen` 変更ハンドラでオーバーレイの位置を video 要素に追従させる処理が
-呼ばれていない、または `panelOpen=false` のときに追従処理がスキップされている可能性がある。
-
-```js
-// panelOpen 変更ハンドラで overlay の位置を更新する
-function onPanelOpenChange(isOpen) {
-  // パネル表示/非表示はパネルだけに適用
-  setPanelVisibility(isOpen);
-
-  // ★ F-1: パネル開閉後に overlay の位置を video に追従させる
-  // overlay は panelOpen に連動して消さない
-  // setOverlayVisibility(isOpen); ← この行があれば削除
-  syncOverlayPositionToVideo(); // 既存関数 or 新規作成
-}
-
-function syncOverlayPositionToVideo() {
-  const video = document.querySelector('video');
-  const overlay = document.getElementById('atv-overlay-root');
-  if (!video || !overlay) return;
-  const rect = video.getBoundingClientRect();
-  // overlay の位置・サイズを rect に合わせる
-}
-```
-
-**確認すること:**
-1. `panelOpen` 変更ハンドラの実装箇所（`content.js` 内の `panelOpen` を書き換えている箇所）
-2. オーバーレイの位置追従ロジックが `panelOpen` の値によって条件分岐していないか
-3. パネル開閉後に `ResizeObserver` や `IntersectionObserver` が再発火しているか
+**判定:** 完了。位置追従・中央復帰・文字サイズ維持を実機確認済み。
 
 ---
 
-### F-3（F-1 の次）: 言語設定変更のリアルタイム反映
+### F-3（最優先）: 言語設定変更のリアルタイム反映
 
 **ファイル:** `settings-runtime.js`（`applySettingsAsync` 関数）
 
@@ -110,32 +116,10 @@ function syncOverlayPositionToVideo() {
 `applySettingsAsync` が言語変更を `chrome.storage` に保存するだけで、
 実行中の `cueController` に対してトラック再バインドを呼んでいない。
 
-**修正方針:**
-
-```js
-// applySettingsAsync の言語変更検知部分
-async function applySettingsAsync(newSettings, oldSettings) {
-  const languageChanged =
-    newSettings.primaryLanguage !== oldSettings.primaryLanguage ||
-    newSettings.secondaryLanguage !== oldSettings.secondaryLanguage;
-
-  if (languageChanged) {
-    // ★ F-3: 言語変更時はトラックを再バインドする
-    cueController?.unbindSecondarySubtitleTrack();
-    cueController?.bindSecondarySubtitleTrack(newSettings.secondaryLanguage);
-    // primary も変わっていれば
-    if (newSettings.primaryLanguage !== oldSettings.primaryLanguage) {
-      cueController?.unbindPrimarySubtitleTrack();
-      cueController?.bindPrimarySubtitleTrack(newSettings.primaryLanguage);
-    }
-  }
-  // 既存処理...
-}
-```
-
 **確認すること:**
 - `cueController` が `settings-runtime.js` のスコープから参照可能か
-- 参照不可なら `restartBilingual()` 経由でリスタートするフォールバックを使う
+- `bindPrimarySubtitleTrack` / `bindSecondarySubtitleTrack` の再実行経路があるか
+- 参照不可なら `restartBilingual()` 経由での再初期化フォールバックが必要か
 
 ---
 
@@ -144,30 +128,18 @@ async function applySettingsAsync(newSettings, oldSettings) {
 **ファイル:** `settings-runtime.js`（`onRuntimeMessage` 関数、690行付近）
 
 **エラー:**
-```
+```text
 Uncaught (in promise) Error: A listener indicated an asynchronous response
 by returning true, but the message channel closed before a response was received
 ```
 
-**原因:** `onRuntimeMessage` が `return true`（非同期宣言）しているが、
-`applySettingsAsync` が例外またはタイムアウトで終了したとき `sendResponse` が呼ばれない。
+**原因:**
+`onRuntimeMessage` が `return true` を返して非同期応答を宣言しているが、
+`applySettingsAsync` が失敗・例外終了したケースで `sendResponse` が漏れる可能性がある。
 
-**修正方針:**
-
-```js
-function onRuntimeMessage(message, sender, sendResponse) {
-  if (message.type === 'APPLY_SETTINGS') {
-    applySettingsAsync(message.settings, currentSettings)
-      .then(() => sendResponse({ ok: true }))
-      .catch((err) => {
-        console.error('[ATVB] applySettingsAsync failed', err);
-        sendResponse({ ok: false, error: err.message }); // ★ F-4: 必ず応答する
-      });
-    return true; // 非同期応答を宣言
-  }
-  // 同期メッセージはここで処理（return true しない）
-}
-```
+**確認すること:**
+- `APPLY_SETTINGS` 系メッセージで成功時・失敗時とも `sendResponse` が呼ばれるか
+- `return true` が必要な分岐と不要な分岐が整理されているか
 
 ---
 
@@ -176,68 +148,15 @@ function onRuntimeMessage(message, sender, sendResponse) {
 **ファイル:** `settings-runtime.js`（`extensionEnabled === false` ブランチ）
 
 **仕様:** `cue-controller.js` の `restoreNativeSubtitles()` を使う（仕様確定書 §2 参照）。
-この関数は `primaryTrackOriginalMode`（bind 前に保存した元の mode）に track.mode を戻す。
-拡張が track.mode の値を自分で決定しないことが重要。
 
-**修正方針:**
-
-```js
-// settings-runtime.js の OFF ブランチ
-if (!extensionEnabled) {
-  cueController?.restoreNativeSubtitles?.();  // ★ F-5: 元の mode に戻す（値は自分で決めない）
-  destroyUiHosts();                           // ★ Bugfix-A: UI を破棄
-  applyDone();
-  return;
-}
-```
-
-**状態:** F-1 / F-3 完了後に着手
+**状態:** F-3 / F-4 後に着手。
 
 ---
 
-## F12 コンソールで今すぐ確認できるコマンド集
+## 次の実装順
 
-```js
-// === 現在の DOM 状態確認 ===
-console.log('native-toggle:', document.getElementById('atvb-native-toggle'));
-console.log('panel-root:', document.getElementById('atv-panel-root'));
-console.log('overlay-root:', document.getElementById('atv-overlay-root'));
-
-// === オーバーレイと video の位置比較（F-1 調査用）===
-const vr = document.querySelector('video')?.getBoundingClientRect();
-const or = document.getElementById('atv-overlay-root')?.getBoundingClientRect();
-console.log('video rect:', vr);
-console.log('overlay rect:', or);
-
-// === TextTrack の mode 状態確認 ===
-Array.from(document.querySelector('video')?.textTracks ?? [])
-  .forEach(t => console.log(t.language, t.kind, t.mode));
-
-// === panelOpen / extensionEnabled の現在値確認 ===
-chrome.storage.local.get(['panelOpen'], r => console.log('panelOpen:', r.panelOpen));
-chrome.storage.sync.get(['extensionEnabled'], r => console.log('extensionEnabled:', r.extensionEnabled));
-```
-
----
-
-## 検証チェックリスト
-
-### ✅ F-2 検証（完了）
-- [x] 別エピソードに移動した直後（パネル操作なし）で `#atvb-native-toggle` が DOM に存在する
-- [x] 別作品を開いた直後（パネル操作なし）で `#atvb-native-toggle` が DOM に存在する
-
-### F-1 検証
-- [ ] 字幕パネルを閉じた後もオーバーレイ字幕（画面上の2言語表示）が表示され続ける
-- [ ] 字幕パネルを閉じた後、オーバーレイ字幕の表示位置が再生画面に正しく追従している
-- [ ] `extensionEnabled=ON` の状態で `panelOpen` を切り替えてもオーバーレイ字幕の位置がズレない
-
-### F-3 検証
-- [ ] オプション画面で secondary を `ja` → `ko` に変更した直後に secondary 字幕が切り替わる
-- [ ] `ja` / `en` 以外の言語を選択しても secondary が表示される
-
-### F-4 検証
-- [ ] F12 コンソールにチャネルクローズエラーが出なくなる（初回ロード時も含む）
-
-### F-5 検証
-- [ ] トグル OFF 後に Apple TV+ のネイティブ字幕設定から字幕を有効にできる
-- [ ] 字幕の二重表示や競合が発生しない
+1. `settings-runtime.js` の `applySettingsAsync` を読み、言語変更時の再バインド経路を確認する
+2. `onRuntimeMessage` の `sendResponse` 成功 / 失敗経路を確認する
+3. F-3 修正
+4. F-4 修正
+5. F-5（ネイティブ字幕復元）へ進む

@@ -43,8 +43,10 @@
 |---|---|---|
 | ネイティブトグル | `atvb-native-toggle` | 拡張全体の ON/OFF のみ。OFF 時も残す。 |
 | 字幕パネル開閉ボタン | `atv-toggle-btn` | 右側字幕パネルの開閉のみ。設定保存に関与しない。 |
-| 字幕パネル本体 | `atv-panel-root` | 右側字幕パネル。OFF 時は destroy。 |
-| オーバーレイ | `atv-overlay-root` | 学習補助オーバーレイ。OFF 時は destroy。 |
+| 字幕パネル本体 host | `atv-panel-host` | 右側字幕パネル host。表示/非表示と矩形計測の正本。 |
+| 字幕パネル本体 root | `atv-panel-root` | 右側字幕パネル本体。 |
+| オーバーレイ host | `atv-overlay-host` | 学習補助オーバーレイ host。位置・幅・矩形計測の正本。 |
+| オーバーレイ inner root | `data-atvb-overlay-root` | overlay 内部コンテナ。文字要素の親。 |
 
 ***
 
@@ -55,6 +57,7 @@
 以下のファイルに修正を反映済み。各不具合の解消状況は実機確認で判定する。
 
 - `panel-ui.js`
+- `overlay-controller.js`
 - `settings-runtime.js`
 - `content.js`
 
@@ -67,24 +70,28 @@
 - **二重表示・ちらつきなし**（Bugfix-D2 / settings-runtime.js 変更の部分効果）
 - **restart 後の復帰は字幕パネル開時に限り動作する**
 
+#### F-1: 字幕パネル開閉でオーバーレイ位置が追従しない（2026-08-16 完了）
+- **症状:** 字幕パネル開閉時に、オーバーレイ字幕が再生画面の可視領域へ追従せず、表示位置がズレていた。
+- **原因:** `panel-ui.js` の `applyPanelVisibility(show)` が overlay host の width を直接触るだけで、`overlay-controller.js` 側の再配置を呼んでいなかった。加えて、`overlay-controller.js` 内の `syncOverlayPositionToPlayer()` は panel 状態を知らない引数なし再同期経路を持っていたため、開閉後や再描画後に閉状態基準へ戻る余地があった。
+- **修正内容:**
+  - `content.js` から `createOverlayController({...})` へ `getPanelOpen: () => state.panelOpen` を注入
+  - `panel-ui.js` の `applyPanelVisibility(show)` で overlay host の width 直接変更をやめ、`requestAnimationFrame()` 内で `deps.overlayController?.syncOverlayPositionToPlayer?.({ panelOpen: show, reason: "panel-visibility-change" })` を呼ぶ構成へ変更
+  - `overlay-controller.js` の `syncOverlayPositionToPlayer(options = {})` で、位置・幅は `visibleWidth = rect.width - panelWidth` を使って算出し、`options.panelOpen` 未指定時は `getPanelOpen()` を fallback 参照するよう変更
+  - フォントサイズ計算は `applyOverlayTypography(rect)` とし、可視領域幅ではなく player 全体矩形を使うことで、パネル開時の字幕縮小を防止
+- **確認結果:**
+  - パネル開時: `videoWidth=1396`、`panelWidth=418.796875`、`overlayCenterX=488.59375` で、左側可視領域中央と一致
+  - パネル閉時: `videoWidth=1396`、`panelWidth=0`、`overlayCenterX=698` で、動画中央と一致
+  - フォントサイズは開閉前後とも `primaryFontSize=28.192px`、`secondaryFontSize=23.787px` で維持される
+- **判定:** 完了。位置追従・幅追従・文字サイズ維持を実機確認済み。
+
 #### F-2: restart 後にネイティブトグルが表示されない（2026-08-16 完了）
 - **症状:** 別エピソードや別作品へ移動すると、`#atvb-native-toggle` が DOM に追加されない。
 - **再現条件:** 字幕パネルを開閉するとトグルが表示されるため、初期化フローの途中で処理が止まっていると推定した。
-- **原因:** Apple TV+ の Svelte がエピソード遷移時にタブ DOM を再マウントすることで
-  `#atvb-native-toggle` が消える。従来の `watchForPlayerTabs` は初回注入後に
-  `obs.disconnect()` していたため、再マウント後の消失に気づけなかった。
-- **修正内容:** `watchForPlayerTabs` の Observer を disconnect しないよう変更し、
-  「タブが存在するがトグルが消えている」状態を検知したら即再注入するループに切り替えた。
-  あわせて `destroyUiHosts` に `closest("li")` が null のときの fallback 除去を追加した。
-- **確認結果:** 別エピソードや別作品への遷移後も、字幕パネルを開閉しなくても
-  `#atvb-native-toggle` が表示されることを確認した。
+- **原因:** Apple TV+ の Svelte がエピソード遷移時にタブ DOM を再マウントすることで `#atvb-native-toggle` が消える。従来の `watchForPlayerTabs` は初回注入後に `obs.disconnect()` していたため、再マウント後の消失に気づけなかった。
+- **修正内容:** `watchForPlayerTabs` の Observer を disconnect しないよう変更し、「タブが存在するがトグルが消えている」状態を検知したら即再注入するループに切り替えた。あわせて `destroyUiHosts` に `closest("li")` が null のときの fallback 除去を追加した。
+- **確認結果:** 別エピソードや別作品への遷移後も、字幕パネルを開閉しなくても `#atvb-native-toggle` が表示されることを確認した。
 
 ### 🔴 未完了・不具合（2026-08-16 テスト判明）
-
-#### F-1: パネル閉じ時オーバーレイ字幕が表示されるも、字幕パネル開閉に追従しない（新規）
-- **症状:** 字幕パネル開閉で再生画面とオーバーレイ字幕の位置が追従しない、表示領域がズレる。
-- **原因仮説:** `panelOpen` 変更時に再生動画の追従がされていないから？
-- **調査対象:** 字幕パネルの開閉によって表示位置追従をする処理全般
 
 #### F-3: 言語設定変更が再起動なしに反映されない（新規）
 - **症状:** secondary を ja→ko に変えてもメインしか表示されない。ja/en 以外は表示されなくなる
@@ -100,7 +107,7 @@
 #### F-5: Bugfix-E（ネイティブ字幕復元）未動作
 - **症状:** OFF 後にネイティブ字幕が表示されない
 - **実装方針:** `cue-controller.js` の `restoreNativeSubtitles()` を呼ぶ（仕様確定書 §2 参照）
-- **状態:** 未着手（F-1/F-2 より後）
+- **状態:** 未着手（F-3/F-4 より後）
 
 #### F-6: デバッグパネルが OFF 時に確認不可（運用上の問題）
 - **症状:** トグル OFF 時はデバッグパネルが表示できず、ログ確認が不能
@@ -110,11 +117,9 @@
 
 ## Bugfix 依存ツリー（2026-08-16 更新）
 
-```
+```text
 【根本症状】
 現在の最優先
-  [F-1] panelOpen=false で追従して画面サイズが変わるようにする
-        ↓
   [F-3] 言語設定変更時のトラック再バインドを実装する
         ↓
   [F-4] onRuntimeMessage の sendResponse 漏れを修正する
@@ -128,10 +133,9 @@
 
 | 順序 | ID | やること | 完成の判定 | 状態 |
 |---|---|---|---|---|
-| ① 今すぐ | F-1 | `panelOpen` 変更がオーバーレイ表示を停止しないようにする | パネルを閉じても画面上のオーバーレイ字幕が表示され続ける | 🔴 未着手 |
-| ② 次 | F-3 | 言語設定変更時にトラック再バインドを実行する | ja→ko 変更後すぐに secondary が切り替わる | 🔴 未着手 |
-| ③ 次 | F-4 | `onRuntimeMessage` の `sendResponse` 漏れを修正する | コンソールにチャネルクローズエラーが出なくなる | 🔴 未着手 |
-| ④ その後 | F-5 | `cue-controller.restoreNativeSubtitles()` でネイティブ字幕 track を復元する | Apple TV+ 字幕が OFF 後に動く | ⏸ F-1 後 |
+| ① 今すぐ | F-3 | 言語設定変更時にトラック再バインドを実行する | ja→ko 変更後すぐに secondary が切り替わる | 🔴 未着手 |
+| ② 次 | F-4 | `onRuntimeMessage` の `sendResponse` 漏れを修正する | コンソールにチャネルクローズエラーが出なくなる | 🔴 未着手 |
+| ③ その後 | F-5 | `cue-controller.restoreNativeSubtitles()` でネイティブ字幕 track を復元する | Apple TV+ 字幕が OFF 後に動く | ⏸ F-3/F-4 後 |
 
 ***
 

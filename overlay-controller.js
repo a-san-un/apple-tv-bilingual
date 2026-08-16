@@ -29,15 +29,17 @@
       return makeClickableSpans(safeText, safeSentence || safeText);
     }
 
-    function createOverlayController({
-      getOverlayRoot,
-      setOverlayRoot,
-      getTarget,
-      makeClickableSpans,
-      showPopup,
-      getPlaybackControlsLayoutTargets: _getPlaybackControlsLayoutTargets,
-      PLAYBACK_CONTROLS_LAYOUT: _PLAYBACK_CONTROLS_LAYOUT,
-    } = {}) {
+      function createOverlayController({
+        getOverlayRoot,
+        setOverlayRoot,
+        getPanelOpen,
+        getTarget,
+        makeClickableSpans,
+        showPopup,
+        getPlaybackControlsLayoutTargets: _getPlaybackControlsLayoutTargets,
+        PLAYBACK_CONTROLS_LAYOUT: _PLAYBACK_CONTROLS_LAYOUT,
+      } = {}) {
+
       // content 切替時の残留テキストを防ぐため、簡単な前回 state を保持する。
       function ensureOverlayState() {
         if (!root.overlayState || typeof root.overlayState !== "object") {
@@ -176,12 +178,18 @@
 
       // overlay host を再生領域に追従させる。
       // 位置と幅だけをここで決め、文言更新とは分離しておく。
-      function syncOverlayPositionToPlayer() {
+      function syncOverlayPositionToPlayer(options = {}) {
         const container = resolveOverlayRoot();
         if (!container) return;
 
         const player = findPlayerContainer();
         const rect = player?.getBoundingClientRect?.();
+        const panelOpen =
+          typeof options.panelOpen === "boolean"
+            ? options.panelOpen
+            : typeof getPanelOpen === "function"
+              ? Boolean(getPanelOpen())
+              : false;
 
         container.style.position = "fixed";
         container.style.zIndex = "2147483647";
@@ -191,9 +199,15 @@
         container.style.display = container.hidden ? "none" : "block";
 
         if (rect && rect.width > 0 && rect.height > 0) {
-          const centerX = rect.left + rect.width / 2;
+          const panelWidth = panelOpen
+            ? document.querySelector("#atv-panel-host")?.getBoundingClientRect?.()
+                ?.width ?? 0
+            : 0;
+
+          const visibleWidth = Math.max(0, rect.width - panelWidth);
+          const centerX = rect.left + visibleWidth / 2;
           const subtitleY = rect.bottom - rect.height * 0.14;
-          const overlayWidth = Math.min(rect.width * 0.72, 960);
+          const overlayWidth = Math.min(visibleWidth * 0.72, 960);
 
           container.style.left = `${centerX}px`;
           container.style.top = `${subtitleY}px`;

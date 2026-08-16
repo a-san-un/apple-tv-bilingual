@@ -1866,6 +1866,7 @@ function forwardContentLog(...args) {
     setOverlayRoot: (rootNode) => {
       state.overlayRoot = rootNode;
     },
+    getPanelOpen: () => state.panelOpen,
     getTarget,
     makeClickableSpans,
     showPopup,
@@ -2055,6 +2056,7 @@ let syncIntervalOrchestrator = null;
     renderPanel,
     rebuildSubtitleBlocksForPanelOpen,
     destroyOverlay,
+    overlayController,
     onPanelClose: () => {
       // ① まず tick を止めて renderCurrentSnapshot が走らないようにする
       syncIntervalOrchestrator?.stop?.();

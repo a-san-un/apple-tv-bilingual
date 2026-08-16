@@ -267,7 +267,9 @@
       logContent?.("右側字幕パネル applyPanelVisibility start", {
         requestedOpen: show,
         panelOpen: state.panelOpen,
-        hasSubtitlePanelToggleButton: Boolean(getTarget?.().querySelector("#atv-toggle-btn")),
+        hasSubtitlePanelToggleButton: Boolean(
+          getTarget?.().querySelector("#atv-toggle-btn"),
+        ),
       });
 
       // 表示対象の UI 要素を取る
@@ -276,10 +278,13 @@
       // 右側字幕パネルの表示/非表示を切り替える
       if (panelHost) panelHost.style.display = show ? "" : "none";
 
-      // overlay は幅だけをパネル開閉に合わせる（display は触らない → F-1 対策）
-      if (overlayHost) {
-        overlayHost.style.width = show ? "70%" : "100%";
-      }
+      // overlay の位置・幅は overlay-controller 側で再計算する
+      requestAnimationFrame(() => {
+        deps.overlayController?.syncOverlayPositionToPlayer?.({
+          reason: "panel-visibility-change",
+          panelOpen: show,
+        });
+      });
 
       // ボタンは消さず、見た目だけ開閉状態に合わせる
       updateToggleButton(show);
@@ -291,7 +296,6 @@
         hasOverlayHost: Boolean(overlayHost),
         panelHostDisplay: panelHost?.style?.display ?? null,
         overlayHostDisplay: overlayHost?.style?.display ?? null,
-        overlayWidth: overlayHost?.style?.width ?? null,
       });
     }
 

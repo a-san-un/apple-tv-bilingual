@@ -13,7 +13,7 @@
 |---|---|---|---|
 | **図-B** トグル OFF | ✅ 字幕メニューで出せる状態にする | ❌ 非表示 | ✅ 全表示（確認済） |
 | **図-C** トグル ON ＋ パネル閉 | ❌ 意図的に非表示（overlay 優先） | ✅ 表示中（確認済） | ✅ 全表示（確認済） |
-| **図-D** トグル ON ＋ パネル開 | ❌ 意図的に非表示（overlay 優先） | ✅ 表示中（確認済） | ✅ 全表示（確認済） |
+| **図-D** トグル ON ＋ パネル開 | ❌ 意図的に非表示（overlay 優先） | ✅ 表示中。右パネル幅を除いた左側可視領域中央へ寄せる | ✅ 全表示（確認済） |
 
 **レイアウト図の場所:** `docs/Bugfix/Layout/appletv-layout1.drawio`
 
@@ -81,7 +81,7 @@ return {
 
 処理順序：
 
-```
+```text
 ① cueController?.restoreNativeSubtitles?.()  ← ネイティブ字幕の track.mode を復元
 ② destroyUiHosts()                           ← panel / overlay / toggleBtn を DOM から除去
 ③ applyDone()
@@ -91,12 +91,14 @@ return {
 
 ## 5. `destroyUiHosts()` で破棄する対象（Bugfix-A）
 
-| 要素 | DOM ID | 処置 |
+| 要素 | DOM ID / selector | 処置 |
 |---|---|---|
-| 字幕パネル本体 | `atv-panel-root` | `remove()` |
-| 字幕パネル開閉ボタン | `atv-toggle-btn` | `remove()` |
-| オーバーレイ | `atv-overlay-root` | `remove()` |
-| ネイティブトグル | `atvb-native-toggle` | **残す（削除しない）** |
+| 字幕パネル本体 host | `#atv-panel-host` | `remove()` |
+| 字幕パネル本体 root | `#atv-panel-root` | host ごと remove される前提。単独で残留していれば除去対象 |
+| 字幕パネル開閉ボタン | `#atv-toggle-btn` | `remove()` |
+| オーバーレイ host | `#atv-overlay-host` | `remove()` |
+| オーバーレイ inner root | `[data-atvb-overlay-root]` | host ごと remove される前提。単独で残留していれば除去対象 |
+| ネイティブトグル | `#atvb-native-toggle` | **残す（削除しない）** |
 
 ---
 
@@ -145,32 +147,87 @@ if (!toolbar) {
 }
 ```
 
-> **診断コマンド (F-3):** `atvb-native-toggle: false` かつ `isPlaybackReady: true` のとき、
+> **診断コマンド (F-2):** `atvb-native-toggle: false` かつ `isPlaybackReady: true` のとき、
 > 注入先セレクタの存在・`__ATVB_DEBUG__.state.contentSettings` の内容を確認する。
 
 ---
 
-## 7. DOM ID 正本（マスタープランと同一・再掲）
+## 7. overlay / panel レイアウト仕様（F-1 確定）
 
-| 正式名称 | DOM ID | 役割 |
+### 7-1. DOM 正本
+
+| 正式名称 | DOM ID / selector | 役割 |
 |---|---|---|
-| ネイティブトグル | `atvb-native-toggle` | 拡張全体の ON/OFF のみ。OFF 時も残す |
-| 字幕パネル開閉ボタン | `atv-toggle-btn` | 右側字幕パネルの開閉のみ |
-| 字幕パネル本体 | `atv-panel-root` | 右側字幕パネル。OFF 時は destroy |
-| オーバーレイ | `atv-overlay-root` | 学習補助オーバーレイ。OFF 時は destroy |
+| ネイティブトグル | `#atvb-native-toggle` | 拡張全体の ON/OFF のみ。OFF 時も残す |
+| 字幕パネル開閉ボタン | `#atv-toggle-btn` | 右側字幕パネルの開閉のみ |
+| 字幕パネル本体 host | `#atv-panel-host` | 表示/非表示・幅計測の正本 |
+| 字幕パネル本体 root | `#atv-panel-root` | パネル UI 本体 |
+| オーバーレイ host | `#atv-overlay-host` | 位置・幅・矩形計測の正本 |
+| オーバーレイ inner root | `[data-atvb-overlay-root]` | overlay 内部コンテナ |
+| オーバーレイ primary | `[data-atvb-overlay-primary]` | primary 字幕描画先 |
+| オーバーレイ secondary | `[data-atvb-overlay-secondary]` | secondary 字幕描画先 |
+
+### 7-2. 表示ルール
+
+- **トグル OFF:** overlay は非表示。panel も非表示または破棄。
+- **トグル ON + パネル閉:** overlay は表示し、動画全体の中央下に配置する。
+- **トグル ON + パネル開:** overlay は表示し続け、右側パネル幅を除いた左側可視領域の中央下に配置する。
+- panel の開閉で overlay を消さない。overlay は常に ON/OFF にのみ従属する。
+
+### 7-3. 位置計算ルール
+
+`syncOverlayPositionToPlayer(options = {})` の責務は overlay host の位置・幅だけを決めることとする。
+
+- player 矩形を `rect = player.getBoundingClientRect()` で取得する
+- パネル開時は `panelWidth = #atv-panel-host.getBoundingClientRect().width`
+- 可視領域幅は `visibleWidth = rect.width - panelWidth`
+- overlay 中央 X は `rect.left + visibleWidth / 2`
+- overlay 幅は `Math.min(visibleWidth * 0.72, 960)`
+
+### 7-4. panelOpen の伝搬ルール
+
+- `panel-ui.js` の `applyPanelVisibility(show)` は、panel の表示切替後に `requestAnimationFrame()` 内で `overlayController.syncOverlayPositionToPlayer({ panelOpen: show, reason: "panel-visibility-change" })` を呼ぶ
+- `overlay-controller.js` は `options.panelOpen` を優先し、未指定時は `getPanelOpen()` で現在状態を読む
+- `content.js` は `createOverlayController({...})` に `getPanelOpen: () => state.panelOpen` を渡す
+
+### 7-5. フォントサイズ仕様
+
+- overlay の **位置・幅** は `visibleWidth` ベースで決める
+- overlay の **文字サイズ** は player 全体矩形 `rect` ベースで決める
+- `applyOverlayTypography()` に可視領域幅を渡さない
+- これにより、パネル開時も字幕サイズを不必要に縮小しない
+
+### 7-6. 実機確認済みの判定値
+
+- パネル開状態:
+  - `panelDisplay='block'`
+  - `panelWidth=418.796875`
+  - `videoWidth=1396`
+  - `overlayCenterX=488.59375`
+  - 左側可視領域中央と一致
+- パネル閉状態:
+  - `panelDisplay='none'`
+  - `panelWidth=0`
+  - `videoWidth=1396`
+  - `overlayCenterX=698`
+  - 動画中央と一致
+- フォントサイズ:
+  - `primaryFontSize='28.192px'`
+  - `secondaryFontSize='23.787px'`
+  - パネル開閉で変化しない
+
+**判定:** F-1 は完了。位置追従・中央復帰・文字サイズ維持を実機確認済み。
 
 ---
 
 ## 8. Bugfix 優先順位（このセッション時点）
 
-```
-[D-2] restartBilingual 二重呼び出し解消     ← 最優先（現在着手中）
-  ↓ panel / overlay / toggle が DOM に出るようになったら
-[A]  destroyUiHosts() を OFF 経路に追加
+```text
+[F-3] 言語設定変更時のトラック再バインド
   ↓
-[E]  restoreNativeSubtitles() を OFF 経路に追加（1 行追加で完了）
+[F-4] onRuntimeMessage の sendResponse 漏れ修正
   ↓
-[B/C] module 初期化順・recovery module（後回し）
+[F-5=Bugfix-E] restoreNativeSubtitles() によるネイティブ字幕復元
 ```
 
 ---
