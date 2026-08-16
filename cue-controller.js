@@ -569,11 +569,65 @@
       if (!track) return;
 
       const previousBoundTrack = secondaryTrackBound;
+      const requestedMode = modeDecision?.requestedMode || "hidden";
+      const currentTrackMode = track?.mode || "";
+      const sameTrackRef = previousBoundTrack === track;
+      const sameMode =
+        String(currentTrackMode || "").toLowerCase() ===
+        String(requestedMode || "").toLowerCase();
+
+      if (sameTrackRef && sameMode && secondaryTrackCleanup) {
+        if (DEBUG_SECONDARY_SUBS) {
+          logContent("secondary-sync state-transition", {
+            phase: "bind-skip",
+            requestedLang: getRequestedSecondaryLanguage(),
+            previousBoundTrackLanguage: previousBoundTrack?.language || "",
+            previousBoundTrackMode: previousBoundTrack?.mode || "",
+            selectedTrackLanguage: track?.language || "",
+            selectedTrackKind: track?.kind || "",
+            selectedTrackModeBefore: currentTrackMode,
+            selectedTrackCuesLength: getTrackCuesLength(track),
+            requestedMode,
+            decisionPolicy: modeDecision?.policy || "",
+            decisionReason: modeDecision?.reason || "",
+            sameTrackRef,
+            sameMode,
+            willSkipBind: true,
+            willApplyMode: false,
+          });
+          logContent("secondary-sync bind skipped", {
+            reason: "sameTrackRefAndMode",
+            trackLanguage: track?.language || "",
+            trackKind: track?.kind || "",
+            requestedMode,
+            currentMode: currentTrackMode,
+          });
+        }
+        return;
+      }
+
+      logContent("secondary-sync state-transition", {
+        phase: "bind-apply",
+        requestedLang: getRequestedSecondaryLanguage(),
+        previousBoundTrackLanguage: previousBoundTrack?.language || "",
+        previousBoundTrackMode: previousBoundTrack?.mode || "",
+        selectedTrackLanguage: track?.language || "",
+        selectedTrackKind: track?.kind || "",
+        selectedTrackModeBefore: currentTrackMode,
+        selectedTrackCuesLength: getTrackCuesLength(track),
+        requestedMode,
+        decisionPolicy: modeDecision?.policy || "",
+        decisionReason: modeDecision?.reason || "",
+        sameTrackRef,
+        sameMode,
+        willSkipBind: false,
+        willApplyMode: true,
+      });
+
       unbindSecondarySubtitleTrack();
 
       const previousMode = track?.mode || "";
       secondaryTrackOriginalMode = previousMode;
-      const requestedMode = modeDecision?.requestedMode || "hidden";
 
       const getReadableSnapshot = () => {
         const currentTime = getCurrentTime();
@@ -772,10 +826,6 @@
         );
       }
 
-      if (forceRebind) {
-        unbindSecondarySubtitleTrack();
-      }
-
       ensureSubtitleTracksUsable(video, requestedLang, {
         finalMode: "hidden",
         reason: "secondary-sync",
@@ -919,6 +969,37 @@
         resolvedTrackActiveCuesLength === 0 &&
         !resolvedTrackCurrentCue &&
         resolvedTrackCurrentCueText.length === 0;
+
+      const selectedTrackHasNoCues =
+        Boolean(track) &&
+        resolvedTrackCuesLength === 0 &&
+        resolvedTrackActiveCuesLength === 0 &&
+        resolvedTrackCurrentCueText.length === 0;
+
+      if (forceRebind && selectedTrackHasNoCues) {
+        logContent("secondary-sync force-rebind skipped", {
+          reason: "selectedTrackHasNoCues",
+          requestedLang: requestedLang || "",
+          currentTime,
+          trackLanguage: track?.language || "",
+          trackKind: track?.kind || "",
+          trackMode: track?.mode || "",
+          cuesLength: resolvedTrackCuesLength,
+          activeCuesLength: resolvedTrackActiveCuesLength,
+          currentCueTextLength: resolvedTrackCurrentCueText.length,
+        });
+
+        if (!suppressRender) {
+          (renderSecondarySubtitleOverride || renderSecondarySubtitle)("", track);
+        }
+
+        rebuildCurrentSceneSubtitleBlocks();
+        return;
+      }
+
+      if (forceRebind && !selectedTrackHasNoCues) {
+        unbindSecondarySubtitleTrack();
+      }
 
       const modeDecision = resolveSecondaryTrackModePolicy({
         track,

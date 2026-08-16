@@ -335,15 +335,17 @@
 
     const currentTime = Number(video.currentTime ?? NaN);
 
-    window.ATVB?.logger?.logContent(
-      "subtitle",
-      "secondary resolver candidates",
-      {
-        requestedLang,
-        currentTime,
-        candidates: getSecondarySubtitleTrackCandidates(video, requestedLang),
-      },
-    );
+    if (window.DEBUG_SECONDARY_SUBS) {
+      window.ATVB?.logger?.logContent(
+        "subtitle",
+        "secondary resolver candidates",
+        {
+          requestedLang,
+          currentTime,
+          candidates: getSecondarySubtitleTrackCandidates(video, requestedLang),
+        },
+      );
+    }
 
     const selectedTrack = pickBestSubtitleTrack(
       video.textTracks,
@@ -390,27 +392,29 @@
     const requestedTrackButEmpty =
       matchesRequestedLanguage(selectedTrack, requestedLang) && trackHasNoCues;
 
-    window.ATVB?.logger?.logContent(
-      "subtitle",
-      "secondary resolver readability",
-      {
-        requestedLang,
-        currentTime,
-        language: selectedTrack?.language ?? "",
-        normalizedLanguage: normalizeTrackLanguage(selectedTrack?.language),
-        inferredLanguageFromLabel: inferLanguageFromLabel(selectedTrack?.label),
-        label: normalizeTrackLabel(selectedTrack?.label),
-        kind: selectedTrack?.kind ?? "",
-        mode: selectedTrack?.mode ?? "",
-        cuesLength,
-        activeCuesLength,
-        hasCueOverlapAtCurrentTime,
-        currentCueTextLength,
-        sameTrackUnreadableNow,
-        trackHasNoCues,
-        requestedTrackButEmpty,
-      },
-    );
+    if (window.DEBUG_SECONDARY_SUBS) {
+      window.ATVB?.logger?.logContent(
+        "subtitle",
+        "secondary resolver readability",
+        {
+          requestedLang,
+          currentTime,
+          language: selectedTrack?.language ?? "",
+          normalizedLanguage: normalizeTrackLanguage(selectedTrack?.language),
+          inferredLanguageFromLabel: inferLanguageFromLabel(selectedTrack?.label),
+          label: normalizeTrackLabel(selectedTrack?.label),
+          kind: selectedTrack?.kind ?? "",
+          mode: selectedTrack?.mode ?? "",
+          cuesLength,
+          activeCuesLength,
+          hasCueOverlapAtCurrentTime,
+          currentCueTextLength,
+          sameTrackUnreadableNow,
+          trackHasNoCues,
+          requestedTrackButEmpty,
+        },
+      );
+    }
 
     if (requestedTrackButEmpty) {
       window.ATVB?.logger?.logContent(
