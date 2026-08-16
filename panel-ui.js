@@ -225,6 +225,17 @@
       removeHost("atv-popup-host");
       removeHost("atv-toggle-btn");
 
+      // ★ F-2 fix: closest("li") が null のときも要素単体で確実に除去する
+      const nativeToggleEl = document.getElementById("atvb-native-toggle");
+      if (nativeToggleEl) {
+        const liWrapper = nativeToggleEl.closest("li");
+        if (liWrapper) {
+          liWrapper.remove();          // wrapper の <li> ごと消す（通常ケース）
+        } else {
+          nativeToggleEl.remove();     // li が見つからなければ要素単体で消す（フォールバック）
+        }
+      }
+
       // overlay も破棄する
       destroyOverlay?.();
 
@@ -265,10 +276,9 @@
       // 右側字幕パネルの表示/非表示を切り替える
       if (panelHost) panelHost.style.display = show ? "" : "none";
 
-      // overlay は幅と display をパネル開閉に合わせる
+      // overlay は幅だけをパネル開閉に合わせる（display は触らない → F-1 対策）
       if (overlayHost) {
         overlayHost.style.width = show ? "70%" : "100%";
-        overlayHost.style.display = show ? "" : "none";
       }
 
       // ボタンは消さず、見た目だけ開閉状態に合わせる
@@ -291,27 +301,27 @@
       if (typeof force === "boolean") state.panelOpen = force;
       else state.panelOpen = !state.panelOpen;
 
-      // レイアウトとパネル表示を現在状態へ反映する
-      applyLayout(state.panelOpen);
+      // レイアウトとパネル表示を新しい状態へ合わせる
+      applyLayout?.();
       applyPanelVisibility(state.panelOpen);
 
-      // ランタイム状態だけ local 保存へ書く
-      globalThis.ATVB_PANEL_VISIBILITY.persist(state.panelOpen, logContent);
-
-      // 開閉フックがあれば通知する
-      if (state.panelOpen) {
-        deps.onPanelOpen?.();
-      } else {
-        deps.onPanelClose?.();
-      }
-
-      // デバッグ用に現在状態を残す
-      logContent("togglePanel", { panelOpen: state.panelOpen });
+      // ランタイム状態を local へ保存する
+      globalThis.ATVB_PANEL_VISIBILITY?.persist(state.panelOpen);
     }
 
-    // 現在の字幕状態をパネルへ反映する
-    function applyPanelState(reason = "unknown") {
-      // 開いているパネル向けに字幕ブロックを再計算する
+    // パネル状態全体を適用する（open 判定 → 表示制御 → 再描画）
+    function applyPanelState(reason) {
+      logContent?.("右側字幕パネル applyPanelState start", {
+        reason,
+        panelOpen: state.panelOpen,
+        hasPanelHost: Boolean(getTarget?.().querySelector("#atv-panel-host")),
+        hasPanelShadowRoot: Boolean(state.panelShadowRoot),
+      });
+
+      // 表示切り替えを先に行う
+      applyPanelVisibility(state.panelOpen);
+
+      // パネルが開いているときだけ字幕ブロックを再構築する
       if (typeof rebuildSubtitleBlocksForPanelOpen === "function") {
         rebuildSubtitleBlocksForPanelOpen(reason);
       }
@@ -598,18 +608,28 @@
     }
 
     // 再生タブ出現を監視してネイティブトグルを差し込む
+    // ★ F-2 修正: エピソード移動時に Apple TV+ がタブ DOM を再構築する空白期間に
+    //   Observer が空振りするケースに備え、フォールバックタイマーを追加する
     function watchForPlayerTabs() {
-      // すでにタブがあれば即注入する
+      // ★ Svelte 再マウント対策: 注入後も Observer を継続し、
+      //   atvb-native-toggle が消えたタイミングで即再注入する
+
+      // すでにタブがあれば即注入する（初回）
       if (document.querySelector('[data-testid="uts.col.PlayerTabUpNext-trigger"]')) {
         injectNativeToggle();
-        return;
       }
 
-      // タブがまだ無ければ DOM 変化を監視して待つ
+      // Observer を継続して Svelte による再マウント後も再注入する
       const obs = new MutationObserver(() => {
-        if (document.querySelector('[data-testid="uts.col.PlayerTabUpNext-trigger"]')) {
+        const tabExists = !!document.querySelector(
+          '[data-testid="uts.col.PlayerTabUpNext-trigger"]'
+        );
+        const toggleExists = !!document.getElementById("atvb-native-toggle");
+
+        // タブがあってトグルが消えていたら再注入する
+        if (tabExists && !toggleExists) {
           injectNativeToggle();
-          obs.disconnect();
+          logContent?.("watchForPlayerTabs: re-injected after Svelte remount", {});
         }
       });
 
@@ -624,14 +644,17 @@
       togglePanel,
       applyPanelVisibility,
       applyPanelState,
+      destroyUiHosts,
+      getPanelUiElements,
+      updateToggleButton,
       loadPanelVisibility,
       watchForPlayerTabs,
-      destroyFeatureUiHosts,
-      destroyUiHosts,
+      injectNativeToggle,
     };
   }
 
-  // panelUi ファクトリを公開する
-  window.ATVB = window.ATVB || {};
-  window.ATVB.panelUi = { createPanelUi };
+  // グローバルへ登録する
+  globalThis.ATVB = globalThis.ATVB || {};
+  globalThis.ATVB.panelUi = globalThis.ATVB.panelUi || {};
+  globalThis.ATVB.panelUi.createPanelUi = createPanelUi;
 })();

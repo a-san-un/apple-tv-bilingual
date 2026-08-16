@@ -501,8 +501,8 @@
         reason,
         panelOpen: state.panelOpen,
       });
-      // eslint-disable-next-line no-console
-      console.trace("restartBilingual trace");
+
+      // console.trace("restartBilingual trace");
 
       if (state.restarting) {
         logContent("restartBilingual skipped: already restarting", { reason });
@@ -540,6 +540,7 @@
         prepareForRestart();
         startBilingual({ keepPanelOpen: wasPanelOpen });
 
+        panelUi?.watchForPlayerTabs?.();  // ★ F-2: startBilingual が早期 return した場合でもネイティブトグルを確実に再注入        
         logContentSettings("restartBilingual done", { reason });
       } finally {
         state.restarting = false;
@@ -635,6 +636,7 @@
 
             cueController?.restoreNativeSubtitles?.();  // ★ Bugfix-E: ネイティブ字幕を復元（追加）
             panelUi?.destroyUiHosts?.();  // ★ Bugfix-A: OFF 時に UI を明示的に除去
+            panelUi?.watchForPlayerTabs?.();  // ★ F-2: OFF 後もネイティブトグルを再注入
             detachForDisabled();
             logContentSettings("ネイティブトグル OFF apply done", {
               triggerReason,

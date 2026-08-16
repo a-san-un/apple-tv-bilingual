@@ -2130,7 +2130,6 @@ let syncIntervalOrchestrator = null;
   const {
     loadSettingsSnapshot,
     loadSettingsFromSync,
-    restartBilingual: _restartBilingual,
     ensureMessageListener,
   } = settingsRuntime;
 
@@ -2709,8 +2708,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       requestedSecondaryLang: state.requestedSecondaryLang || "",
     });
 
-    // eslint-disable-next-line no-console
-    console.trace("startBilingual trace");
+    // console.trace("startBilingual trace");
 
     // video が無ければここでは初期化できない
     if (!state.video) return;
