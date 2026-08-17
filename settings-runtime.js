@@ -33,7 +33,6 @@
       startBilingual,
       isPlaybackPageReady,
       getVideoAndDialog,
-      getUniqueTracks,
       cueController,
       syncIntervalOrchestrator,
       panelUi,
@@ -425,6 +424,7 @@
               extensionEnabled: state.contentSettings.extensionEnabled,
             });
 
+            cueController?.restoreNativeSubtitles?.();
             panelUi?.destroyUiHosts?.();
             panelUi?.watchForPlayerTabs?.();
             detachForDisabled();
@@ -442,31 +442,21 @@
             return { ok: true, reason: "disabled" };
           }
 
-          logContentSettings("ネイティブトグル ON apply start", {
-            triggerReason,
-            panelOpen: state.panelOpen,
-            extensionEnabled: state.contentSettings.extensionEnabled,
-          });
-
-          const playbackRef = await waitForPlaybackReady({
-            timeoutMs: 4000,
-            intervalMs: 200,
-          });
+          const playbackRef = await waitForPlaybackReady();
 
           if (!playbackRef?.video) {
-            logContentError("SETTINGS_CHANGED ON aborted: playback not ready", {
+            logContentSettings("SETTINGS_CHANGED playback not ready", {
               triggerReason,
+              panelOpen: state.panelOpen,
               extensionEnabled: state.contentSettings.extensionEnabled,
             });
-
-            return {
-              ok: false,
-              error: "playback_not_ready",
-            };
+            return { ok: false, error: "playback_not_ready" };
           }
 
           state.video = playbackRef.video;
-          state.dialogEl = playbackRef.dialog || null;
+          if (playbackRef.dialog) {
+            state.dialogEl = playbackRef.dialog;
+          }
 
           await syncAppleTvNativeSubtitleToSecondaryLang(
             state.contentSettings.secondaryLang,
@@ -523,11 +513,20 @@
       }
 
       if (message.type === "GET_LANGUAGES") {
-        const langs = state.video ? getUniqueTracks(state.video.textTracks) : [];
-        logContent("GET_LANGUAGES handled", { count: langs.length });
-        sendResponse(langs.map((l) => ({ lang: l.lang, label: l.label })));
+        try {
+          const langs = Array.isArray(state.availableLanguages)
+            ? state.availableLanguages
+            : [];
+          sendResponse(langs.map((l) => ({ lang: l.lang, label: l.label })));
+        } catch (error) {
+          logContentError("GET_LANGUAGES failed", {
+            message: error?.message || String(error),
+          });
+          sendResponse([]);
+        }
         return false;
       }
+
       return false;
     };
 

@@ -168,26 +168,22 @@ async function sendSettingsChangedWithRecovery(
     message.settings = settings;
   }
 
-  try {
-    const response = await chrome.tabs.sendMessage(tabId, message);
-    await logBackground("SETTINGS_CHANGED sent", { tabId, reason });
-    return { ok: true, tabId, reason, response: response ?? null };
-  } catch (error) {
-    const errorText = String(error);
-    await logBackground("SETTINGS_CHANGED send failed", {
-      tabId,
-      reason,
-      error: errorText,
-    });
+  const classifySettingsSendError = (errorText) => {
+    const text = String(errorText || "");
+    return {
+      receivingEndMissing: text.includes("Receiving end does not exist"),
+      asyncResponseClosed:
+        text.includes("message channel closed before a response was received") ||
+        text.includes(
+          "A listener indicated an asynchronous response by returning true",
+        ),
+    };
+  };
 
-    if (!errorText.includes("Receiving end does not exist")) {
-      return { ok: false, tabId, reason, error: errorText };
-    }
-
+  const ensureContentScriptReady = async () => {
     try {
       const { jsFiles, cssFiles } = getAppleTvContentScriptAssets();
 
-      // Bugfix-B: reinject 前に alive チェック（二重 inject 防止）
       let alreadyAlive = false;
       try {
         const aliveResult = await chrome.scripting.executeScript({
@@ -204,24 +200,29 @@ async function sendSettingsChangedWithRecovery(
           tabId,
           reason,
         });
-      } else {
-        await chrome.scripting.executeScript({
+        return { ok: true, alreadyAlive: true };
+      }
+
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: jsFiles,
+      });
+
+      if (cssFiles.length > 0) {
+        await chrome.scripting.insertCSS({
           target: { tabId },
-          files: jsFiles,
-        });
-        if (cssFiles.length > 0) {
-          await chrome.scripting.insertCSS({
-            target: { tabId },
-            files: cssFiles,
-          });
-        }
-        await logBackground("content script reinjected", {
-          tabId,
-          reason,
-          jsFiles,
-          cssFiles,
+          files: cssFiles,
         });
       }
+
+      await logBackground("content script reinjected", {
+        tabId,
+        reason,
+        jsFiles,
+        cssFiles,
+      });
+
+      return { ok: true, alreadyAlive: false };
     } catch (injectError) {
       const injectErrorText = String(injectError);
       await logBackground("content script reinject failed", {
@@ -229,20 +230,55 @@ async function sendSettingsChangedWithRecovery(
         reason,
         error: injectErrorText,
       });
-      return { ok: false, tabId, reason, error: injectErrorText };
+      return { ok: false, error: injectErrorText };
+    }
+  };
+
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, message);
+    await logBackground("SETTINGS_CHANGED sent", { tabId, reason });
+    return { ok: true, tabId, reason, response: response ?? null };
+  } catch (error) {
+    const errorText = String(error);
+    const errorKind = classifySettingsSendError(errorText);
+
+    await logBackground("SETTINGS_CHANGED send failed", {
+      tabId,
+      reason,
+      error: errorText,
+      errorKind,
+    });
+
+    if (!errorKind.receivingEndMissing && !errorKind.asyncResponseClosed) {
+      return { ok: false, tabId, reason, error: errorText };
+    }
+
+    await logBackground("SETTINGS_CHANGED send failure marked recoverable", {
+      tabId,
+      reason,
+      error: errorText,
+      errorKind,
+    });
+
+    const ensureResult = await ensureContentScriptReady();
+    if (!ensureResult.ok) {
+      return { ok: false, tabId, reason, error: ensureResult.error };
     }
 
     try {
       const retryResponse = await chrome.tabs.sendMessage(tabId, message);
-      await logBackground("SETTINGS_CHANGED sent after reinject", {
+      await logBackground("SETTINGS_CHANGED sent after recovery", {
         tabId,
         reason,
+        recoveredFrom: errorKind,
+        alreadyAlive: ensureResult.alreadyAlive,
       });
       return {
         ok: true,
         tabId,
         reason,
         retried: true,
+        recoveredFrom: errorKind,
         response: retryResponse ?? null,
       };
     } catch (retryError) {
@@ -251,6 +287,7 @@ async function sendSettingsChangedWithRecovery(
         tabId,
         reason,
         error: retryErrorText,
+        recoveredFrom: errorKind,
       });
       return { ok: false, tabId, reason, error: retryErrorText };
     }
@@ -258,7 +295,8 @@ async function sendSettingsChangedWithRecovery(
 }
 
 async function notifySettingsChangedToTab(tabId, reason = "tab_activated") {
-  await sendSettingsChangedWithRecovery(tabId, reason);
+  const syncSettings = await chrome.storage.sync.get(null);
+  await sendSettingsChangedWithRecovery(tabId, reason, syncSettings);
 }
 
 // Keep the service worker alive and claim clients immediately on activation.
