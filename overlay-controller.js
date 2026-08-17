@@ -56,6 +56,7 @@
       let layoutTrackingStarted = false;
       let boundWindowResizeHandler = null;
       let boundFullscreenChangeHandler = null;
+      let boundTransitionEndHandler = null;   // ← 追加
 
       // state accessor を優先しつつ、DOM fallback でも root を拾えるようにする。
       function resolveOverlayRoot() {
@@ -178,18 +179,12 @@
 
       // overlay host を再生領域に追従させる。
       // 位置と幅だけをここで決め、文言更新とは分離しておく。
-      function syncOverlayPositionToPlayer(options = {}) {
+      function syncOverlayPositionToPlayer() {
         const container = resolveOverlayRoot();
         if (!container) return;
 
         const player = findPlayerContainer();
         const rect = player?.getBoundingClientRect?.();
-        const panelOpen =
-          typeof options.panelOpen === "boolean"
-            ? options.panelOpen
-            : typeof getPanelOpen === "function"
-              ? Boolean(getPanelOpen())
-              : false;
 
         container.style.position = "fixed";
         container.style.zIndex = "2147483647";
@@ -199,12 +194,16 @@
         container.style.display = container.hidden ? "none" : "block";
 
         if (rect && rect.width > 0 && rect.height > 0) {
-          const panelWidth = panelOpen
-            ? document.querySelector("#atv-panel-host")?.getBoundingClientRect?.()
-                ?.width ?? 0
-            : 0;
+          // panelOpen フラグではなく実際の DOM 矩形で判定する。
+          // Apple TV+ がプレイヤーをすでに縮小済みの場合は panelOverlap が 0 になり
+          // 2重計上を防ぐ。まだ transition 途中で縮小されていない場合は正しく引く。
+          const panelEl = document.querySelector("#atv-panel-host");
+          const panelRect = panelEl?.getBoundingClientRect?.();
+          const playerRight = rect.left + rect.width;
+          const panelLeft = (panelRect && panelRect.width > 0) ? panelRect.left : playerRight;
+          const panelOverlap = Math.max(0, playerRight - panelLeft);
 
-          const visibleWidth = Math.max(0, rect.width - panelWidth);
+          const visibleWidth = Math.max(0, rect.width - panelOverlap);
           const centerX = rect.left + visibleWidth / 2;
           const subtitleY = rect.bottom - rect.height * 0.14;
           const overlayWidth = Math.min(visibleWidth * 0.72, 960);
@@ -238,8 +237,14 @@
         if (layoutTrackingStarted) return;
         layoutTrackingStarted = true;
 
+        // resize / fullscreen 時も最新の panelOpen を取得して渡す。
+        // getPanelOpen が無い場合は引数なしにフォールバックする。
         const rerender = () => {
-          syncOverlayPositionToPlayer();
+          const panelOpen =
+            typeof getPanelOpen === "function" ? Boolean(getPanelOpen()) : undefined;
+          syncOverlayPositionToPlayer(
+            panelOpen !== undefined ? { panelOpen } : {}
+          );
         };
 
         const player = findPlayerContainer();
@@ -261,6 +266,19 @@
           boundFullscreenChangeHandler,
           { passive: true },
         );
+
+        // パネル開閉アニメーション完了後に再計算する。
+        // ResizeObserver だけでは transition 途中の中間値で止まることがあるため。
+        if (player) {
+          boundTransitionEndHandler = (e) => {
+            if (e.propertyName === "width" || e.propertyName === "transform") {
+              rerender();
+            }
+          };
+          player.addEventListener("transitionend", boundTransitionEndHandler, {
+            passive: true,
+          });
+        }
       }
 
       // observer / listener を解除し、再初期化時の重複監視を防ぐ。
@@ -281,6 +299,15 @@
             boundFullscreenChangeHandler,
           );
           boundFullscreenChangeHandler = null;
+        }
+
+        // transitionend リスナーも確実に解除する。
+        if (boundTransitionEndHandler) {
+          const player = findPlayerContainer();
+          if (player) {
+            player.removeEventListener("transitionend", boundTransitionEndHandler);
+          }
+          boundTransitionEndHandler = null;
         }
 
         layoutTrackingStarted = false;

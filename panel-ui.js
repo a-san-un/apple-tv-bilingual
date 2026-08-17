@@ -272,22 +272,20 @@
         ),
       });
 
-      // 表示対象の UI 要素を取る
       const { panelHost, overlayHost } = getPanelUiElements();
 
-      // 右側字幕パネルの表示/非表示を切り替える
+      // パネル本体の表示を先に切り替える。
       if (panelHost) panelHost.style.display = show ? "" : "none";
 
-      // overlay の位置・幅は overlay-controller 側で再計算する
+      // パネル DOM が確定してから overlay 位置・ボタン位置を再計算する。
+      // updateToggleButton も rAF 内に移動し、panelWidthPx のズレを防ぐ。
       requestAnimationFrame(() => {
         deps.overlayController?.syncOverlayPositionToPlayer?.({
           reason: "panel-visibility-change",
           panelOpen: show,
         });
+        updateToggleButton(show);
       });
-
-      // ボタンは消さず、見た目だけ開閉状態に合わせる
-      updateToggleButton(show);
 
       logContent?.("右側字幕パネル applyPanelVisibility done", {
         requestedOpen: show,
