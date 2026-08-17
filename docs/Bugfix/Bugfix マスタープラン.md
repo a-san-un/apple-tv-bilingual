@@ -1,7 +1,7 @@
-# Bugfix マスタープラン 2026-08-16（改訂版）
+# Bugfix マスタープラン 2026-08-17（改訂版）
 
-**作成日:** 2026-08-13 ／ **最終更新:** 2026-08-16 ／ **ブランチ:** `issue-32-content-core-split`  
-**入口資料：** 新しいスレッドでもこの資料1枚を読めばプロジェクトの文脈と、F-3 の現在地がわかります。
+**作成日:** 2026-08-13 ／ **最終更新:** 2026-08-17 ／ **ブランチ:** `issue-32-content-core-split`  
+**入口資料：** 新しいスレッドでもこの資料1枚を読めばプロジェクトの文脈と、現在の優先事項がわかります。
 
 ***
 
@@ -53,16 +53,18 @@
 
 ## 現状精査
 
-### 本日修正分（2026-08-16）
+### 本日修正分（2026-08-17）
 
-以下のファイルに修正を反映済み、または F-3 の調査対象として確認中。各不具合の解消状況は実機確認で判定する。
+以下のファイルに修正を反映済み。
 
-- `panel-ui.js`
-- `overlay-controller.js`
-- `settings-runtime.js`
+- `modules/language-definitions.js`（新規追加）
+- `modules/settings-schema.js`
+- `manifest.json`
 - `content.js`
 - `cue-controller.js`
-- `subtitle-track-resolver.js`（F-3 の調査対象）
+- `subtitle-track-resolver.js`
+- `options.html` / `options.css` / `options.js`
+- `popup.html` / `popup.js`
 
 ### ✅ 完了済み・動作確認済み
 
@@ -100,9 +102,7 @@
 - **確認結果:** 別エピソードや別作品への遷移後も、字幕パネルを開閉しなくても `#atvb-native-toggle` が表示されることを確認した。
 - **判定:** 完了。
 
-### 🟠 調査中・不具合（2026-08-16）
-
-#### F-3: 言語設定変更時、secondary track が不安定になる
+#### F-3: 言語設定変更時、secondary track が不安定になる（2026-08-17 完了）
 
 - **症状:**
   - secondary を `ja` → `ko` に変更すると、韓国語 secondary が表示されない
@@ -113,76 +113,22 @@
   2. popup が `APPLY_SETTINGS_TO_APPLE_TV` を `reason: "popup_save"` と設定値付きで送信する
   3. `settings-runtime.js` の `onRuntimeMessage` が受信し、`state.contentSettings` と `requestedSecondaryLang` を更新する
   4. `applySettingsAsync` が実行され、secondary は `cueController.syncSecondarySubtitleTrack(...)` の明示的な同期経路に到達する
-- **否定された当初仮説:**
-  - 「`applySettingsAsync` が secondary track の再 bind をまったく実行していない」は不正確
-  - 実機ログでは `ko` track に対する secondary bind が実行されている
-- **実機ログで確認した事実（`ja → ko`）:**
-  - 初回 bind は `secondary-sync state-transition` の `phase: "bind-apply"`
-  - 対象 track は `selectedTrackLanguage: "ko"`、`selectedTrackKind: "subtitles"`
-  - secondary controller は `requestedMode: "hidden"` を適用し、`secondary-sync mode-applied` と `secondary track bind` を出力する
-  - bind 時点の `selectedTrackCuesLength` は `0`、`activeCuesLength` も `0`
-  - 同一 track が hidden のままなら `sameTrackRef: true` / `sameMode: true` となり、`bind-skip` は正常な no-op
-  - その後、約 0.25〜0.55 秒単位で `secondary-sync force-rebind skipped` が連続する
-  - 同ログ時、同じ `ko` track は `trackMode: "showing"`、`cuesLength: 0`、`activeCuesLength: 0`、`currentCueTextLength: 0`
-  - 次の secondary sync で `sameTrackRef: true` / `sameMode: false` となり、secondary controller が `showing → hidden` に戻して再 bind する
-  - 結果として同じ `ko` track で `showing ↔ hidden` の往復が継続する
-- **現時点の結論:**
-  - secondary controller は `ko` track を `hidden` で bind する処理まで正常に到達している
-  - `secondary-sync force-rebind skipped` 分岐は mode を変更しない。zero-cue track を unbind せず、空描画・scene rebuild 後に return する保護分岐である
-  - `ko` track を `showing` に変更している主体は、force-rebind skip より前の別経路にある
-  - 最有力候補は `ensureSubtitleTracksUsable(..., finalMode: "showing")` を呼ぶ primary 側、または共通 recovery / native subtitle 制御である
-  - primary 用の mode 制御が secondary track まで巻き込んでいるかを確認する
-- **現在の調査対象:**
-  - `cue-controller.js` の `ensureSubtitleTracksUsable()` 全呼び出し元
-  - `track.mode = "showing"`、または showing を設定する helper の全経路
-  - `bindPrimarySubtitleTrack`、`bindSecondarySubtitleTrack`、`syncSecondarySubtitleTrack` の責務境界
-  - `subtitle-track-resolver.js` が `ko` track を選ぶ際の候補選択と mode 操作
-  - Apple TV+ 側が track mode を再変更している可能性
-- **現行の未コミット実験変更（`cue-controller.js`）:**
-  - `sameTrackRef && sameMode && secondaryTrackCleanup` 時の no-op bind を early return
-  - `bind-skip` / `secondary-sync bind skipped` ログを `DEBUG_SECONDARY_SUBS` 配下へ移動
-  - `forceRebind && selectedTrackHasNoCues` の場合は unbind を避け、空描画・scene rebuild 後に return
-  - `secondary-sync force-rebind skipped` は常設ログとして維持
-  - 構文チェックと diff の空白チェックは通過済み
-- **禁止事項:**
+- **修正内容（2026-08-17）:**
+  - `modules/language-definitions.js` を新設し、popup / options / resolver の言語候補参照を共通定義へ一本化した
+  - `content.js` / `cue-controller.js` / `subtitle-track-resolver.js` で secondary subtitle の選定・復帰・native menu 同期の責務を整理した
+  - `modules/settings-schema.js` と `manifest.json` を新構成に合わせて更新した
+  - `options.html` / `options.css` / `options.js` / `popup.html` / `popup.js` で設定 UI と選択 UI の関連実装を調整した
+- **禁止事項（継続）:**
   - `hidden && cuesLength === 0` を理由に `ensureSubtitleTracksUsable()` から track を一律除外しない
-  - この除外は日本語 subtitle track の初期 cue 読み込みを妨げ、日本語字幕を非表示にしたため取り消し済み
-- **次スレッドの最優先作業:**
-  1. `cue-controller.js` の `ensureSubtitleTracksUsable()` の全呼び出し元を列挙する
-  2. 各呼び出しについて `requestedLang`、`finalMode`、`reason`、対象 track を確認する
-  3. `track.mode` を `showing` に変更するコードと helper を全検索する
-  4. primary bind が secondary track を巻き込んでいる場合、primary の選択・mode 操作対象を primary track に限定する
-  5. `ja → ko`、`ko → ja`、`ja → en` を popup 保存だけで実機検証する
-  6. primary / secondary がそれぞれ意図した track を維持できることを確認する
-  7. F-3 完了後に F-4 へ進む
+- **判定:** 完了。
 
-##### F-3 デバッグ手順
+#### F-6: デバッグパネルが OFF 時に確認不可（2026-08-17 完了）
 
-Apple TV+ の再生タブで、言語を切り替える前に実行する。
+- **症状:** トグル OFF 時はデバッグパネルが表示できず、ログ確認が不能だった。
+- **修正内容:** `options.js` の `bindDebugLogRealtimeWatch()` 関数が未定義のまま呼ばれていた問題を修正した。デバッグパネルの表示制御を ON/OFF 状態から独立させ、常時アクセス可能にした。
+- **判定:** 完了。
 
-```js
-window.DEBUG_SECONDARY_SUBS = true;
-```
-
-`ja → ko` の切替直後に実行する。
-
-```js
-JSON.stringify(
-  (window.__atvDebugLogs || []).filter((entry) => {
-    const message = String(entry?.message || "");
-    const all = JSON.stringify(entry);
-
-    return (
-      /secondary-sync force-rebind skipped|secondary-sync state-transition|secondary-sync mode-applied|secondary track bind|secondary-sync rebind-required|primary-bind|APPLY_SETTINGS_TO_APPLE_TV|SETTINGS_CHANGED/i.test(
-        message
-      ) &&
-      /ko|한국어/i.test(all)
-    );
-  }),
-  null,
-  2
-)
-```
+### 🔴 未着手・残存不具合
 
 #### F-4: メッセージチャネルクローズエラー（未着手）
 
@@ -190,35 +136,24 @@ JSON.stringify(
 - **発生箇所:** `applySettingsAsync @ settings-runtime.js:663` / `onRuntimeMessage @ settings-runtime.js:690`
 - **原因仮説:** `onRuntimeMessage` が `true` を返して非同期応答を宣言しているが、`sendResponse` を呼ばずに処理が終わるケースがある
 - **影響:** 初回のみ発生・その後は再現しない。チャネル生存期間と処理完了タイミングの問題と推定する
-- **着手条件:** F-3 で track mode の競合を解消してから着手する
+- **着手条件:** 現在が最優先
 - **確認事項:**
   - `APPLY_SETTINGS` 系メッセージで成功・失敗・例外の全経路が `sendResponse` を呼ぶか
   - `return true` が必要な分岐だけに限定されているか
 
-#### F-5: Bugfix-E（ネイティブ字幕復元）未動作
+#### F-5: ネイティブ字幕復元（未着手）
 
 - **症状:** OFF 後にネイティブ字幕が表示されない
 - **実装方針:** `cue-controller.js` の `restoreNativeSubtitles()` を呼ぶ（仕様確定書 §2 参照）
-- **状態:** 未着手。F-3 / F-4 完了後に着手する
-
-#### F-6: デバッグパネルが OFF 時に確認不可（運用上の問題）
-
-- **症状:** トグル OFF 時はデバッグパネルが表示できず、ログ確認が不能
-- **暫定対策:** F12 コンソールで `window.__atvDebugLogs` を直接確認する
-- **状態:** 保留。F-3 の原因特定を優先する
+- **状態:** 未着手。F-4 完了後に着手する
 
 ***
 
-## Bugfix 依存ツリー（2026-08-16 更新）
+## Bugfix 依存ツリー（2026-08-17 更新）
 
 ```text
 【根本症状】
 現在の最優先
-  [F-3] secondary track の showing ↔ hidden 往復の変更元を特定し、
-        primary / secondary の mode 制御を分離する
-        ↓
-  [F-3] ja → ko / ko → ja / ja → en のリアルタイム切替を実機確認する
-        ↓
   [F-4] onRuntimeMessage の sendResponse 漏れを修正する
         ↓
   [F-5 = Bugfix-E] cue-controller.restoreNativeSubtitles() で
@@ -227,21 +162,23 @@ JSON.stringify(
 
 ***
 
-## 優先順位テーブル（2026-08-16 改訂）
+## 優先順位テーブル（2026-08-17 改訂）
 
 | 順序 | ID | やること | 完成の判定 | 状態 |
 |---|---|---|---|---|
-| ① 今すぐ | F-3 | `ko` track を `showing` にする経路を特定し、primary / secondary の mode 制御を分離する | `ja → ko` 後、secondary が `hidden` を維持し韓国語字幕が表示される | 🟠 調査中 |
-| ② 継続 | F-3 | popup 保存だけで言語切替を実機検証する | `ja → ko`、`ko → ja`、`ja → en` が再起動なしで反映される | ⏳ 原因修正後 |
-| ③ 次 | F-4 | `onRuntimeMessage` の `sendResponse` 漏れを修正する | コンソールにチャネルクローズエラーが出なくなる | 🔴 未着手 |
-| ④ その後 | F-5 | `cue-controller.restoreNativeSubtitles()` でネイティブ字幕 track を復元する | Apple TV+ 字幕が OFF 後に動く | ⏸ F-3/F-4 後 |
+| ① 今すぐ | F-4 | `onRuntimeMessage` の `sendResponse` 漏れを修正する | コンソールにチャネルクローズエラーが出なくなる | 🔴 未着手 |
+| ② 次 | F-5 | `cue-controller.restoreNativeSubtitles()` でネイティブ字幕 track を復元する | Apple TV+ 字幕が OFF 後に動く | ⏸ F-4 後 |
+| ✅ 完了 | F-1 | オーバーレイ位置追従 | 実機確認済み | ✅ |
+| ✅ 完了 | F-2 | ネイティブトグル再注入 | 実機確認済み | ✅ |
+| ✅ 完了 | F-3 | 言語定義共通化・secondary track 安定化 | 実機確認済み | ✅ |
+| ✅ 完了 | F-6 | デバッグパネル OFF 時不可 | 修正済み | ✅ |
 
 ***
 
 ## 次スレッド開始テンプレート
 
 ```text
-Apple TV+ Bilingual Subtitles の F-3 を継続してください。
+Apple TV+ Bilingual Subtitles の F-4 を着手してください。
 
 最初に以下を読んでください。
 1. docs/Bugfix/Bugfix マスタープラン.md
@@ -249,22 +186,22 @@ Apple TV+ Bilingual Subtitles の F-3 を継続してください。
 3. docs/Bugfix/コードベース現状スナップショット.md
 4. docs/Bugfix/Bugfix-仕様確定書.md
 
-現在の最優先は F-3 です。
-secondary を ja → ko に切り替えると、cue-controller は ko track を hidden で bind するが、
-直後に別経路で同一 track が showing に変更される。
-ko track は cuesLength: 0 のまま showing ↔ hidden を往復し、secondary 字幕が表示されない。
+現在の最優先は F-4 です。
+settings-runtime.js の onRuntimeMessage が true を返して非同期応答を宣言しているが、
+sendResponse を呼ばずに終わるケースがあり、メッセージチャネルクローズエラーが発生している。
 
 次に行うこと:
-- ensureSubtitleTracksUsable() の全呼び出し元を追う
-- showing を設定する mode 操作の全経路を追う
-- primary bind が secondary track を巻き込んでいないか検証する
-- 修正後は ja → ko / ko → ja / ja → en を popup 保存だけで実機検証する
+- APPLY_SETTINGS 系メッセージで成功・失敗・例外の全経路が sendResponse を呼ぶか確認する
+- return true が必要な分岐だけに限定されているか確認する
+- 修正後は popup 保存操作でコンソールエラーが出ないことを実機確認する
+
+F-4 完了後は F-5（ネイティブ字幕復元）へ進む。
+- cue-controller.js の restoreNativeSubtitles() を呼ぶ実装（仕様確定書 §2 参照）
 
 注意:
-- hidden && cuesLength === 0 の track を usable 化対象から除外する実験は、
-  日本語字幕も消したため取り消し済み。再導入しない。
-- F-3 の未コミット実験変更が cue-controller.js にある。まず git diff を確認する。
 - ローカルファイルは読み取り専用として扱い、変更案はチャット上で提示する。
+- hidden && cuesLength === 0 の track を usable 化対象から除外する実験は
+  日本語字幕も消したため取り消し済み。再導入しない。
 ```
 
 ***

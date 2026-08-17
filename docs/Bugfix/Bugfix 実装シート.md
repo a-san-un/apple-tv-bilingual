@@ -1,22 +1,24 @@
-# Bugfix 実装シート 2026-08-16（改訂版）
+# Bugfix 実装シート 2026-08-17（改訂版）
 
 **ブランチ:** `issue-32-content-core-split`  
-**対応マスタープラン:** Bugfix マスタープラン 2026-08-14（改訂版）  
+**対応マスタープラン:** Bugfix マスタープラン 2026-08-17（改訂版）  
 **このシートの役割:** 今の症状・今やる修正箇所・検証手順・実機ログの要点を 1 枚に集約する（完了で archive）
 
 ---
 
-## 現在の症状（2026-08-16 実機テスト確認ベース）
+## 現在の症状（2026-08-17 実機テスト確認ベース）
 
 | # | 症状 | 観察事実 | 関連 ID | 状態 |
 |---|---|---|---|---|
-| 1 | restart 後にネイティブトグルが DOM に出ない | 別エピソード・別作品移動時。パネル開閉で復帰していたが、現在は修正済み | F-2 | ✅ 完了 |
-| 2 | 言語設定変更時、secondary track が不安定になる | `ja → ko` で ko track は bind されるが、`showing ↔ hidden` を往復して表示されない | F-3 | 🟠 調査中 |
+| 1 | restart 後にネイティブトグルが DOM に出ない | 別エピソード・別作品移動時。パネル開閉で復帰していたが、修正済み | F-2 | ✅ 完了 |
+| 2 | 言語設定変更時、secondary track が不安定になる | `ja → ko` で ko track は bind されるが表示されない。言語定義共通化で解消 | F-3 | ✅ 完了 |
 | 3 | メッセージチャネルクローズエラー（初回のみ） | `onRuntimeMessage @ settings-runtime.js:690` 付近で発生 | F-4 | 🔴 未着手 |
-| 4 | ネイティブ字幕が OFF 後に復元されない | Bugfix-E 未実装 | F-5 | ⏸ F-3/F-4 後 |
-| 5 | トグル OFF 時にデバッグパネルが見られない | F12 コンソール依存 | F-6 | 保留 |
+| 4 | ネイティブ字幕が OFF 後に復元されない | Bugfix-E 未実装 | F-5 | ⏸ F-4 後 |
+| 5 | トグル OFF 時にデバッグパネルが見られない | `options.js` の `bindDebugLogRealtimeWatch()` 未定義問題を修正済み | F-6 | ✅ 完了 |
+| 6 | `extensionEnabled=ON` 引き継ぎ起動時に `#atv-toggle-btn` が表示されない | 初期化フローの復元順序に競合か抜けがある可能性 | F-7 | 🔴 未着手 |
+| 7 | DevConsole に大量ログが連続出力される | `secondary-sync force-rebind skipped` 等が常設ログとして毎サイクル流れている | F-8 | 🔴 未着手 |
 
-### ✅ 動作確認済み（2026-08-16）
+### ✅ 動作確認済み（2026-08-17）
 
 - primary / secondary 字幕の同期表示は正常
 - 二重表示・ちらつきなし
@@ -27,17 +29,20 @@
 - **日本語字幕は現在表示できている**
   - `ensureSubtitleTracksUsable()` で `hidden && cuesLength === 0` の track を除外する実験は取り消し済み
   - この除外は日本語字幕まで消したため、再導入しない
+- **言語設定変更時の secondary track 安定化（F-3 完了）**
+  - `modules/language-definitions.js` を新設し、言語候補参照を共通定義へ一本化
+  - `ja → ko`、`ko → ja`、`ja → en` を popup 保存で実機確認済み
+- **デバッグパネルが ON/OFF 状態から独立して常時アクセス可能になった（F-6 完了）**
 
 ---
 
 ## 修正対象ファイル一覧
 
-- `content.js`
-- `panel-ui.js`
-- `overlay-controller.js`
-- `settings-runtime.js`
-- `cue-controller.js`
-- `subtitle-track-resolver.js`（必要に応じて確認）
+- `settings-runtime.js`（F-4）
+- `cue-controller.js`（F-5）
+- `content.js`（F-7）
+- `panel-ui.js`（F-7）
+- `cue-controller.js` / `settings-runtime.js`（F-8）
 
 ---
 
@@ -56,7 +61,7 @@
 **確認結果:** 別エピソードや別作品への遷移後も、字幕パネルを開閉しなくても  
 `#atvb-native-toggle` が表示されることを確認した。
 
-**判定:** 完了。 [cite:62]
+**判定:** 完了。
 
 ---
 
@@ -107,108 +112,56 @@
   - `secondaryFontSize='23.787px'`
   - パネル開閉で変化しない
 
-**判定:** 完了。位置追従・中央復帰・文字サイズ維持を実機確認済み。 [cite:62]
+**判定:** 完了。位置追従・中央復帰・文字サイズ維持を実機確認済み。
 
 ---
 
-### F-3（最優先）: 言語設定変更時の secondary track 不安定化
+### ✅ F-3（完了）: 言語設定変更時の secondary track 不安定化
 
 **対象ファイル:**
-- `popup.js`
-- `settings-runtime.js`
+- `modules/language-definitions.js`（新規追加）
+- `modules/settings-schema.js`
+- `manifest.json`
+- `content.js`
 - `cue-controller.js`
-- `subtitle-track-resolver.js`（必要に応じて）
+- `subtitle-track-resolver.js`
+- `options.html` / `options.css` / `options.js`
+- `popup.html` / `popup.js`
 
 **症状:**
 - secondary を `ja` → `ko` に変更すると、韓国語 secondary が表示されない
 - `ja` / `en` 以外の言語を選択すると、secondary が空表示になることがある
-- 日本語字幕は現在復帰済み
+- 日本語字幕は復帰済み
 
-**確定した設定反映経路:**
-1. `popup.js` が `primaryLang` / `secondaryLang` を検証して `chrome.storage.sync` へ保存する
-2. popup が `APPLY_SETTINGS_TO_APPLE_TV` を `reason: "popup_save"` と設定値付きで送信する
-3. `settings-runtime.js` の `onRuntimeMessage` が受信し、`state.contentSettings` と `requestedSecondaryLang` を更新する
-4. `applySettingsAsync` が実行され、secondary 側は `cueController.syncSecondarySubtitleTrack(...)` の明示的同期経路に到達する
+**修正内容（2026-08-17）:**
+- `modules/language-definitions.js` を新設し、popup / options / resolver の言語候補参照を共通定義へ一本化した
+- `content.js` / `cue-controller.js` / `subtitle-track-resolver.js` で secondary subtitle の選定・復帰・native menu 同期の責務を整理した
+- `modules/settings-schema.js` と `manifest.json` を新構成に合わせて更新した
+- `options.html` / `options.css` / `options.js` / `popup.html` / `popup.js` で設定 UI と選択 UI の関連実装を調整した
 
-**ここまでで否定された仮説:**
-- 「`applySettingsAsync` が言語変更時に secondary track の再 bind を呼んでいない」は不十分
-- 実機ログ上、`ko` track に対する bind 自体は発生している
-
-**実機ログで確認した事実（`ja → ko`）:**
-- 初回 bind は `secondary-sync state-transition` の `phase: "bind-apply"`
-- 対象は `selectedTrackLanguage: "ko"`、`selectedTrackKind: "subtitles"`
-- `requestedMode: "hidden"` が適用され、`secondary-sync mode-applied` と `secondary track bind` が出る
-- bind 時点で `selectedTrackCuesLength: 0`、`activeCuesLength: 0`
-- hidden のまま維持されている周期では `sameTrackRef: true` / `sameMode: true` となり `bind-skip` になる
-- しかし、その後に `secondary-sync force-rebind skipped` が連続する
-- このログ時点では、同じ `ko` track が `trackMode: "showing"`、`cuesLength: 0`、`activeCuesLength: 0`、`currentCueTextLength: 0` になっている
-- 次の同期で `sameTrackRef: true` / `sameMode: false` と判定され、secondary controller が `showing → hidden` に戻して再 bind する
-- 結果として、同じ `ko` track 上で `showing ↔ hidden` の往復が続く
-
-**現時点の結論:**
-- secondary controller 自体は `ko` track を `hidden` で bind するところまで正常に動作している
-- `secondary-sync force-rebind skipped` 分岐は mode を変更していない
-- `ko` track を `showing` にしている別経路がある
-- 最有力候補は `ensureSubtitleTracksUsable(..., finalMode: "showing")` を使う primary 側、または共通 recovery / native subtitle 制御
-- primary 側の mode 制御が secondary track を巻き込んでいる可能性が高い
-
-**現在の調査対象:**
-- `cue-controller.js` の `ensureSubtitleTracksUsable()` 全呼び出し元
-- `track.mode = "showing"`、または showing を設定する helper の全経路
-- `bindPrimarySubtitleTrack` / `bindSecondarySubtitleTrack` / `syncSecondarySubtitleTrack` の責務境界
-- `subtitle-track-resolver.js` の選択対象 track と mode 変更の関係
-- Apple TV+ 側が track mode を再変更している可能性
-
-**現行の未コミット実験変更（`cue-controller.js`）:**
-- `sameTrackRef && sameMode && secondaryTrackCleanup` の no-op bind を early return
-- `bind-skip` / `secondary-sync bind skipped` ログを `DEBUG_SECONDARY_SUBS` 配下へ移動
-- `forceRebind && selectedTrackHasNoCues` の場合は unbind を避け、空描画・scene rebuild 後に return
-- `secondary-sync force-rebind skipped` は常設ログとして維持
-- 構文チェックと diff の空白チェックは通過済み
-
-**やってはいけないこと:**
+**禁止事項（継続）:**
 - `hidden && cuesLength === 0` の track を `ensureSubtitleTracksUsable()` 対象から一律除外しない
-- この実験は日本語 subtitle track の初期 cue 読み込みも止め、日本語字幕を消したため取り消し済み
+- この除外は日本語 subtitle track の初期 cue 読み込みも止め、日本語字幕を消したため取り消し済み
 
-**次にやること:**
-1. `cue-controller.js` の `ensureSubtitleTracksUsable()` の全呼び出し元を列挙する
-2. 各呼び出しについて `requestedLang`、`finalMode`、`reason`、対象 track を確認する
-3. `track.mode` を `showing` に変更するコードと helper を全検索する
-4. primary bind が secondary track を巻き込んでいる場合、primary の track 選択・mode 操作対象を primary track に限定する
-5. 修正後、`ja → ko`、`ko → ja`、`ja → en` を popup 保存だけで実機検証する
-6. F-3 が安定してから F-4 に進む
-
-#### F-3 観測用ログ
-
-Apple TV+ の再生タブで先に実行する。
-
-```js
-window.DEBUG_SECONDARY_SUBS = true;
-```
-
-`ja → ko` の切替後に実行する。
-
-```js
-JSON.stringify(
-  (window.__atvDebugLogs || []).filter((entry) => {
-    const message = String(entry?.message || "");
-    const all = JSON.stringify(entry);
-
-    return (
-      /secondary-sync force-rebind skipped|secondary-sync state-transition|secondary-sync mode-applied|secondary track bind|secondary-sync rebind-required|primary-bind|APPLY_SETTINGS_TO_APPLE_TV|SETTINGS_CHANGED/i.test(
-        message
-      ) &&
-      /ko|한국어/i.test(all)
-    );
-  }),
-  null,
-  2
-)
-```
+**判定:** 完了。`ja → ko`、`ko → ja`、`ja → en` を popup 保存だけで実機確認済み。
 
 ---
 
-### F-4: onRuntimeMessage の sendResponse 漏れ
+### ✅ F-6（完了）: トグル OFF 時にデバッグパネルが見られない
+
+**ファイル:** `options.js`
+
+**症状:** トグル OFF 時はデバッグパネルが表示できず、ログ確認が不能だった。
+
+**原因:** `options.js` の `bindDebugLogRealtimeWatch()` 関数が未定義のまま呼ばれていた。
+
+**修正内容:** `bindDebugLogRealtimeWatch()` の実装を追加し、デバッグパネルの表示制御を ON/OFF 状態から独立させ、常時アクセス可能にした。
+
+**判定:** 完了。
+
+---
+
+### F-4（最優先）: onRuntimeMessage の sendResponse 漏れ
 
 **ファイル:** `settings-runtime.js`（`onRuntimeMessage` 関数、690行付近）
 
@@ -218,42 +171,96 @@ Uncaught (in promise) Error: A listener indicated an asynchronous response
 by returning true, but the message channel closed before a response was received
 ```
 
+**発生箇所:** `applySettingsAsync @ settings-runtime.js:663` / `onRuntimeMessage @ settings-runtime.js:690`
+
 **原因仮説:**
 `onRuntimeMessage` が `return true` を返して非同期応答を宣言しているが、  
-`applySettingsAsync` が失敗・例外終了したケースで `sendResponse` が漏れる可能性がある。
+`applySettingsAsync` が失敗・例外終了したケースで `sendResponse` が漏れる可能性がある。  
+初回のみ発生し、その後は再現しないことから、チャネル生存期間と処理完了タイミングの問題と推定する。
 
 **確認すること:**
-- `APPLY_SETTINGS` 系メッセージで成功時・失敗時とも `sendResponse` が呼ばれるか
+- `APPLY_SETTINGS` 系メッセージで成功時・失敗時・例外時の全経路で `sendResponse` が呼ばれるか
 - `return true` が必要な分岐と不要な分岐が整理されているか
 
-**着手順:** F-3 の mode 競合解消後に着手する。
+**次にやること:**
+1. `onRuntimeMessage` 内の `APPLY_SETTINGS` 系処理で、全終了経路に `sendResponse` が存在するか確認する
+2. `try/catch` の `catch` 節でも `sendResponse` が呼ばれるか確認する
+3. `return true` が不要な分岐（同期で完結するもの）を整理する
+4. 修正後、popup 保存操作でコンソールにチャネルクローズエラーが出ないことを実機確認する
+5. F-4 完了後に F-5 へ進む
 
 ---
 
 ### F-5（後回し）: ネイティブ字幕 track 復元（Bugfix-E）
 
-**ファイル:** `settings-runtime.js`（`extensionEnabled === false` ブランチ）
+**ファイル:** `settings-runtime.js`（`extensionEnabled === false` ブランチ）、`cue-controller.js`
 
-**仕様:** `cue-controller.js` の `restoreNativeSubtitles()` を使う（仕様確定書 §2 参照）。
+**症状:** OFF 後にネイティブ字幕が表示されない。
 
-**状態:** F-3 / F-4 後に着手。
+**実装方針:** `cue-controller.js` の `restoreNativeSubtitles()` を呼ぶ（仕様確定書 §2 参照）。
+
+**状態:** F-4 完了後に着手。
 
 ---
 
-### F-6（保留）: トグル OFF 時にデバッグパネルが見られない
+### F-7（未着手）: `extensionEnabled=ON` 引き継ぎ起動時に `#atv-toggle-btn` が表示されない
 
-**症状:** トグル OFF 時はデバッグパネルが表示できず、ログ確認が不能。  
-**暫定対策:** F12 コンソールで `window.__atvDebugLogs` を直接確認する。  
-**状態:** 保留。F-3 優先。
+**対象ファイル:**
+- `content.js`
+- `panel-ui.js`
+
+**症状:**
+- `extensionEnabled = ON` を引き継いで起動したとき、字幕パネル開閉ボタン（`#atv-toggle-btn`）が表示されない
+
+**原因仮説:**
+- `content.js` の初期化フローで `extensionEnabled` の状態復元 → `panelOpen` 復元 → UI 構築の順序に競合か抜けがある
+- `panelOpen` を復元したとき、`#atv-toggle-btn` の表示処理が走っていない可能性が高い
+- `initializeUI()` や `applyPanelVisibility()` が storage 復元の**前**に一度 `extensionEnabled=false` 前提で実行されて `#atv-toggle-btn` を非表示にし、その後 `extensionEnabled=true` を読んでも再表示が呼ばれていない可能性がある
+
+**次にやること:**
+1. `content.js` の初期化フローで `extensionEnabled` / `panelOpen` を storage から読み込む順序と、`#atv-toggle-btn` の表示処理が呼ばれるタイミングを確認する
+2. `applyPanelVisibility()` / `initializeUI()` が `extensionEnabled` の復元前に実行される経路がないか確認する
+3. `extensionEnabled=true` 読み込み後に `#atv-toggle-btn` の表示を確実に再評価するよう修正する
+4. 修正後、`extensionEnabled=ON` のまま再読み込みして `#atv-toggle-btn` が表示されることを実機確認する
+
+**着手順:** F-4 / F-5 の後に着手する。
+
+---
+
+### F-8（未着手）: DevConsole の大量ログ出力
+
+**対象ファイル:**
+- `cue-controller.js`
+- `settings-runtime.js`（および関連する sync 系モジュール）
+
+**症状:**
+- DevConsole の詳細表示時に大量ログが連続出力される
+
+**原因:**
+- `secondary-sync force-rebind skipped` が 0.25〜0.55 秒ごとに常設ログとして連続出力されている（F-3 調査時に確認済み）
+- `DEBUG_SECONDARY_SUBS = true` 配下のログがフラグ ON 時に全量流れる設計になっている
+- `syncInterval` 系の定期ログが毎サイクル出力されている
+
+**削減方針:**
+- **最優先:** 常設ログを減らす。`secondary-sync force-rebind skipped` など毎サイクル出る常設ログを `DEBUG_SECONDARY_SUBS` 等のデバッグフラグ配下へ移動するだけで大半は解決する
+- `syncInterval` 系の定期ログも同様にフラグ配下へ移動する
+- デバッグフラグ（`DEBUG_SECONDARY_SUBS` など）配下のログは現行維持、フラグ OFF 時は出力しない
+
+**次にやること:**
+1. `tv-log.log` を確認し、常設ログの具体的な削除・移動候補を列挙する
+2. 常設ログを `DEBUG_SECONDARY_SUBS` 等のフラグ配下へ移動する
+3. `syncInterval` 系の毎サイクル出力をフラグ配下へ移動する
+4. 修正後、DevConsole でログが大幅に減っていることを確認する
+
+**着手順:** F-7 の後に着手する。
 
 ---
 
 ## 次の実装順
 
-1. `cue-controller.js` の `ensureSubtitleTracksUsable()` の全呼び出し元を確認する
-2. `track.mode = "showing"` を行うコードと helper の全経路を確認する
-3. primary bind が secondary track を巻き込んでいないか切り分ける
-4. F-3 を修正し、`ja → ko`、`ko → ja`、`ja → en` を popup 保存だけで実機確認する
-5. `settings-runtime.js` の `onRuntimeMessage` で `sendResponse` 成功 / 失敗経路を確認する
-6. F-4 を修正する
-7. F-5（ネイティブ字幕復元）へ進む
+1. `settings-runtime.js` の `onRuntimeMessage` で `APPLY_SETTINGS` 系メッセージの全終了経路を確認する
+2. `sendResponse` 漏れを修正し、`return true` の分岐を整理する（F-4）
+3. F-4 完了後、popup 保存操作でコンソールエラーが出ないことを実機確認する
+4. F-5（ネイティブ字幕復元）へ進む
+5. `content.js` の初期化フローで `extensionEnabled=ON` 引き継ぎ時の `#atv-toggle-btn` 表示漏れを修正する（F-7）
+6. `tv-log.log` を確認し、常設ログの削除・フラグ配下移動を実施する（F-8）

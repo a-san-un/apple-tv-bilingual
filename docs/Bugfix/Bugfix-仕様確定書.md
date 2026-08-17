@@ -1,7 +1,7 @@
 # Bugfix 仕様確定書
 
 **作成日:** 2026-08-14
-**最終更新:** 2026-08-16
+**最終更新:** 2026-08-17
 **ブランチ:** `issue-32-content-core-split`  
 **位置づけ:** このセッションで固まった仕様の正本。マスタープランと合わせて参照すること。
 
@@ -53,7 +53,7 @@ if (!extensionEnabled) {
 
 `restoreNativeSubtitles` はすでに公開済みのため、新規実装は不要。
 
-````js
+```js
 // cue-controller.js の return ブロック（抜粋）
 return {
   handoffPrimarySubtitleToNative,  // listener を外して track.mode = "showing" に強制
@@ -62,7 +62,7 @@ return {
   bindPrimarySubtitleTrack,
   // ...
 };
-````
+```
 
 ---
 
@@ -220,14 +220,19 @@ if (!toolbar) {
 
 ---
 
-## 8. Bugfix 優先順位（このセッション時点）
+## 8. Bugfix 優先順位（2026-08-17 更新）
 
 ```text
-[F-3] 言語設定変更時のトラック再バインド
-  ↓
+✅ [F-3] 言語設定変更時のトラック再バインド → 完了
+✅ [F-6] デバッグパネル OFF 時不可 → 完了
+  ↓ 現在の最優先
 [F-4] onRuntimeMessage の sendResponse 漏れ修正
   ↓
 [F-5=Bugfix-E] restoreNativeSubtitles() によるネイティブ字幕復元
+  ↓
+[F-7] extensionEnabled=ON 引き継ぎ時の #atv-toggle-btn 不表示（新規）
+  ↓
+[F-8] DevConsole 大量ログ削減（新規）
 ```
 
 ---
