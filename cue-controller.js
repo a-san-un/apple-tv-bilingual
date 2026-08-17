@@ -326,14 +326,16 @@
       if (suppress) suppress.remove();
     }
 
-    // OFF 時に primary 字幕を Apple TV+ ネイティブ表示へ引き継ぐ。
-    // listener と拡張側 CSS 抑制だけを解除し、対象 track は showing にする。
+    // OFF 時に primary 字幕の制御を手放す。
+    // ネイティブ UI のチェック状態を拡張側が書き換えないよう、
+    // track.mode を強制 showing にはせず、拡張が触る前の値へ戻すだけにする。
     function handoffPrimarySubtitleToNative() {
       const track = primaryTrackBound;
+      const originalMode = primaryTrackOriginalMode;
 
       dumpTextTrackSnapshot("handoffPrimarySubtitleToNative before", {
         targetTrack: getUsableTrackDebugPayload(track),
-        originalMode: primaryTrackOriginalMode,
+        originalMode,
         hasPrimaryTrackCleanup: Boolean(primaryTrackCleanup),
       });
 
@@ -345,13 +347,20 @@
       const suppress = document.getElementById("atvb-cue-suppress");
       if (suppress) suppress.remove();
 
-      try {
-        if (track) track.mode = "showing";
-      } catch (_) {}
+      // ★ ここが今回の修正点:
+      // 以前は track.mode = "showing" を強制していたが、
+      // これが Apple 側メニューの「オン」表示だけを書き換え、
+      // 実際の描画が伴わないズレを生んでいたため削除する。
+      // 代わりに、拡張が bind する前の mode へ戻すだけにする。
+      if (track && originalMode != null) {
+        try {
+          track.mode = originalMode;
+        } catch (_) {}
+      }
 
-      dumpTextTrackSnapshot("handoffPrimarySubtitleToNative after-showing", {
+      dumpTextTrackSnapshot("handoffPrimarySubtitleToNative after-restore", {
         targetTrack: getUsableTrackDebugPayload(track),
-        originalMode: primaryTrackOriginalMode,
+        originalMode,
       });
 
       primaryTrackBound = null;

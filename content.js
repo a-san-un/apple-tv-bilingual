@@ -107,6 +107,9 @@
     allowSecondaryOnlyUntil: 0,
   };
 
+  window.ATVB = window.ATVB || {};
+  window.ATVB.state = state;
+
   let panelUi = null;
   let secondaryTrackSyncInterval = null;
   const historyStore = createSubtitleHistoryStore(SUBTITLE_HISTORY_MAX_PER_CONTENT);
