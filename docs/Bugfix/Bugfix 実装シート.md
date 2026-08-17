@@ -11,11 +11,11 @@
 | # | 症状 | 観察事実 | 関連 ID | 状態 |
 |---|---|---|---|---|
 | 1 | restart 後にネイティブトグルが DOM に出ない | 別エピソード・別作品移動時。パネル開閉で復帰していたが、修正済み | F-2 | ✅ 完了 |
-| 2 | 言語設定変更時、secondary track が不安定になる | `ja → ko` で ko track は bind されるが表示されない。言語定義共通化で解消 | F-3 | ✅ 完了 |
+| 2 | 言語設定変更時、secondary track が不安定になる | `ja → ko` で ko track は bind されるが表示されない問題は、言語定義共通化と resolver / binder 整理で解消 | F-3 | ✅ 完了 |
 | 3 | メッセージチャネルクローズエラー（初回のみ） | `A listener indicated an asynchronous response...` はまだ残るが、UI 復旧は達成済み。`extensionEnabled=ON` 引き継ぎ時の `#atv-toggle-btn` 未表示も F-4 に吸収して解消 | F-4 | 🟠 持ち越し |
-| 4 | ネイティブ字幕が OFF 後に復元されない | Bugfix-E 未実装。次の主対象 | F-5 | 🟡 次着手 |
-| 5 | トグル OFF 時にデバッグパネルが見られない | `options.js` の `bindDebugLogRealtimeWatch()` 未定義問題を修正済み | F-6 | ✅ 完了 |
-| 6 | DevConsole に大量ログが連続出力される | `secondary-sync force-rebind skipped` 等が常設ログとして毎サイクル流れている | F-8 | 🔴 未着手 |
+| 4 | ネイティブ字幕が OFF 後に復元されない | `restoreNativeSubtitles before/after` の観測導線は整備済み。現時点では `spa_navigation` 直後に `textTrackCount=0` を観測しており、次は track 準備タイミングの切り分けが主対象 | F-5 | 🟠 調査継続 |
+| 5 | トグル OFF 時にデバッグパネルが見られない | `options.js` の `bindDebugLogRealtimeWatch()` 未定義問題を修正済み。さらに全ログ表示を追加して content ログ観測を強化 | F-6 | ✅ 完了 |
+| 6 | DevConsole に大量ログが連続出力される | `secondary-sync force-rebind skipped` 等の noisy ログを一次 suppress 済み。恒久的なログレベル整理は未完了 | F-8 | 🟠 一次整理済み |
 
 ### ✅ 動作確認済み（2026-08-17）
 
@@ -32,20 +32,32 @@
   - `modules/language-definitions.js` を新設し、言語候補参照を共通定義へ一本化
   - `ja → ko`、`ko → ja`、`ja → en` を popup 保存で実機確認済み
 - **デバッグパネルが ON/OFF 状態から独立して常時アクセス可能になった（F-6 完了）**
+- **設定ページで全ログ表示を使い、content の `settings` / `ui` / `subtitle` ログを確認できる**
+- **`restoreNativeSubtitles before/after` の snapshot を `tv-log.txt` で取得できる**
 - **ON 復帰時に `#atv-toggle-btn` と overlay 字幕が再表示される**
 - **`waitForPlaybackReady()` の結果を `state.video` / `state.dialogEl` に反映してから restart する流れで、UI build 停止は解消した**
 - **F-4 の修正で `background.js` 側に recoverable error 判定と再送処理を追加済み**
 - **ただし async response エラーはまだ完全には解消していないため、F-4 は完了ではなく残件扱い**
 - **`extensionEnabled=ON` 引き継ぎ時の `#atv-toggle-btn` 未表示は、F-4 の `state.video` / `state.dialogEl` 反映修正に吸収して解消した**
+- **最新コミット `fix: F-5 調査向けに字幕 restore とログ観測を整理する (Issue #32)` を push 済み**
 
 ---
 
 ## 修正対象ファイル一覧
 
 - `background.js`（F-4）
-- `settings-runtime.js`（F-4）
-- `cue-controller.js`（F-5）
-- `cue-controller.js` / `settings-runtime.js`（F-8）
+- `settings-runtime.js`（F-4 / F-5 / F-8）
+- `cue-controller.js`（F-3 / F-5 / F-8）
+- `content.js`（F-3 / F-5 / F-8）
+- `subtitle-track-resolver.js`（F-3 / F-5 / F-8）
+- `secondary-subtitle-dom.js`（F-5 / F-8）
+- `modules/playback-context-controller.js`（F-5 / F-8）
+- `modules/playback-controls-layout-controller.js`（F-8）
+- `modules/subtitle-sync-controller.js`（F-5 / F-8）
+- `sync-interval-orchestrator.js`（F-5 / F-8）
+- `panel-renderer.js`（F-8）
+- `panel-ui.js`（F-8）
+- `options.html` / `options.js`（F-5 / F-6）
 
 ---
 
@@ -143,144 +155,182 @@
 - `options.html` / `options.css` / `options.js` / `popup.html` / `popup.js` で設定 UI と選択 UI の関連実装を調整した
 
 **禁止事項（継続）:**
-- `hidden && cuesLength === 0` の track を `ensureSubtitleTracksUsable()` 対象から一律除外しない
-- この除外は日本語 subtitle track の初期 cue 読み込みも止め、日本語字幕を消したため取り消し済み
+- `hidden && cuesLength === 0` の track を `ensureSubtitleTracksUsable()` 対象から除外しない
+- 日本語 cue 読み込みを止める条件分岐を再導入しない
 
-**判定:** 完了。`ja → ko`、`ko → ja`、`ja → en` を popup 保存だけで実機確認済み。
-
----
-
-### ✅ F-6（完了）: トグル OFF 時にデバッグパネルが見られない
-
-**ファイル:** `options.js`
-
-**症状:** トグル OFF 時はデバッグパネルが表示できず、ログ確認が不能だった。
-
-**原因:** `options.js` の `bindDebugLogRealtimeWatch()` 関数が未定義で、ログ画面初期化が途中で止まっていた。
-
-**修正内容:** リアルタイム監視初期化を整理し、OFF 状態でもデバッグログ画面に到達できるようにした。
-
-**確認結果:** 拡張 OFF 状態からでもデバッグパネルを開いてログ確認できる。
+**確認結果:** `ja → ko`、`ko → ja`、`ja → en` を popup 保存で実機確認し、secondary の表示が追従することを確認した。
 
 **判定:** 完了。
 
 ---
 
-### 🟠 F-4（持ち越し）: メッセージチャネルクローズエラー
+### 🟠 F-4（持ち越し）: restart 後の message channel close エラー
 
 **対象ファイル:**
 - `background.js`
 - `settings-runtime.js`
 
 **症状:**
-- 初回付近で次のエラーが出ることがある
-- `Uncaught (in promise) Error: A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received`
-- `extensionEnabled=ON` 引き継ぎ時に `#atv-toggle-btn` と overlay 字幕が表示されない副症状があったが、F-4 に吸収して解消済み
+- `A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received` が初回 restart 系メッセージで出ることがある
 
-**今回の整理で分かったこと:**
-- `startBilingual trace` までは出るのに UI build ログが出ないケースがあった
-- その時点では `waitForPlaybackReady()` 後も `state.video` が未反映で、`startBilingual()` が早期 return していた
-- これにより、字幕パネル開閉ボタンと overlay 字幕が出ない副症状が発生していた
-- `secondary element ensure skipped: panel host missing` は主因ではなく、panel host 未生成時に secondary 描画が先行した結果ログだった
+**修正済み内容:**
+- `background.js` で recoverable error 判定を追加
+- `settings-runtime.js` / restart 経路で再送処理を追加
+- `waitForPlaybackReady()` の結果を `state.video` / `state.dialogEl` に反映してから restart する流れへ修正
 
-**今回の修正内容:**
-- `settings-runtime.js`
-  - `safeSendResponse` による 1 回応答の構造を維持
-  - `waitForPlaybackReady()` 成功後に `state.video = playbackRef.video` を反映
-  - `playbackRef.dialog` があれば `state.dialogEl` に反映
-  - その後に ON 側 restart へ進むよう修正
-- `background.js`
-  - `sendSettingsChangedWithRecovery()` に error 分類処理を追加
-  - `Receiving end does not exist`
-  - `message channel closed before a response was received`
-  - `A listener indicated an asynchronous response by returning true`
-  を recoverable error として扱う整理を追加
-  - content script 生存確認と再注入を行う `ensureContentScriptReady()` を追加
-  - recoverable なケースでは再送を試すよう変更
-
-**修正後の結果:**
-- ON 復帰時に `#atv-toggle-btn` と overlay 字幕が表示される状態まで復旧した
-- 字幕や UI の主要症状は解消した
+**現状評価:**
+- UI 側の復旧は達成済み
+- `extensionEnabled=ON` 引き継ぎ時の `#atv-toggle-btn` 未表示は解消した
 - ただし async response エラー自体はまだ完全には消えていない
 
-**現時点の見立て:**
-- 単純な `sendResponse` 漏れだけではなく、content script 再注入・SPA 遷移・tab activation・message channel の寿命競合が残っている可能性が高い
-- 実害は限定的であり、F-5 を止めるブロッカーではない
-- 次に詰めるときは、background 側の送信期待設計を「応答必須」か「fire-and-forget」かで先に固定する
+**次にやること:**
+1. 初回送信で content 不在になる条件を再確認する
+2. reinject 直後の再送タイミングを追加で見直す
+3. F-5 本体が落ち着いた後に、message channel エラーの完了条件を明文化して詰める
 
-**判定:** 部分改善。持ち越し。
+**判定:** 未完了。持ち越し。
 
 ---
 
-### 🟡 F-5（次着手）: ネイティブ字幕が OFF 後に復元されない
+### 🟠 F-5（調査継続）: OFF 後にネイティブ字幕が復元されない
 
 **対象ファイル:**
-- `cue-controller.js`
-- 必要に応じて `content.js`
-- 必要に応じて `settings-runtime.js`
-- 必要に応じて `subtitle-track-resolver.js`
-
-**症状:**
-- 拡張を OFF にしたあと、Apple TV+ ネイティブ字幕が期待通り復元されないことがある
-- secondary subtitle 用に触った track / mode の影響が native 側へ残っている可能性がある
-
-**今回の着手前提:**
-- ON 復帰時の `#atv-toggle-btn` / overlay 字幕未表示は解消済み
-- F-4 は残件だが、主症状は解消しブロッカーではない
-- 次は Bugfix-E として native 字幕復元責務を整理してよい
-
-**確認したい点:**
-- `restoreNativeSubtitles()` が、どの track をどの mode に戻すべきか
-- OFF 時に native menu 状態・track.mode・resolver state のどこまで戻すべきか
-- 別エピソード遷移後や restart 後でも同じ復元ルールで成立するか
-
-**最初の調査ポイント:**
-- `cue-controller.restoreNativeSubtitles()` の現在実装
-- OFF 分岐から `restoreNativeSubtitles()` までの呼び出し経路
-- secondary track bind / mode 変更の副作用がどこに残るか
-- native 字幕復元後に resolver / panel / overlay state と矛盾しないか
-
-**完了条件:**
-- 拡張 OFF 後に Apple TV+ ネイティブ字幕が操作可能かつ期待通り表示される
-- ON→OFF→ON を繰り返しても native / extension の責務が混線しない
-
----
-
-### 🔴 F-8（未着手）: DevConsole に大量ログが連続出力される
-
-**対象ファイル:**
-- `cue-controller.js`
-- `settings-runtime.js`
-
-**症状:** `secondary-sync force-rebind skipped` 等が常設ログとして毎サイクル流れている。
-
-**見立て:** 調査用ログが定常運用でも流れ続けている。F-5 以降でログ粒度を整理する。
-
-**判定:** 未着手。
-
----
-
-## 現時点の作業順
-
-1. F-5: `cue-controller.restoreNativeSubtitles()` の責務整理と native 字幕復元の安定化
-2. F-4: message channel closed の race 条件を別スコープで継続調査
-3. F-8: DevConsole の常設ログ整理
-
----
-
-## 次に見るファイル
-
 - `cue-controller.js`
 - `content.js`
 - `settings-runtime.js`
 - `subtitle-track-resolver.js`
+- `secondary-subtitle-dom.js`
+- `modules/playback-context-controller.js`
+- `modules/subtitle-sync-controller.js`
+- `sync-interval-orchestrator.js`
+- `options.html`
+- `options.js`
+
+**症状:**
+- 拡張を OFF にした後、Apple TV+ 本来のネイティブ字幕へ戻らないことがある
+
+**今回の修正内容（観測導線整備）:**
+- `cue-controller.js`
+  - `restoreNativeSubtitles()` を見直し、primary / secondary track の cleanup、元 mode の復元、CSS suppress 解除、bound track 参照クリアを一連で扱うよう整理した
+  - `restoreNativeSubtitles before` / `restoreNativeSubtitles after` の snapshot を取得できるようにした
+- `options.html` / `options.js`
+  - デバッグログに全ログ表示を追加し、content の `settings` / `ui` / `subtitle` を設定ページから常時確認できるようにした
+- `content.js` / `subtitle-track-resolver.js` / `secondary-subtitle-dom.js` / 関連ファイル
+  - noisy な詳細ログを suppress し、F-5 調査で必要なログが埋もれにくい状態へ整理した
+
+**今回の実機ログで確認できたこと:**
+- `tv-log.txt` 上で以下を同時に確認できる
+  - `SETTINGS_CHANGED disable-branch`
+  - `ネイティブトグル OFF apply start`
+  - `ネイティブトグル OFF restore call before`
+  - `text track snapshot`（`reason: "restoreNativeSubtitles before"`）
+  - `text track snapshot`（`reason: "restoreNativeSubtitles after"`）
+  - `ネイティブトグル OFF restore call after`
+  - `ネイティブトグル OFF apply done`
+
+**主要観測結果:**
+- `spa_navigation` 直後の snapshot では
+  - `textTrackCount=0`
+  - `showingTrackCount=0`
+  - `hiddenTrackCount=0`
+  - `disabledTrackCount=0`
+- primary / secondary の track 情報も空
+- したがって、現段階では「restore 実装の mode 復元漏れ」よりも、「restore 実行時点で参照可能な text track がまだ存在しない」可能性が高い
+
+**現時点の仮説:**
+- 主因は `restoreNativeSubtitles()` の後処理不備ではなく、Apple TV+ 側 text track 公開前のタイミングで OFF 適用が走っていること
+- 次に切るべき論点は、`cue-track-binder` / `text-track-debug` / track 準備完了タイミングのどこで観測・復元を行うか
+
+**次にやること:**
+1. 再生が安定し text track が可視になっている瞬間に ON → OFF を実施し、`textTrackCount >= 1` の snapshot が取れるか確認する
+2. それでも 0 件のままなら、track 準備完了待ちの導入位置を `cue-track-binder` / `text-track-debug` / `settings-runtime` のどこに置くか切り分ける
+3. 必要に応じて「restore 実行の再試行」よりも「text track 利用可能化待ち」の方針を優先する
+
+**判定:** 未完了。観測導線整備は完了し、次の主対象。
 
 ---
 
-## 補足メモ
+### ✅ F-6（完了）: トグル OFF 時にデバッグパネルが見られない
 
-- `panel host missing` は原因ログではなく、UI 未生成時に secondary 描画が先行した結果ログとして扱う
-- `startBilingual trace` の後に `ui build step` が無い場合は、まず `state.video` 未設定や playback ready 前 return を疑う
-- F-4 は「未着手」ではなく、UI 復旧まで進んだが async response エラーが残る状態
-- `extensionEnabled=ON` 引き継ぎ時の `#atv-toggle-btn` 未表示は、独立した F-7 ではなく F-4 に吸収済み
-- F-5 着手時は、native 字幕復元の仕様を `cue-controller.restoreNativeSubtitles()` に寄せて整理する
+**対象ファイル:**
+- `options.js`
+- `options.html`
+
+**症状:**
+- OFF 状態では content 側 UI が壊れているとデバッグログの観測自体が難しく、設定ページ側のデバッグログも安定して見られなかった
+
+**原因:**
+- `options.js` で `bindDebugLogRealtimeWatch()` 未定義問題があり、設定ページ側のログ表示導線が壊れていた
+
+**修正内容:**
+- `options.js` 側のデバッグログ初期化・リアルタイム監視を修正し、設定ページからログを確認できる状態へ戻した
+- 今回さらに `options.html` / `options.js` で全ログ表示トグルを追加し、content の `settings` / `ui` / `subtitle` ログを追いやすくした
+
+**確認結果:**
+- OFF 状態でも設定ページからログ確認が可能
+- 全ログ表示で F-5 調査に必要な content ログを確認できる
+
+**判定:** 完了。
+
+---
+
+### 🟠 F-8（一次整理済み）: DevConsole に大量ログが連続出力される
+
+**対象ファイル:**
+- `content.js`
+- `cue-controller.js`
+- `subtitle-track-resolver.js`
+- `secondary-subtitle-dom.js`
+- `settings-runtime.js`
+- `modules/playback-context-controller.js`
+- `modules/playback-controls-layout-controller.js`
+- `modules/subtitle-sync-controller.js`
+- `sync-interval-orchestrator.js`
+- `panel-renderer.js`
+- `panel-ui.js`
+
+**症状:**
+- `secondary-sync force-rebind skipped`、resolver snapshot、subtitle view snapshot などが常設ログとして連続出力され、必要な F-5 ログを埋もれさせる
+
+**今回の整理内容:**
+- `content.js` で EJDict load、secondary sync context、resolver snapshot、subtitle view snapshot など複数の詳細ログを `if (false)` で抑制した
+- `cue-controller.js` でも secondary sync の詳細ログや track handoff の補助 snapshot の一部を抑制した
+- `subtitle-track-resolver.js`、`secondary-subtitle-dom.js`、`panel-ui.js`、`settings-runtime.js`、`sync-interval-orchestrator.js` など関連ファイルでも観測ノイズを減らす方向へ整理した
+
+**現状:**
+- F-5 観測に必要なログは見やすくなった
+- ただし F-8 自体は「ログレベル設計の整理」までは未完了
+
+**次にやること:**
+1. 残すべき常設ログと、一時観測専用ログを分類する
+2. `DEBUG_*` フラグ、カテゴリ、保存先の使い分けを整理する
+3. suppress の書き方をファイルごとにバラつかせず、共通ルールへ寄せる
+
+**判定:** 一次整理済み。恒久整理は残課題。
+
+---
+
+## 直近の検証手順
+
+1. Apple TV+ の再生画面を開き、再生を安定させる
+2. 設定ページのデバッグログを開き、「全ログ表示」を ON にする
+3. 再生中に ON → OFF を 1 回実行する
+4. `tv-log.txt` または設定ページ上で以下を確認する
+   - `SETTINGS_CHANGED disable-branch`
+   - `ネイティブトグル OFF apply start`
+   - `restore call before / after`
+   - `text track snapshot before / after`
+5. snapshot の `textTrackCount` が 1 以上か、0 のままかを判定する
+6. 0 のままなら「restore 不備」ではなく「track 未準備タイミング」を優先仮説として次の修正へ進む
+
+---
+
+## 次の着手順
+
+1. **F-5**
+   - text track 準備タイミングの切り分け
+   - 必要なら track 利用可能化待ちを導入
+2. **F-4**
+   - 初回 async response エラーの残件整理
+3. **F-8**
+   - 一次 suppress を共通ルール化し、恒久的なログレベル設計へ寄せる
