@@ -65,6 +65,8 @@
 - `subtitle-track-resolver.js`
 - `options.html` / `options.css` / `options.js`
 - `popup.html` / `popup.js`
+- `background.js`
+- `settings-runtime.js`
 
 ### ✅ 完了済み・動作確認済み
 
@@ -73,10 +75,13 @@
 - `manifest.json` の `content_scripts` エントリ自体は1つ（二重 inject の直接原因ではないことを確認）
 - **字幕パネル表示・primary / secondary 同期は正常動作**（2026-08-14 実機確認済み）
 - **二重表示・ちらつきなし**（Bugfix-D2 / `settings-runtime.js` 変更の部分効果）
-- **restart 後の復帰は字幕パネル開時に限り動作する**
 - **日本語字幕表示は復帰済み**（2026-08-16）
   - `hidden && cuesLength === 0` の track を `ensureSubtitleTracksUsable()` 対象から除外する実験は、日本語 track の初期 cue 読み込みも止めた
   - 当該除外は取り消し済みであり、同じ条件のフィルタは再導入しない
+- **ON 復帰時に字幕パネル開閉ボタンとオーバーレイ字幕が再表示される状態まで復旧済み**（2026-08-17）
+- **`waitForPlaybackReady()` の結果を `state.video` / `state.dialogEl` に反映してから restart する流れへ修正済み**
+- **F-4 の修正で message 送信失敗の recoverable 判定と再送処理を追加済み**
+- **ただし `A listener indicated an asynchronous response...` はまだ初回に残ることがあり、F-4 は完了ではなく持ち越し**
 
 #### F-1: 字幕パネル開閉でオーバーレイ位置が追従しない（2026-08-16 完了）
 
@@ -116,58 +121,86 @@
 - **修正内容（2026-08-17）:**
   - `modules/language-definitions.js` を新設し、popup / options / resolver の言語候補参照を共通定義へ一本化した
   - `content.js` / `cue-controller.js` / `subtitle-track-resolver.js` で secondary subtitle の選定・復帰・native menu 同期の責務を整理した
-  - `modules/settings-schema.js` と `manifest.json` を新構成に合わせて更新した
-  - `options.html` / `options.css` / `options.js` / `popup.html` / `popup.js` で設定 UI と選択 UI の関連実装を調整した
-- **禁止事項（継続）:**
-  - `hidden && cuesLength === 0` を理由に `ensureSubtitleTracksUsable()` から track を一律除外しない
+  - `modules/settings-schema.js` を導入し、設定値の正規化と検証を popup / options / background / content 間で共通化した
+- **確認結果:**
+  - `ja → ko`
+  - `ko → ja`
+  - `ja → en`
+  の切替を popup 保存だけで再現し、secondary 表示が追従することを確認した
 - **判定:** 完了。
 
 #### F-6: デバッグパネルが OFF 時に確認不可（2026-08-17 完了）
 
-- **症状:** トグル OFF 時はデバッグパネルが表示できず、ログ確認が不能だった。
-- **修正内容:** `options.js` の `bindDebugLogRealtimeWatch()` 関数が未定義のまま呼ばれていた問題を修正した。デバッグパネルの表示制御を ON/OFF 状態から独立させ、常時アクセス可能にした。
+- **症状:** トグル OFF 時、デバッグパネル経由でログを確認できなかった。
+- **原因:** `options.js` の `bindDebugLogRealtimeWatch()` 未定義により、ログ画面初期化が途中で止まっていた。
+- **修正内容:** `options.js` 側のリアルタイム監視初期化を整理し、OFF 状態でもデバッグログに到達できるようにした。
+- **確認結果:** 拡張 OFF 状態からでもデバッグパネルを開いてログを確認できる。
 - **判定:** 完了。
 
-### 🔴 未着手・残存不具合
+#### F-4: メッセージチャネルクローズエラー（着手済み・持ち越し）
 
-#### F-4: メッセージチャネルクローズエラー（未着手）
+- **症状:** 初回付近で次のエラーが出ることがある。  
+  `Uncaught (in promise) Error: A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received`
+- **従来仮説:** `settings-runtime.js` の `onRuntimeMessage` が `true` を返して非同期応答を宣言しているが、`sendResponse` を呼ばずに終わるケースがある。
+- **今回の修正内容:**
+  - `settings-runtime.js`
+    - `safeSendResponse` を使って `SETTINGS_CHANGED` 応答を 1 回に寄せる構造を維持
+    - `waitForPlaybackReady()` の戻り値を `state.video` / `state.dialogEl` に反映してから ON 復帰へ進むよう修正
+  - `background.js`
+    - `sendSettingsChangedWithRecovery()` に、`Receiving end does not exist` と `message channel closed before a response was received` を recoverable error として分類する処理を追加
+    - content script 生存確認と再注入を行う `ensureContentScriptReady()` を追加
+    - recoverable な失敗時に再送を試みるよう変更
+- **結果:**
+  - ON 復帰時に字幕パネル開閉ボタンとオーバーレイ字幕が出ない主症状は解消した
+  - ただし async response エラー自体はまだ完全には消えていない
+- **現時点の見立て:**
+  - `sendResponse` 漏れ単独ではなく、content script の再注入・SPA 遷移・tab activation・message channel の寿命が競合している可能性が高い
+  - 実害は限定的で、UI 復旧は達成できているため、残件として持ち越す
+- **判定:** 部分改善。ブロッカーではなく残課題。
 
-- **症状:** `Uncaught (in promise) Error: A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received`
-- **発生箇所:** `applySettingsAsync @ settings-runtime.js:663` / `onRuntimeMessage @ settings-runtime.js:690`
-- **原因仮説:** `onRuntimeMessage` が `true` を返して非同期応答を宣言しているが、`sendResponse` を呼ばずに処理が終わるケースがある
-- **影響:** 初回のみ発生・その後は再現しない。チャネル生存期間と処理完了タイミングの問題と推定する
-- **着手条件:** 現在が最優先
-- **確認事項:**
-  - `APPLY_SETTINGS` 系メッセージで成功・失敗・例外の全経路が `sendResponse` を呼ぶか
-  - `return true` が必要な分岐だけに限定されているか
+#### F-5: ネイティブ字幕復元（次着手）
 
-#### F-5: ネイティブ字幕復元（未着手）
-
-- **症状:** OFF 後にネイティブ字幕が表示されない
-- **実装方針:** `cue-controller.js` の `restoreNativeSubtitles()` を呼ぶ（仕様確定書 §2 参照）
-- **状態:** 未着手。F-4 完了後に着手する
+- **症状:** OFF 後に Apple TV+ ネイティブ字幕が期待通り復元されないことがある。
+- **主対象:** `cue-controller.restoreNativeSubtitles()`
+- **論点:**
+  - OFF 移行時に native 字幕の track / mode / menu state をどこまで戻すか
+  - secondary 用に触った track の副作用を native 側へ残さないこと
+  - restart / tab 遷移後の状態でも一貫して復元できること
+- **状態:** 次着手。F-4 は残件化し、F-5 を先に進めてよい。
 
 ***
 
-## Bugfix 依存ツリー（2026-08-17 更新）
+## 依存関係と進め方
 
 ```text
-【根本症状】
-現在の最優先
-  [F-4] onRuntimeMessage の sendResponse 漏れを修正する
-        ↓
-  [F-5 = Bugfix-E] cue-controller.restoreNativeSubtitles() で
-        ネイティブ字幕 track を復元する
+[F-1] オーバーレイ位置追従
+   └─ 完了
+
+[F-2] restart 後のネイティブトグル再注入
+   └─ 完了
+
+[F-3] 言語定義共通化・secondary track 安定化
+   └─ 完了
+
+[F-4] SETTINGS_CHANGED 非同期応答まわりの race 改善
+   └─ 部分改善・残件持ち越し
+
+[F-5 = Bugfix-E] cue-controller.restoreNativeSubtitles() で
+      Apple TV+ ネイティブ字幕へ安全に戻す
+   └─ 次着手
+
+[F-6] デバッグパネル常時アクセス化
+   └─ 完了
 ```
 
 ***
 
-## 優先順位テーブル（2026-08-17 改訂）
+## 優先順位
 
-| 順序 | ID | やること | 完成の判定 | 状態 |
+| 優先度 | 項目 | 内容 | 完了条件 | 状態 |
 |---|---|---|---|---|
-| ① 今すぐ | F-4 | `onRuntimeMessage` の `sendResponse` 漏れを修正する | コンソールにチャネルクローズエラーが出なくなる | 🔴 未着手 |
-| ② 次 | F-5 | `cue-controller.restoreNativeSubtitles()` でネイティブ字幕 track を復元する | Apple TV+ 字幕が OFF 後に動く | ⏸ F-4 後 |
+| ① 今すぐ | F-5 | `cue-controller.restoreNativeSubtitles()` でネイティブ字幕 track を復元する | Apple TV+ 字幕が OFF 後に動く | 🟡 次着手 |
+| ② 並行残件 | F-4 | `SETTINGS_CHANGED` 非同期応答と再送の race を詰める | コンソールにチャネルクローズエラーが出なくなる | 🟠 持ち越し |
 | ✅ 完了 | F-1 | オーバーレイ位置追従 | 実機確認済み | ✅ |
 | ✅ 完了 | F-2 | ネイティブトグル再注入 | 実機確認済み | ✅ |
 | ✅ 完了 | F-3 | 言語定義共通化・secondary track 安定化 | 実機確認済み | ✅ |
@@ -175,42 +208,39 @@
 
 ***
 
-## 次スレッド開始テンプレート
+## 次スレッド開始用プロンプト
 
-```text
-Apple TV+ Bilingual Subtitles の F-4 を着手してください。
+Apple TV+ Bilingual Subtitles の Bugfix-F5 を着手してください。
 
-最初に以下を読んでください。
-1. docs/Bugfix/Bugfix マスタープラン.md
-2. docs/Bugfix/Bugfix 実装シート.md
-3. docs/Bugfix/コードベース現状スナップショット.md
-4. docs/Bugfix/Bugfix-仕様確定書.md
+参照資料:
+- docs/Bugfix/Bugfix マスタープラン.md
+- docs/Bugfix/Bugfix 実装シート.md
+- docs/Bugfix/Bugfix-仕様確定書.md
+- docs/Bugfix/Bugfix 将来作業計画.md
 
-現在の最優先は F-4 です。
-settings-runtime.js の onRuntimeMessage が true を返して非同期応答を宣言しているが、
-sendResponse を呼ばずに終わるケースがあり、メッセージチャネルクローズエラーが発生している。
+現在の状況:
+- F-1, F-2, F-3, F-6 は完了済み
+- F-4 は `background.js` と `settings-runtime.js` に修正を入れて UI 復旧までは達成したが、
+  `A listener indicated an asynchronous response...` は残っており持ち越し
+- ON 復帰時に字幕パネル開閉ボタンとオーバーレイ字幕は再表示される
+- 次は F-5 として `cue-controller.restoreNativeSubtitles()` を中心に、
+  OFF 後の Apple TV+ ネイティブ字幕復元を安定化したい
 
-次に行うこと:
-- APPLY_SETTINGS 系メッセージで成功・失敗・例外の全経路が sendResponse を呼ぶか確認する
-- return true が必要な分岐だけに限定されているか確認する
-- 修正後は popup 保存操作でコンソールエラーが出ないことを実機確認する
+前提:
+- `extensionEnabled` は拡張全体 ON/OFF の正本
+- `panelOpen` は字幕パネル開閉状態の正本
+- OFF 時に残す UI は `#atvb-native-toggle` のみ
+- `#atv-toggle-btn`、`#atv-panel-host`、`#atv-overlay-host` は ON 時にのみ存在すべき
 
-F-4 完了後は F-5（ネイティブ字幕復元）へ進む。
-- cue-controller.js の restoreNativeSubtitles() を呼ぶ実装（仕様確定書 §2 参照）
-
-注意:
-- ローカルファイルは読み取り専用として扱い、変更案はチャット上で提示する。
-- hidden && cuesLength === 0 の track を usable 化対象から除外する実験は
-  日本語字幕も消したため取り消し済み。再導入しない。
-```
+まずは `cue-controller.js` を読み、`restoreNativeSubtitles()` の現状整理、
+関連する `content.js` / `settings-runtime.js` / `subtitle-track-resolver.js` の呼び出し経路確認、
+その後に最小差分の修正方針を提案してください。
 
 ***
 
-## スコープ外（このフェーズでは触らない）
+## 補足メモ
 
-- Issue-32 のリファクタ（`content.js` 分割）本体
-  - ただし **バグ調査中に「ここが読みにくい」と感じた箇所を先行して整理することは妨げない**
-  - 整理はバグ修正の完了を条件としない。調査の障害になる部分は随時整理してよい
-- AI tooltip / 単語ポップアップ機能
-- `overlay-block-resolver` の挙動変更
-- パフォーマンス最適化
+- `panel host missing` 系ログは、panel host 未生成時に secondary 描画が先行した結果であり、主因とは限らない
+- `startBilingual trace` の後に `ui build step` が出ないときは、まず `state.video` 未設定や playback ready 前の早期 return を疑う
+- F-4 の残件は background 側送信、content script 再注入、SPA 遷移の race 条件として切り分ける
+- 整理はバグ修正の完了を条件としない。調査の障害になる部分は随時整理してよい
