@@ -247,7 +247,7 @@
         clearPlaybackControlsTransforms();
       }
 
-      if (typeof logContent === "function") {
+      if (false && typeof logContent === "function") {
         logContent("layoutController.teardownPlaybackControlsUi", {
           panelOpen: layoutState.panelOpen,
         });

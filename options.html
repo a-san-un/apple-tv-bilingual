@@ -181,7 +181,7 @@
             <div class="debug-toolbar__top">
               <div class="debug-toolbar__meta">
                 <span id="debugRealtimeBadge" class="debug-badge">LIVE</span>
-                <span id="debugLogCount" class="debug-count">0 logs</span>
+                <span id="debugLogCount" class="debug-count">0 / 0 logs</span>
               </div>
 
               <div class="debug-toolbar__actions">
@@ -206,6 +206,16 @@
             </div>
 
             <div class="debug-toolbar__filters">
+              <label class="toggle-row debug-toggle-row">
+                <span class="switch">
+                  <input id="debugShowAll" type="checkbox" />
+                  <span class="slider"></span>
+                </span>
+                <span class="toggle-label">
+                  全ログ表示（source / category / text フィルタを無視）
+                </span>
+              </label>
+
               <select
                 id="debugFilterSource"
                 class="debug-filter-select"
@@ -243,6 +253,10 @@
                 aria-label="テキスト検索"
               />
             </div>
+
+            <p class="helper-text">
+              全ログ表示を ON にすると、保存済み debugLogs をそのまま表示します。
+            </p>
           </div>
 
           <div class="field">

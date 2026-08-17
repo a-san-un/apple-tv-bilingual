@@ -21,7 +21,7 @@
 // =============================================================
 (function (root) {
   function createSettingsRuntime(deps) {
-        const {
+    const {
       state,
       DEFAULT_SETTINGS,
       isLanguageSelectionReady,
@@ -266,9 +266,7 @@
     // -------------------------------------------------------------
 
     function applyRestartSettings(settings, options = {}) {
-      const {
-        keepPanelOpen = state.panelOpen,
-      } = options;
+      const { keepPanelOpen = state.panelOpen } = options;
 
       state.contentSettings = {
         ...state.contentSettings,
@@ -280,9 +278,10 @@
         ...settings,
       };
 
-      state.requestedSecondaryLang = state.requestedContentSettings.secondaryLang || "";
+      state.requestedSecondaryLang =
+        state.requestedContentSettings.secondaryLang || "";
       state.contentSettings.secondaryLang = applySecondaryLangFallback(
-        state.contentSettings,
+        state.contentSettings
       );
 
       // panelOpen は「今の UI 状態」が正本なので、設定値で上書きしない。
@@ -321,7 +320,10 @@
     // runtime message
     // -------------------------------------------------------------
 
-    async function syncAppleTvNativeSubtitleToSecondaryLang(secondaryLang, triggerReason) {
+    async function syncAppleTvNativeSubtitleToSecondaryLang(
+      secondaryLang,
+      triggerReason
+    ) {
       try {
         await cueController?.syncSecondarySubtitleTrack?.(secondaryLang, {
           reason: `settings_changed:${triggerReason}`,
@@ -391,13 +393,15 @@
           };
           state.requestedSecondaryLang = state.contentSettings.secondaryLang || "";
 
-          logContentSettings("SETTINGS_CHANGED received", {
-            triggerReason,
-            incoming,
-            extensionEnabled: state.contentSettings.extensionEnabled,
-            panelOpen: state.panelOpen,
-            requestedSecondaryLang: state.requestedSecondaryLang,
-          });
+          if (false) {
+            logContentSettings("SETTINGS_CHANGED received", {
+              triggerReason,
+              incoming,
+              extensionEnabled: state.contentSettings.extensionEnabled,
+              panelOpen: state.panelOpen,
+              requestedSecondaryLang: state.requestedSecondaryLang,
+            });
+          }
 
           if (!state.contentSettings.extensionEnabled) {
             state.requestedContentSettings = {
@@ -424,7 +428,22 @@
               extensionEnabled: state.contentSettings.extensionEnabled,
             });
 
+            logContentSettings("ネイティブトグル OFF restore call before", {
+              triggerReason,
+              hasCueController: Boolean(cueController),
+              hasRestoreNativeSubtitles:
+                typeof cueController?.restoreNativeSubtitles === "function",
+            });
+
             cueController?.restoreNativeSubtitles?.();
+
+            logContentSettings("ネイティブトグル OFF restore call after", {
+              triggerReason,
+              hasCueController: Boolean(cueController),
+              hasRestoreNativeSubtitles:
+                typeof cueController?.restoreNativeSubtitles === "function",
+            });
+
             panelUi?.destroyUiHosts?.();
             panelUi?.watchForPlayerTabs?.();
             detachForDisabled();
@@ -460,7 +479,7 @@
 
           await syncAppleTvNativeSubtitleToSecondaryLang(
             state.contentSettings.secondaryLang,
-            triggerReason,
+            triggerReason
           );
 
           logContentSettings("ネイティブトグル ON restart begin", {
@@ -477,7 +496,7 @@
             "SETTINGS_CHANGED",
             {
               keepPanelOpen: state.panelOpen,
-            },
+            }
           );
 
           logContentSettings("content applied settings to tracks", {
@@ -536,7 +555,9 @@
       if (state.messageListenerAttached) return;
       chrome.runtime.onMessage.addListener(onRuntimeMessage);
       state.messageListenerAttached = true;
-      logContent("content message listener registered");
+      if (false) {
+        logContent("content message listener registered");
+      }
     }
 
     return {

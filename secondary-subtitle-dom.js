@@ -159,7 +159,7 @@
 
       const panelHost = getOrCreatePanelHost();
       if (!panelHost) {
-        if (isDebugEnabled()) {
+        if (false && isDebugEnabled()) {
           logContentSubtitle(
             'secondary element ensure skipped: panel host missing',
             {}

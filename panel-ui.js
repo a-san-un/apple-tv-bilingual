@@ -247,19 +247,23 @@
 
     // restart 用に UI host をまとめて破棄する
     function destroyUiHosts() {
-      logContent?.("字幕パネル開閉ボタン/右側字幕パネル destroyUiHosts start", {
-        hasSubtitlePanelToggleButton: Boolean(getTarget?.().querySelector("#atv-toggle-btn")),
-        hasPanelHost: Boolean(getTarget?.().querySelector("#atv-panel-host")),
-        panelOpen: state.panelOpen,
-      });
+      if (false) {
+        logContent?.("字幕パネル開閉ボタン/右側字幕パネル destroyUiHosts start", {
+          hasSubtitlePanelToggleButton: Boolean(getTarget?.().querySelector("#atv-toggle-btn")),
+          hasPanelHost: Boolean(getTarget?.().querySelector("#atv-panel-host")),
+          panelOpen: state.panelOpen,
+        });
+      }
 
       destroyFeatureUiHosts();
 
-      logContent?.("字幕パネル開閉ボタン/右側字幕パネル destroyUiHosts done", {
-        hasSubtitlePanelToggleButton: Boolean(getTarget?.().querySelector("#atv-toggle-btn")),
-        hasPanelHost: Boolean(getTarget?.().querySelector("#atv-panel-host")),
-        panelOpen: state.panelOpen,
-      });
+      if (false) {
+        logContent?.("字幕パネル開閉ボタン/右側字幕パネル destroyUiHosts done", {
+          hasSubtitlePanelToggleButton: Boolean(getTarget?.().querySelector("#atv-toggle-btn")),
+          hasPanelHost: Boolean(getTarget?.().querySelector("#atv-panel-host")),
+          panelOpen: state.panelOpen,
+        });
+      }
     }
 
     // 右側字幕パネルと overlay の表示だけを切り替える
@@ -586,7 +590,7 @@
       upNextBtn.closest("li").after(wrapper);
 
       // 注入完了をログへ残す
-      {
+      if (false) {
         const rect = wrapper.getBoundingClientRect();
         const style = window.getComputedStyle(wrapper);
         logContent("injectNativeToggle: inserted", {
@@ -631,7 +635,9 @@
         // タブがあってトグルが消えていたら再注入する
         if (tabExists && !toggleExists) {
           injectNativeToggle();
-          logContent?.("watchForPlayerTabs: re-injected after Svelte remount", {});
+          if (false) {
+            logContent?.("watchForPlayerTabs: re-injected after Svelte remount", {});
+          }
         }
       });
 

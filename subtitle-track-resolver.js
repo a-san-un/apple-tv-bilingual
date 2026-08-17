@@ -632,7 +632,7 @@
       );
     }
 
-    if (requestedTrackButEmpty) {
+    if (false && requestedTrackButEmpty) {
       window.ATVB?.logger?.logContent(
         "subtitle",
         "secondary resolver pending empty requested track",
@@ -656,27 +656,29 @@
       );
     }
 
-    window.ATVB?.logger?.logContent(
-      "subtitle",
-      "secondary resolver selected track",
-      {
-        requestedLang,
-        canonicalRequestedLang: canonicalizeLanguage(requestedLang),
-        currentTime,
-        language: selectedTrack?.language ?? "",
-        canonicalLanguage: canonicalizeLanguage(selectedTrack?.language),
-        inferredLanguageFromLabel: inferLanguageFromLabel(selectedTrack?.label),
-        label: normalizeTrackLabel(selectedTrack?.label),
-        kind: selectedTrack?.kind ?? "",
-        mode: selectedTrack?.mode ?? "",
-        cuesLength,
-        activeCuesLength,
-        hasCueOverlapAtCurrentTime,
-        currentCueTextLength,
-        sameTrackUnreadableNow,
-        selectedTrackExists: true,
-      },
-    );
+    if (false) {
+      window.ATVB?.logger?.logContent(
+        "subtitle",
+        "secondary resolver selected track",
+        {
+          requestedLang,
+          canonicalRequestedLang: canonicalizeLanguage(requestedLang),
+          currentTime,
+          language: selectedTrack?.language ?? "",
+          canonicalLanguage: canonicalizeLanguage(selectedTrack?.language),
+          inferredLanguageFromLabel: inferLanguageFromLabel(selectedTrack?.label),
+          label: normalizeTrackLabel(selectedTrack?.label),
+          kind: selectedTrack?.kind ?? "",
+          mode: selectedTrack?.mode ?? "",
+          cuesLength,
+          activeCuesLength,
+          hasCueOverlapAtCurrentTime,
+          currentCueTextLength,
+          sameTrackUnreadableNow,
+          selectedTrackExists: true,
+        },
+      );
+    }
 
     return selectedTrack;
   }

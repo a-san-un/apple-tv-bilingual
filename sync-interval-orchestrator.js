@@ -382,16 +382,17 @@
         if (!shouldLogSyncContext) return;
 
         state.lastSecondarySyncContext = syncContextSummary;
-        logContent?.(
-          "secondary track sync context",
-          buildSecondarySyncLogPayload({
-            effectiveSecondaryLanguage,
-            secondaryActiveCues,
-            primaryActiveCues,
-            secondaryCueText,
-            primaryCueText,
-            currentPrimaryText,
-            hasFreshCurrentPrimary,
+        if (false) {
+          logContent?.(
+            "secondary track sync context",
+            buildSecondarySyncLogPayload({
+              effectiveSecondaryLanguage,
+              secondaryActiveCues,
+              primaryActiveCues,
+              secondaryCueText,
+              primaryCueText,
+              currentPrimaryText,
+              hasFreshCurrentPrimary,
             mergedSubtitleHealth,
             extra: {
               reason: "sync_interval",
@@ -413,8 +414,9 @@
                 resolverObservation?.resolvedSecondaryHasCueOverlapAtCurrentTime ??
                 false,
             },
-          }),
-        );
+            }),
+          );
+        }
       }
 
       // ---------------------------------------------------------

@@ -77,6 +77,7 @@ const els = {
   debugCopyBtn: document.getElementById("debugCopyBtn"),
   debugDownloadBtn: document.getElementById("debugDownloadBtn"),
   debugClearBtn: document.getElementById("debugClearBtn"),
+  debugShowAll: document.getElementById("debugShowAll"),
   debugFilterSource: document.getElementById("debugFilterSource"),
   debugFilterCategory: document.getElementById("debugFilterCategory"),
   debugFilterText: document.getElementById("debugFilterText"),
@@ -278,11 +279,13 @@ function readUiFilters() {
   const source = els.debugFilterSource?.value?.trim() || "";
   const category = els.debugFilterCategory?.value?.trim() || "";
   const text = els.debugFilterText?.value?.trim() || "";
+  const showAll = Boolean(els.debugShowAll?.checked);
 
   return {
     source,
     category,
     text,
+    showAll,
   };
 }
 
@@ -320,15 +323,19 @@ function matchesDebugFilter(line, filter) {
 // カテゴリ表示対象と UI フィルターを両方適用する。
 function getVisibleDebugLogs(logs) {
   const filter = readUiFilters();
-
-  return (logs || [])
+  const normalizedLogs = (logs || [])
     .map((line) => ensureLogShape(line))
-    .filter(
-      (line) =>
-        line &&
-        OPTIONS_DEFAULT_VISIBLE_CATEGORIES.has(line.category) &&
-        matchesDebugFilter(line, filter),
-    );
+    .filter(Boolean);
+
+  if (filter.showAll) {
+    return normalizedLogs;
+  }
+
+  return normalizedLogs.filter(
+    (line) =>
+      OPTIONS_DEFAULT_VISIBLE_CATEGORIES.has(line.category) &&
+      matchesDebugFilter(line, filter),
+  );
 }
 
 // ログカード DOM を1件ぶん組み立てる。
@@ -382,7 +389,8 @@ async function renderDebugLogs() {
   els.debugLogOutput.innerHTML = "";
 
   if (els.debugLogCount) {
-    els.debugLogCount.textContent = `${visibleLogs.length} logs`;
+    els.debugLogCount.textContent =
+      `${visibleLogs.length} / ${debugLogs.length} logs`;
   }
 
   if (!visibleLogs.length) {
@@ -834,6 +842,12 @@ function bindEvents() {
 
   if (els.debugFilterCategory) {
     els.debugFilterCategory.addEventListener("change", () => {
+      renderDebugLogs();
+    });
+  }
+
+  if (els.debugShowAll) {
+    els.debugShowAll.addEventListener("change", () => {
       renderDebugLogs();
     });
   }

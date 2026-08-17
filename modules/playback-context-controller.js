@@ -92,14 +92,16 @@
           _buildModeDecision("secondary-sync-direct-bind", options),
         );
 
-        logContent?.("subtitle sync direct selected track", {
-          requestedLang,
-          currentTime,
-          selectedLanguage: selectedTrack?.language ?? "",
-          selectedLabel: selectedTrack?.label ?? "",
-          selectedMode: selectedTrack?.mode ?? "",
-          readability,
-        });
+        if (false) {
+          if (false) logContent?.("subtitle sync direct selected track", {
+            requestedLang,
+            currentTime,
+            selectedLanguage: selectedTrack?.language ?? "",
+            selectedLabel: selectedTrack?.label ?? "",
+            selectedMode: selectedTrack?.mode ?? "",
+            readability,
+          });
+        }
 
         return selectedTrack;
       }

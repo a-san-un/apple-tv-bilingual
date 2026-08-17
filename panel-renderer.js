@@ -424,7 +424,7 @@
           ? findCueAt(state.primaryTrack, currentBlock.startTime + 0.01)
           : null;
 
-      if (typeof logContent === "function") {
+      if (false && typeof logContent === "function") {
         logContent("panel render blocks debug", {
           currentTime,
           currentBlock: currentBlock

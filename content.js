@@ -256,10 +256,12 @@ function forwardContentLog(...args) {
       }
 
       state.ejdictMap = await res.json();
-      logContentApi("EJDict loaded", {
-        entries: Object.keys(state.ejdictMap).length,
-        url,
-      });
+      if (false) {
+        logContentApi("EJDict loaded", {
+          entries: Object.keys(state.ejdictMap).length,
+          url,
+        });
+      }
     } catch (e) {
       logContentError("EJDict load failed", { error: e.message });
       // eslint-disable-next-line no-console
@@ -580,7 +582,7 @@ function forwardContentLog(...args) {
   ) {
     if (!video) return;
 
-    if (DEBUG_SECONDARY_SUBS) {
+    if (false && DEBUG_SECONDARY_SUBS) {
       logContent(
         "secondary sync",
         getSecondaryTrackDebugPayload(
@@ -702,19 +704,21 @@ function forwardContentLog(...args) {
         syncContextSummary !== state.lastSecondarySyncContext;
       if (shouldLogSyncContext) {
         state.lastSecondarySyncContext = syncContextSummary;
-        logContent("secondary track sync context", {
-          reason: "sync_interval",
-          effectiveSecondaryLanguage,
-          trackCount: state.video?.textTracks?.length ?? 0,
-          primaryTrackFound: Boolean(state.primaryTrack),
-          secondaryTrackFound: Boolean(state.secondaryTrack),
-          secondaryTrackLanguage: state.secondaryTrack?.language || "",
-          secondaryActiveCues,
-          primaryActiveCues,
-          primaryCueTextLength: primaryCueText.length,
-          snapshotPrimaryTextLength: snapshotPrimaryText.length,
-          hasFreshPrimarySnapshot,
-        });
+        if (false) {
+          if (false) logContent("secondary track sync context", {
+            reason: "sync_interval",
+            effectiveSecondaryLanguage,
+            trackCount: state.video?.textTracks?.length ?? 0,
+            primaryTrackFound: Boolean(state.primaryTrack),
+            secondaryTrackFound: Boolean(state.secondaryTrack),
+            secondaryTrackLanguage: state.secondaryTrack?.language || "",
+            secondaryActiveCues,
+            primaryActiveCues,
+            primaryCueTextLength: primaryCueText.length,
+            snapshotPrimaryTextLength: snapshotPrimaryText.length,
+            hasFreshPrimarySnapshot,
+          });
+        }
       }
 
       const trackCount = state.video?.textTracks?.length ?? 0;
@@ -2476,10 +2480,12 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
   // track(primary/secondary) → binder → overlay/history/panel render
   function onCueChange() {
     cueController.onPrimaryCueChange();
-    logContentSubtitle(
-      "secondary resolver snapshot",
-      buildSecondaryResolverSnapshot("onCueChange"),
-    );
+    if (false) {
+      logContentSubtitle(
+        "secondary resolver snapshot",
+        buildSecondaryResolverSnapshot("onCueChange"),
+      );
+    }
   }
 
   // resolver / secondary track sync / native menu sync に渡す副言語を一箇所で決める。
@@ -2564,44 +2570,46 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
         ? blocks[currentIndex] || null
         : null;
 
-    logContentSubtitle("current subtitle view snapshot input", {
-      contentKey: historyStore.getCurrentKey() || "",
-      totalBlockCount: blocks.length,
-      currentIndex,
-      sequenceMeta: meta || null,
-      currentBlockFromSequence: currentBlockFromSequence
-        ? {
-            key: currentBlockFromSequence.key || "",
-            startTime: Number(currentBlockFromSequence.startTime ?? 0),
-            endTime: Number(currentBlockFromSequence.endTime ?? 0),
-            state: currentBlockFromSequence.state || "",
-            primaryText: String(currentBlockFromSequence.primaryText || ""),
-            secondaryText: String(currentBlockFromSequence.secondaryText || ""),
-            hasPrimarySignal: Boolean(currentBlockFromSequence.hasPrimarySignal),
-            hasSecondarySignal: Boolean(currentBlockFromSequence.hasSecondarySignal),
-          }
-        : null,
-      holdBlockCandidate:
-        state.nearbyRebuildHoldView?.currentBlock ||
-        state.currentSubtitleView?.currentBlock ||
-        state.currentSubtitleBlock ||
-        null,
-      blocksPreview: blocks
-        .slice(
-          Math.max(0, currentIndex - 2),
-          currentIndex >= 0 ? currentIndex + 3 : Math.min(blocks.length, 5),
-        )
-        .map((block) => ({
-          key: block?.key || "",
-          startTime: Number(block?.startTime ?? 0),
-          endTime: Number(block?.endTime ?? 0),
-          state: block?.state || "",
-          primaryText: String(block?.primaryText || ""),
-          secondaryText: String(block?.secondaryText || ""),
-          hasPrimarySignal: Boolean(block?.hasPrimarySignal),
-          hasSecondarySignal: Boolean(block?.hasSecondarySignal),
-        })),
-    });
+    if (false) {
+      logContentSubtitle("current subtitle view snapshot input", {
+        contentKey: historyStore.getCurrentKey() || "",
+        totalBlockCount: blocks.length,
+        currentIndex,
+        sequenceMeta: meta || null,
+        currentBlockFromSequence: currentBlockFromSequence
+          ? {
+              key: currentBlockFromSequence.key || "",
+              startTime: Number(currentBlockFromSequence.startTime ?? 0),
+              endTime: Number(currentBlockFromSequence.endTime ?? 0),
+              state: currentBlockFromSequence.state || "",
+              primaryText: String(currentBlockFromSequence.primaryText || ""),
+              secondaryText: String(currentBlockFromSequence.secondaryText || ""),
+              hasPrimarySignal: Boolean(currentBlockFromSequence.hasPrimarySignal),
+              hasSecondarySignal: Boolean(currentBlockFromSequence.hasSecondarySignal),
+            }
+          : null,
+        holdBlockCandidate:
+          state.nearbyRebuildHoldView?.currentBlock ||
+          state.currentSubtitleView?.currentBlock ||
+          state.currentSubtitleBlock ||
+          null,
+        blocksPreview: blocks
+          .slice(
+            Math.max(0, currentIndex - 2),
+            currentIndex >= 0 ? currentIndex + 3 : Math.min(blocks.length, 5),
+          )
+          .map((block) => ({
+            key: block?.key || "",
+            startTime: Number(block?.startTime ?? 0),
+            endTime: Number(block?.endTime ?? 0),
+            state: block?.state || "",
+            primaryText: String(block?.primaryText || ""),
+            secondaryText: String(block?.secondaryText || ""),
+            hasPrimarySignal: Boolean(block?.hasPrimarySignal),
+            hasSecondarySignal: Boolean(block?.hasSecondarySignal),
+          })),
+      });
+    }
 
     const view =
       subtitleViewResolver &&
@@ -2664,17 +2672,19 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
 
     // 空 view は異常ではなく「まだ現在位置の cue が来ていない待機状態」。
     // 起動直後の観測で waiting / ready を見分けやすいよう snapshot ログを残す。
-    logContentSubtitle("current subtitle view snapshot", {
-      contentKey: historyStore.getCurrentKey() || "",
-      totalBlockCount: blocks.length,
-      currentIndex,
-      subtitleViewPrimary: primaryText,
-      subtitleViewSecondary: secondaryText,
-      isVisible: Boolean(view?.isVisible),
-      hasCurrentBlock: Boolean(view?.currentBlock),
-      viewStatus,
-      waitingReason,
-    });
+    if (false) {
+      logContentSubtitle("current subtitle view snapshot", {
+        contentKey: historyStore.getCurrentKey() || "",
+        totalBlockCount: blocks.length,
+        currentIndex,
+        subtitleViewPrimary: primaryText,
+        subtitleViewSecondary: secondaryText,
+        isVisible: Boolean(view?.isVisible),
+        hasCurrentBlock: Boolean(view?.currentBlock),
+        viewStatus,
+        waitingReason,
+      });
+    }
 
     overlayController.updateOverlayFromView?.(view, {
       contentKey: historyStore.getCurrentKey() || "",
@@ -2823,10 +2833,12 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
     );
 
     // resolver 結果をログへ残す
-    logContentSubtitle(
-      "secondary resolver snapshot",
-      buildSecondaryResolverSnapshot("startBilingual"),
-    );
+    if (false) {
+      logContentSubtitle(
+        "secondary resolver snapshot",
+        buildSecondaryResolverSnapshot("startBilingual"),
+      );
+    }
 
     // 選択できた track の詳細を確認用に残す
     logContentSubtitle("Selected tracks detail", {
