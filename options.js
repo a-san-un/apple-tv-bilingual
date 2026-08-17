@@ -1,21 +1,27 @@
 // =============================================================
 // options.js - Options page logic
 // version: 2.6.3
-// Issue #4: Debug Download を background 経由(saveAs)に統一
-// 既存の設定保存導線は維持し、最小差分で実装する
+// -------------------------------------------------------------
+// 役割:
+// - Options 画面の設定 UI を初期化し、保存・再読込・即時反映を担当する
+// - popup と同じ共通言語定義を使って primary / secondary 言語一覧を表示する
+// - 一般設定(sync)とローカル設定(local)を分けて保存する
+// - 保存後、拡張が有効なら Apple TV+ タブへ設定を即時送信する
+// - デバッグログの表示・絞り込み・コピー・保存・削除を扱う
+// - storage 変更を監視し、デバッグログをリアルタイム更新する
+//
+// 補足:
+// - 設定キー・デフォルト値の正本は settings-schema.js を参照する
+// - 言語一覧の正本は language-definitions.js とする
+// - Debug Download は background 経由(saveAs)に統一する
 // =============================================================
 
-const SUPPORTED_LANGS = [
-  { lang: "en", label: "English" },
-  { lang: "ja", label: "日本語" },
-  { lang: "zh", label: "中文" },
-  { lang: "ko", label: "한국어" },
-  { lang: "fr", label: "Français" },
-  { lang: "de", label: "Deutsch" },
-  { lang: "es", label: "Español" },
-];
+// popup と同じ共通言語定義を使う。
+// 取得できない場合でも壊れにくいよう空配列 fallback を置く。
+const SUPPORTED_LANGS =
+  globalThis.ATVB?.languageDefinitions?.getSupportedLanguages?.() ?? [];
 
-// 設定キー・デフォルト値は settings-schema.js の正本を参照する
+// 設定キー・デフォルト値は settings-schema.js の正本を参照する。
 const DEFAULT_GENERAL_SETTINGS = globalThis.ATVB_SCHEMA
   ? { ...globalThis.ATVB_SCHEMA.DEFAULT_SYNC_SETTINGS }
   : {
@@ -35,6 +41,7 @@ const DEFAULT_LOCAL_SETTINGS = globalThis.ATVB_SCHEMA
       groqApiKey: "",
     };
 
+// デバッグログ関連の定数。
 const DEBUG_LOGS_KEY = "debugLogs";
 const DEBUG_LOGS_MAX = 300;
 const LOG_CATEGORIES = Object.freeze({
@@ -50,6 +57,7 @@ const OPTIONS_DEFAULT_VISIBLE_CATEGORIES = new Set(
   Object.values(LOG_CATEGORIES),
 );
 
+// Options 画面で使う主要 DOM 要素をまとめる。
 const els = {
   saveBtn: document.getElementById("saveBtn"),
   saveStatus: document.getElementById("saveStatus"),
@@ -69,8 +77,14 @@ const els = {
   debugCopyBtn: document.getElementById("debugCopyBtn"),
   debugDownloadBtn: document.getElementById("debugDownloadBtn"),
   debugClearBtn: document.getElementById("debugClearBtn"),
+  debugFilterSource: document.getElementById("debugFilterSource"),
+  debugFilterCategory: document.getElementById("debugFilterCategory"),
+  debugFilterText: document.getElementById("debugFilterText"),
+  debugLogCount: document.getElementById("debugLogCount"),
+  debugRealtimeBadge: document.getElementById("debugRealtimeBadge"),
 };
 
+// API キーなどの機微値をログにそのまま出さない。
 function maskSensitive(value) {
   if (typeof value !== "string") return value;
   if (!value) return "";
@@ -78,6 +92,7 @@ function maskSensitive(value) {
   return `${value.slice(0, 4)}...${value.slice(-2)}`;
 }
 
+// ログ保存前に payload を安全化する。
 function sanitizeForLog(payload) {
   if (payload == null) return payload;
 
@@ -106,6 +121,7 @@ function sanitizeForLog(payload) {
   return walk(cloned);
 }
 
+// 未知カテゴリは ui 扱いへ寄せる。
 function normalizeCategory(category) {
   const normalized = String(category || "")
     .trim()
@@ -114,6 +130,7 @@ function normalizeCategory(category) {
   return LOG_CATEGORIES.UI;
 }
 
+// 共通的なログ構造を組み立てる。
 function debugLog(scope, categoryOrMessage, messageOrPayload, payloadMaybe) {
   const source = String(scope || "options");
   let category = LOG_CATEGORIES.UI;
@@ -144,6 +161,7 @@ function debugLog(scope, categoryOrMessage, messageOrPayload, payloadMaybe) {
   };
 }
 
+// ログの shape を揃えて後段処理を簡単にする。
 function ensureLogShape(line) {
   if (!line || typeof line !== "object") return null;
   const source = String(line.source || line.scope || "unknown");
@@ -157,10 +175,12 @@ function ensureLogShape(line) {
   };
 }
 
+// 日時表示用のゼロ埋め。
 function padNumber(value, width = 2) {
   return String(value).padStart(width, "0");
 }
 
+// ローカルタイム文字列へ変換する。
 function formatLocalTimestamp(timestamp) {
   const date = timestamp ? new Date(timestamp) : new Date();
   if (Number.isNaN(date.getTime())) return String(timestamp || "");
@@ -182,6 +202,7 @@ function formatLocalTimestamp(timestamp) {
   return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${milliseconds}${sign}${offsetHours}:${offsetRemainder}`;
 }
 
+// debugLogs 配列へ1行追加し、上限を超えたら古いものを削る。
 async function appendDebugLog(line) {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
@@ -192,10 +213,15 @@ async function appendDebugLog(line) {
   await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
 }
 
+// 言語表示文字列を整える。
+// 共通定義側が code を持つ構造を優先し、旧 lang 形式にも fallback する。
 function formatLanguageLabel(lang) {
-  return lang.label ? `${lang.label} (${lang.lang})` : lang.lang;
+  const code = String(lang?.code || lang?.lang || "").trim();
+  const label = String(lang?.label || "").trim();
+  return label ? `${label} (${code})` : code;
 }
 
+// select を共通言語定義から再構築する。
 function populateLangSelect(selectEl, langs, saved, allowEmpty) {
   if (!selectEl) return;
 
@@ -210,14 +236,18 @@ function populateLangSelect(selectEl, langs, saved, allowEmpty) {
   }
 
   langs.forEach((l) => {
+    const value = String(l?.code || l?.lang || "").trim();
+    if (!value) return;
+
     const opt = document.createElement("option");
-    opt.value = l.lang;
+    opt.value = value;
     opt.textContent = formatLanguageLabel(l);
-    if (l.lang === saved) opt.selected = true;
+    if (value === saved) opt.selected = true;
     selectEl.appendChild(opt);
   });
 }
 
+// テキスト出力用の1行ログ形式を作る。
 function formatDebugLine(line) {
   const normalizedLine = ensureLogShape(line);
   if (!normalizedLine) return "";
@@ -229,6 +259,7 @@ function formatDebugLine(line) {
   return `[${localTime}] [${normalizedLine.category}] [${normalizedLine.source}] ${normalizedLine.message}${payloadText}`;
 }
 
+// ログ削除用に内容比較しやすい署名を作る。
 function buildDebugLineSignature(line) {
   const normalizedLine = ensureLogShape(line);
   if (!normalizedLine) return "";
@@ -241,24 +272,138 @@ function buildDebugLineSignature(line) {
   });
 }
 
+// UI 上のフィルター値を読む。
+// 字幕パネル debug panel と同じ ID 構造に合わせる。
+function readUiFilters() {
+  const source = els.debugFilterSource?.value?.trim() || "";
+  const category = els.debugFilterCategory?.value?.trim() || "";
+  const text = els.debugFilterText?.value?.trim() || "";
+
+  return {
+    source,
+    category,
+    text,
+  };
+}
+
+// 1行のログが現在の UI フィルターに一致するか判定する。
+function matchesDebugFilter(line, filter) {
+  if (!line) return false;
+
+  if (filter.source && line.source !== filter.source) {
+    return false;
+  }
+
+  if (filter.category && line.category !== filter.category) {
+    return false;
+  }
+
+  if (filter.text) {
+    const haystack = [
+      line.time,
+      line.source,
+      line.category,
+      line.message,
+      line.payload != null ? JSON.stringify(line.payload) : "",
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    if (!haystack.includes(filter.text.toLowerCase())) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// カテゴリ表示対象と UI フィルターを両方適用する。
 function getVisibleDebugLogs(logs) {
+  const filter = readUiFilters();
+
   return (logs || [])
     .map((line) => ensureLogShape(line))
     .filter(
-      (line) => line && OPTIONS_DEFAULT_VISIBLE_CATEGORIES.has(line.category),
+      (line) =>
+        line &&
+        OPTIONS_DEFAULT_VISIBLE_CATEGORIES.has(line.category) &&
+        matchesDebugFilter(line, filter),
     );
 }
 
+// ログカード DOM を1件ぶん組み立てる。
+function createDebugLogItem(line) {
+  const normalizedLine = ensureLogShape(line);
+  if (!normalizedLine) return null;
+
+  const item = document.createElement("article");
+  item.className = "debug-log-item";
+  item.dataset.category = normalizedLine.category;
+
+  const meta = document.createElement("div");
+  meta.className = "debug-log-meta";
+
+  const time = document.createElement("span");
+  time.textContent = formatLocalTimestamp(normalizedLine.time);
+
+  const category = document.createElement("span");
+  category.className = "debug-log-category";
+  category.textContent = normalizedLine.category;
+
+  const source = document.createElement("span");
+  source.textContent = normalizedLine.source;
+
+  meta.append(time, category, source);
+
+  const message = document.createElement("div");
+  message.className = "debug-log-message";
+  message.textContent = normalizedLine.message || "(no message)";
+
+  item.append(meta, message);
+
+  if (normalizedLine.payload != null) {
+    const payload = document.createElement("pre");
+    payload.className = "debug-log-payload";
+    payload.textContent = JSON.stringify(normalizedLine.payload, null, 2);
+    item.appendChild(payload);
+  }
+
+  return item;
+}
+
+// フィルター適用後のログを debug panel へ再描画する。
 async function renderDebugLogs() {
   if (!els.debugLogOutput) return;
 
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
   const visibleLogs = getVisibleDebugLogs(debugLogs);
-  els.debugLogOutput.value = visibleLogs.map(formatDebugLine).join("\n");
+
+  els.debugLogOutput.innerHTML = "";
+
+  if (els.debugLogCount) {
+    els.debugLogCount.textContent = `${visibleLogs.length} logs`;
+  }
+
+  if (!visibleLogs.length) {
+    const empty = document.createElement("div");
+    empty.className = "debug-log-empty";
+    empty.textContent = "表示できるデバッグログはまだありません。";
+    els.debugLogOutput.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  visibleLogs.forEach((line) => {
+    const item = createDebugLogItem(line);
+    if (item) fragment.appendChild(item);
+  });
+
+  els.debugLogOutput.appendChild(fragment);
   els.debugLogOutput.scrollTop = els.debugLogOutput.scrollHeight;
 }
 
+// 表示中ログをプレーンテキストとしてコピーする。
 async function copyDebugLogs() {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
@@ -274,6 +419,7 @@ async function copyDebugLogs() {
   showSaveStatus("デバッグログをコピーしました");
 }
 
+// 表示中ログを background 経由で保存する。
 async function downloadDebugLogs() {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
@@ -313,6 +459,7 @@ async function downloadDebugLogs() {
   showSaveStatus("デバッグログをダウンロードしました");
 }
 
+// 現在表示中のフィルター結果に一致するログだけを削除する。
 async function clearDebugLogs() {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
@@ -330,13 +477,14 @@ async function clearDebugLogs() {
   await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: remainingLogs });
 
   if (els.debugLogOutput) {
-    els.debugLogOutput.value = "";
+    els.debugLogOutput.innerHTML = "";
   }
 
   await renderDebugLogs();
   showSaveStatus("デバッグログをクリアしました");
 }
 
+// 現在選択中の AI Provider を読む。
 function getPreferredAiProvider() {
   const checked = document.querySelector(
     'input[name="preferredAiProvider"]:checked',
@@ -344,6 +492,7 @@ function getPreferredAiProvider() {
   return checked ? checked.value : "auto";
 }
 
+// 保存済み AI Provider をラジオへ反映する。
 function setPreferredAiProvider(value) {
   const target =
     document.querySelector(
@@ -354,6 +503,7 @@ function setPreferredAiProvider(value) {
   if (target) target.checked = true;
 }
 
+// 一時的な保存結果メッセージを表示する。
 function showSaveStatus(message, isError = false) {
   els.saveStatus.textContent = message;
   els.saveStatus.style.color = isError ? "#ff8b8b" : "#7bd88f";
@@ -364,12 +514,14 @@ function showSaveStatus(message, isError = false) {
   }, 2800);
 }
 
+// content 側へそのまま渡す設定 payload を作る。
 function buildLanguageSettingsPayload(settings) {
   return {
     ...settings,
   };
 }
 
+// 拡張有効中なら Apple TV+ タブへ設定反映を依頼する。
 async function dispatchSettingsChangedFromOptions(settingsPayload) {
   const lineDispatchStart = debugLog(
     "options",
@@ -409,17 +561,22 @@ async function dispatchSettingsChangedFromOptions(settingsPayload) {
   });
 }
 
+// パスワード入力欄の表示/非表示を切り替える。
 function toggleSecretInput(inputEl, buttonEl) {
   const show = inputEl.type === "password";
   inputEl.type = show ? "text" : "password";
   buttonEl.textContent = show ? "非表示" : "表示";
 }
 
+// 設定を storage から読み込み UI に反映する。
 async function loadSettings() {
   const lineStart = debugLog(
     "options",
     LOG_CATEGORIES.SETTINGS,
     "Loading settings",
+    {
+      supportedLanguageCount: SUPPORTED_LANGS.length,
+    },
   );
   await appendDebugLog(lineStart);
 
@@ -482,6 +639,7 @@ async function loadSettings() {
   await renderDebugLogs();
 }
 
+// フォーム入力を保存し、必要なら content 側へ即時反映する。
 async function saveSettings() {
   const primaryLang = els.primaryLang.value;
   const secondaryLang = els.secondaryLang.value;
@@ -626,6 +784,19 @@ async function saveSettings() {
   await renderDebugLogs();
 }
 
+// debugLogs の storage 更新を監視し、リアルタイムで再描画する。
+function bindDebugLogRealtimeWatch() {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local") return;
+    if (!changes[DEBUG_LOGS_KEY]) return;
+
+    renderDebugLogs().catch(() => {
+      // storage 更新を伴うログ記録は再帰発火し得るため、ここでは何もしない。
+    });
+  });
+}
+
+// 画面上のイベントをまとめて bind する。
 function bindEvents() {
   els.saveBtn.addEventListener("click", saveSettings);
 
@@ -654,6 +825,25 @@ function bindEvents() {
     els.debugClearBtn.addEventListener("click", clearDebugLogs);
   }
 
+  // 字幕パネル側と同じ構造でフィルター変更に追従する。
+  if (els.debugFilterSource) {
+    els.debugFilterSource.addEventListener("change", () => {
+      renderDebugLogs();
+    });
+  }
+
+  if (els.debugFilterCategory) {
+    els.debugFilterCategory.addEventListener("change", () => {
+      renderDebugLogs();
+    });
+  }
+
+  if (els.debugFilterText) {
+    els.debugFilterText.addEventListener("input", () => {
+      renderDebugLogs();
+    });
+  }
+
   if (els.debugSectionToggle && els.debugSectionBody) {
     els.debugSectionToggle.addEventListener("click", () => {
       const isHidden = els.debugSectionBody.hidden;
@@ -664,8 +854,11 @@ function bindEvents() {
   }
 }
 
+// 初期化エントリポイント。
+// DOM 準備後にイベント bind、初期ログ追加、設定読込を行う。
 document.addEventListener("DOMContentLoaded", async () => {
   bindEvents();
+  bindDebugLogRealtimeWatch();
 
   const line = debugLog(
     "options",

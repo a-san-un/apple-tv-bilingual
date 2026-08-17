@@ -29,27 +29,14 @@
             <label class="field">
               <span class="field-label">勉強している言語</span>
               <select id="primaryLang" required>
-                <option value="en">英語</option>
-                <option value="ja">日本語</option>
-                <option value="zh">中国語</option>
-                <option value="ko">韓国語</option>
-                <option value="fr">フランス語</option>
-                <option value="de">ドイツ語</option>
-                <option value="es">スペイン語</option>
+                <option value="">読み込み中...</option>
               </select>
             </label>
 
             <label class="field">
               <span class="field-label">自分の言語</span>
               <select id="secondaryLang">
-                <option value="">ブラウザ言語を使う</option>
-                <option value="ja">日本語</option>
-                <option value="en">英語</option>
-                <option value="zh">中国語</option>
-                <option value="ko">韓国語</option>
-                <option value="fr">フランス語</option>
-                <option value="de">ドイツ語</option>
-                <option value="es">スペイン語</option>
+                <option value="">読み込み中...</option>
               </select>
             </label>
           </div>
@@ -175,7 +162,7 @@
             <h2>デバッグログ（開発者向け）</h2>
             <p class="helper-text">
               popup / options / background / content
-              から収集したログを表示します
+              から収集したログをリアルタイム表示します
             </p>
           </div>
           <button
@@ -191,34 +178,96 @@
 
         <div id="debugSectionBody" class="debug-section__body" hidden>
           <div class="debug-toolbar">
-            <button id="debugCopyBtn" class="secondary-button" type="button">
-              Copy
-            </button>
-            <button
-              id="debugDownloadBtn"
-              class="secondary-button"
-              type="button"
-            >
-              Download
-            </button>
-            <button id="debugClearBtn" class="secondary-button" type="button">
-              Clear
-            </button>
+            <div class="debug-toolbar__top">
+              <div class="debug-toolbar__meta">
+                <span id="debugRealtimeBadge" class="debug-badge">LIVE</span>
+                <span id="debugLogCount" class="debug-count">0 logs</span>
+              </div>
+
+              <div class="debug-toolbar__actions">
+                <button id="debugCopyBtn" class="secondary-button" type="button">
+                  Copy
+                </button>
+                <button
+                  id="debugDownloadBtn"
+                  class="secondary-button"
+                  type="button"
+                >
+                  Download
+                </button>
+                <button
+                  id="debugClearBtn"
+                  class="secondary-button danger-button"
+                  type="button"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+
+            <div class="debug-toolbar__filters">
+              <select
+                id="debugFilterSource"
+                class="debug-filter-select"
+                aria-label="ログ発生元で絞り込み"
+              >
+                <option value="">すべての発生元</option>
+                <option value="content">content</option>
+                <option value="options">options</option>
+                <option value="popup">popup</option>
+                <option value="background">background</option>
+                <option value="debug-panel">debug-panel</option>
+              </select>
+
+              <select
+                id="debugFilterCategory"
+                class="debug-filter-select"
+                aria-label="カテゴリで絞り込み"
+              >
+                <option value="">すべてのカテゴリ</option>
+                <option value="settings">settings</option>
+                <option value="subtitle">subtitle</option>
+                <option value="ui">ui</option>
+                <option value="api">api</option>
+                <option value="error">error</option>
+                <option value="default">default</option>
+              </select>
+
+              <input
+                id="debugFilterText"
+                class="debug-filter-text"
+                type="search"
+                placeholder="メッセージ / payload を検索"
+                autocomplete="off"
+                spellcheck="false"
+                aria-label="テキスト検索"
+              />
+            </div>
           </div>
 
-          <label class="field">
+          <div class="field">
             <span class="field-label">ログ出力</span>
-            <textarea
+            <div
               id="debugLogOutput"
-              class="debug-log-output"
-              readonly
-              spellcheck="false"
-            ></textarea>
-          </label>
+              class="debug-log-view"
+              role="log"
+              aria-live="polite"
+              aria-relevant="additions text"
+              tabindex="0"
+            >
+              <div class="debug-log-empty">
+                表示できるデバッグログはまだありません。
+              </div>
+            </div>
+          </div>
         </div>
       </section>
     </main>
 
+    <script src="modules/language-definitions.js"></script>
+    <script src="modules/settings-schema.js"></script>
+    <script src="modules/settings-store.js"></script>
+    <script src="settings-bridge.js"></script>
     <script src="options.js"></script>
   </body>
 </html>

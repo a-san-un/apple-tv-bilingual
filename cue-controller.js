@@ -131,7 +131,8 @@
         Number(options.cuePollTimeoutMs) || 1500,
       );
 
-      if (!video?.textTracks || !requestedLang) {
+      const targetTrack = options.targetTrack || null;
+      if (!video?.textTracks || (!requestedLang && !targetTrack)) {
         const payload = {
           reason,
           requestedLang: requestedLang || "",
@@ -149,13 +150,15 @@
       }
 
       const tracks = Array.from(video.textTracks || []);
-      const targets = tracks.filter((track) => {
-        if (!track) return false;
-        const kind = String(track.kind || "").toLowerCase();
-        if (kind !== "subtitles" && kind !== "captions") return false;
-        if (isForcedLikeTrack?.(track)) return false;
-        return matchesRequestedLanguage?.(track, requestedLang);
-      });
+      const targets = targetTrack
+        ? tracks.filter((track) => track === targetTrack)
+        : tracks.filter((track) => {
+            if (!track) return false;
+            const kind = String(track.kind || "").toLowerCase();
+            if (kind !== "subtitles" && kind !== "captions") return false;
+            if (isForcedLikeTrack?.(track)) return false;
+            return matchesRequestedLanguage?.(track, requestedLang);
+          });
 
       let activatedTrackCount = 0;
       for (const track of targets) {
@@ -415,6 +418,7 @@
       ensureSubtitleTracksUsable(options.video, options.requestedLang, {
         finalMode: "showing",
         reason: options.reason || "primary-bind",
+        targetTrack: track,
       });
 
       try {

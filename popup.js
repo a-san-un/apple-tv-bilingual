@@ -2,8 +2,8 @@
 // popup.js - 字幕言語設定用の Popup UI
 // -------------------------------------------------------------
 // 役割:
-// - primary / secondary 用に固定の言語一覧を表示する
-// - secondaryLang の空文字は「Browser language」として保存上は許可する
+// - primary / secondary 用の言語一覧を、共通の language-definitions から読み込んで表示する
+// - popup 上の表示言語コードと保存値を、拡張内の正本コード（例: ja, fr-FR, zh-Hant）に統一する
 // - 保存済みの生 settings を初期設定完了判定の正本として使う
 // - 初回設定完了には primary / secondary の両方を必須にする
 // - primary / secondary に同一言語は選べないようにする
@@ -12,25 +12,22 @@
 // - デバッグ用ログを残して調査しやすくする
 //
 // 補足:
+// - secondaryLang の空文字は保存値としては許可せず、必須入力として扱う
 // - extensionEnabled が未保存でも、popup 初回保存時に false を明示保存する
 // - 拡張が OFF のときでも、言語設定保存後は popup を自動で閉じる
+// - 言語一覧の正本は modules/language-definitions.js とし、このファイルでは直書きしない
 // =============================================================
 
-const SUPPORTED_LANGS = [
-  { lang: "en", label: "English" },
-  { lang: "ja", label: "日本語" },
-  { lang: "zh", label: "中文" },
-  { lang: "ko", label: "한국어" },
-  { lang: "fr", label: "Français" },
-  { lang: "de", label: "Deutsch" },
-  { lang: "es", label: "Español" },
-];
+// 共通の言語定義ファイルから、popup / options 共通で使う言語一覧を取得する。
+// 取得失敗時は空配列とし、初期化ログで異常を追えるようにする。
+const SUPPORTED_LANGS =
+  globalThis.ATVB?.languageDefinitions?.getSupportedLanguages?.() ?? [];
 
 // popup 起動時に読む一般設定キー。
 // extensionEnabled は保存時に個別取得・正規化するため、ここには含めない。
 // ATVB_SCHEMA (modules/settings-schema.js) がこのスクリプトより先に実行されていること。
 const GENERAL_KEYS = (globalThis.ATVB_SCHEMA?.SETTINGS_KEYS_SYNC ?? []).filter(
-  (k) => k !== "extensionEnabled"
+  (k) => k !== "extensionEnabled",
 );
 
 const DEBUG_LOGS_KEY = "debugLogs";
@@ -108,31 +105,29 @@ async function appendDebugLog(line) {
   await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
 }
 
-// セレクト表示用ラベルを整形する。
+// popup 上の表示文字列は language-definitions 側の label をそのまま使う。
+// 今回の方針では label も code 表記（例: ja, fr-FR, zh-Hant）に統一する。
 function formatLanguageLabel(lang) {
-  return lang.label ? `${lang.label} (${lang.lang})` : lang.lang;
+  return lang?.label || lang?.code || "";
 }
 
-// primary / secondary の select を固定言語一覧で再構築する。
-// secondary 側だけ空文字 = Browser language を先頭に置く。
+// primary / secondary の select を共通言語一覧で再構築する。
+// secondary 側も必須入力にするため、空文字 option は置かない。
 function populateSelects(langs, savedPrimary = "en", savedSecondary = "") {
   [primarySel, secondarySel].forEach((sel, idx) => {
     const saved = idx === 0 ? savedPrimary : savedSecondary;
     sel.innerHTML = "";
 
-    if (idx === 1) {
-      const emptyOpt = document.createElement("option");
-      emptyOpt.value = "";
-      emptyOpt.textContent = "Browser language";
-      if (saved === "") emptyOpt.selected = true;
-      sel.appendChild(emptyOpt);
-    }
-
     langs.forEach((l) => {
       const opt = document.createElement("option");
-      opt.value = l.lang;
+      const value = String(l.code || l.lang || "").trim();
+      opt.value = value;
       opt.textContent = formatLanguageLabel(l);
-      if (l.lang === saved) opt.selected = true;
+
+      if (value === saved) {
+        opt.selected = true;
+      }
+
       sel.appendChild(opt);
     });
   });
@@ -254,10 +249,27 @@ async function notifyActiveAppleTvTab(settingsToSend) {
   );
 }
 
-// popup 初期表示時に保存済み settings を読み、固定言語一覧へ反映する。
+// popup 初期表示時に保存済み settings を読み、共通言語一覧へ反映する。
 async function initPopup() {
-  const lineInit = debugLog("popup", "popup initialized");
+  const lineInit = debugLog("popup", "popup initialized", {
+    supportedLanguageCount: SUPPORTED_LANGS.length,
+  });
   await appendDebugLog(lineInit);
+
+  if (!SUPPORTED_LANGS.length) {
+    statusEl.textContent = "言語定義の読み込みに失敗しました。";
+    applyBtn.disabled = true;
+
+    const lineNoLangs = debugLog(
+      "popup",
+      "Language definitions are missing",
+      {
+        supportedLanguageCount: 0,
+      },
+    );
+    await appendDebugLog(lineNoLangs);
+    return;
+  }
 
   chrome.storage.sync.get(GENERAL_KEYS, async (result) => {
     const schema = globalThis.ATVB_SCHEMA;
@@ -265,10 +277,12 @@ async function initPopup() {
     const hasStoredPrimaryLang = Boolean(result.primaryLang);
     const hasStoredSecondaryLang = Boolean(result.secondaryLang);
 
-    isLanguageSelectionIncomplete = !(hasStoredPrimaryLang && hasStoredSecondaryLang);
+    isLanguageSelectionIncomplete = !(
+      hasStoredPrimaryLang && hasStoredSecondaryLang
+    );
 
-    const savedPrimary = merged.primaryLang;
-    const savedSecondary = merged.secondaryLang ?? "";
+    const savedPrimary = String(merged.primaryLang || "").trim();
+    const savedSecondary = String(merged.secondaryLang || "").trim();
 
     const lineLoaded = debugLog("popup", "Loaded general settings", {
       ...result,
@@ -280,7 +294,7 @@ async function initPopup() {
 
     populateSelects(SUPPORTED_LANGS, savedPrimary, savedSecondary);
 
-    const lineFixed = debugLog("popup", "Using fixed language list", {
+    const lineFixed = debugLog("popup", "Using shared language definitions", {
       languageCount: SUPPORTED_LANGS.length,
       primaryLang: savedPrimary,
       secondaryLang: savedSecondary,
@@ -313,8 +327,8 @@ applyBtn.addEventListener("click", async () => {
     return;
   }
 
-  const primaryLang = primarySel.value;
-  const secondaryLang = secondarySel.value;
+  const primaryLang = String(primarySel.value || "").trim();
+  const secondaryLang = String(secondarySel.value || "").trim();
 
   const currentSettings = await chrome.storage.sync.get(["extensionEnabled"]);
   const schema = globalThis.ATVB_SCHEMA;
@@ -337,13 +351,9 @@ applyBtn.addEventListener("click", async () => {
     isLanguageSelectionIncomplete = false;
     updatePopupUI();
 
-    const lineSaved = debugLog(
-      "popup",
-      "Saved popup settings to sync",
-      {
-        ...settingsToSave,
-      },
-    );
+    const lineSaved = debugLog("popup", "Saved popup settings to sync", {
+      ...settingsToSave,
+    });
     await appendDebugLog(lineSaved);
 
     if (normalizedEnabled === true) {
@@ -366,6 +376,7 @@ applyBtn.addEventListener("click", async () => {
   });
 });
 
+// primary / secondary の変更時は都度バリデーションを更新する。
 primarySel.addEventListener("change", () => {
   updatePopupUI();
 });
@@ -374,6 +385,7 @@ secondarySel.addEventListener("change", () => {
   updatePopupUI();
 });
 
+// Options 画面を別タブで開く。
 if (openOptionsBtn) {
   openOptionsBtn.addEventListener("click", async () => {
     const line = debugLog("popup", "Opening options page");
@@ -382,6 +394,7 @@ if (openOptionsBtn) {
   });
 }
 
+// DOM 構築後に popup 初期化を開始する。
 document.addEventListener("DOMContentLoaded", () => {
   initPopup();
 });

@@ -648,8 +648,7 @@ function forwardContentLog(...args) {
         requestSnapshotRefresh("sync_interval_large_seek_resync");
       }
 
-      const effectiveSecondaryLanguage =
-        state.requestedSecondaryLang || state.contentSettings.secondaryLang;
+      const effectiveSecondaryLanguage = getResolverRequestedSecondaryLanguage();
       if (!state.video || !effectiveSecondaryLanguage) return;
 
       const previousSecondaryTrack = state.secondaryTrack;
@@ -1933,7 +1932,7 @@ function forwardContentLog(...args) {
     getTrackCuesLength: resolverDeps.getTrackCuesLength,
     getTrackActiveCuesLength: resolverDeps.getTrackActiveCuesLength,
     getRequestedSecondaryLanguage: () =>
-      state.requestedSecondaryLang || state.contentSettings.secondaryLang,
+      getResolverRequestedSecondaryLanguage(),
     getPrimaryTrack: () => state.primaryTrack,
     getSecondaryTrack: () => state.secondaryTrack,
     getCurrentCue,
@@ -1985,7 +1984,7 @@ function forwardContentLog(...args) {
       resolver: resolverDeps,
       bindSecondaryTrack: (track, options = {}) => {
         const modeDecision = {
-          requestedMode: options?.requestedMode || "hidden",
+          requestedMode: options?.requestedMode || "showing",
           policy: options?.policy || "subtitle-sync-controller",
           rationale: options?.reason || "subtitle_sync_controller_bind",
           reason: options?.reason || "subtitle-sync-controller",
@@ -2168,7 +2167,7 @@ let syncIntervalOrchestrator = null;
       requestSnapshotRefresh,
       getCurrentSubtitleView: () => state.currentSubtitleView || null,
       getRequestedSecondaryLang: () =>
-        state.requestedSecondaryLang || state.contentSettings.secondaryLang,
+        getResolverRequestedSecondaryLanguage(),
     },
   }) ?? null;
 
@@ -2480,11 +2479,18 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
     );
   }
 
-  function buildSecondaryResolverSnapshot(reason = "") {
-    const requestedLang =
-      state.contentSettings?.secondaryLang ||
+  // resolver / secondary track sync / native menu sync に渡す副言語を一箇所で決める。
+  // requestedSecondaryLang を優先し、無ければ effective settings 側の secondaryLang を使う。
+  function getResolverRequestedSecondaryLanguage() {
+    return (
       state.requestedSecondaryLang ||
-      "";
+      state.contentSettings.secondaryLang ||
+      ""
+    );
+  }
+
+  function buildSecondaryResolverSnapshot(reason = "") {
+    const requestedLang = getResolverRequestedSecondaryLanguage();
 
     const video = state.video;
     const resolver = window.ATVB?.resolver;
@@ -2792,12 +2798,15 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       });
     }
 
+    const resolverRequestedSecondaryLanguage =
+      getResolverRequestedSecondaryLanguage();
+
     // 先に Apple TV 側のネイティブ字幕選択を同期する
     await window.ATVB?.resolver?.syncNativeSubtitleSelectionViaMenu?.({
       primaryLang: state.contentSettings.primaryLang || "",
-      secondaryLang: state.contentSettings.secondaryLang || "",
+      secondaryLang: resolverRequestedSecondaryLanguage,
       preferredSource:
-        state.contentSettings.secondaryLang ||
+        resolverRequestedSecondaryLanguage ||
         state.contentSettings.primaryLang ||
         "",
     });

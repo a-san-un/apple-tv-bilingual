@@ -1,11 +1,18 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - modules/settings-schema.js
+// version: 2.6.3
 //
-// 役割: 設定キー・デフォルト値・正規化ルールの正本 (Step 1)
+// 役割:
+// - 設定キー・デフォルト値・正規化ルールの正本を担当する。
+// - sync / local 設定のキー定義と、保存値の merge / fallback ルールを一箇所へ集約する。
+// - content / popup / options が共通の設定解釈を使えるよう globalThis.ATVB_SCHEMA を公開する。
 //
-// 利用方法:
-//   - manifest.json の content_scripts に追加して globalThis.ATVB_SCHEMA を公開する
-//   - options.js / popup.js は chrome.runtime.getURL + import() で利用する
+// このファイルのメンテナンス方針:
+// - デフォルト値の変更は DEFAULT_SYNC_SETTINGS / DEFAULT_LOCAL_SETTINGS に集約する。
+// - storage から読んだ値の正規化は schema 層で完結させ、呼び出し側へ条件分岐を漏らさない。
+// - secondaryLang の browser language fallback は applySecondaryLangFallback() に寄せ、
+//   language-definitions.js の canonicalizeLanguageCode() を通して正本 code にそろえる。
+// - popup / options / content で設定解釈がズレないよう、共通 helper を優先して再利用する。
 // =============================================================
 
 (function (root) {
@@ -31,7 +38,7 @@
 
   // -------------------------------------------------------
   // デフォルト値の正本 (全ファイル共通)
-  // enableAiTooltip は false に統一 (options.js の true を修正)
+  // enableAiTooltip は false に統一
   // extensionEnabled は storage に保存されるが、未保存時は false
   // -------------------------------------------------------
   const DEFAULT_SYNC_SETTINGS = Object.freeze({
@@ -53,38 +60,59 @@
   // 正規化ルール
   // -------------------------------------------------------
 
-  // extensionEnabled: storage 上の値が厳密に true のときだけ true とみなす
+  // extensionEnabled: storage 上の値が厳密に true のときだけ true とみなす。
   function normalizeExtensionEnabled(value) {
     return value === true;
   }
 
-  // panelDefaultOpen: undefined / null のときは true (デフォルト) 扱い
+  // panelDefaultOpen: undefined / null のときは true (デフォルト) 扱い。
   function normalizePanelDefaultOpen(value) {
     return value !== false;
   }
 
-  // secondaryLang のフォールバック: 空文字なら navigator.language の言語部分を使う
-  // この関数は副作用なし・純粋関数
+  // language-definitions.js が先に読まれていれば、その canonicalize を優先利用する。
+  // 未読込時でも壊れないよう、最低限の language-part fallback を残す。
+  function canonicalizeLanguageCode(value) {
+    const canonicalized =
+      root.ATVB?.languageDefinitions?.canonicalizeLanguageCode?.(value) || "";
+
+    if (canonicalized) {
+      return canonicalized;
+    }
+
+    const normalized = String(value || "").trim().toLowerCase();
+    if (!normalized) return "";
+    return normalized.split("-")[0] || "";
+  }
+
+  // secondaryLang が空のときだけ browser language を補完する。
+  // 補完値は language-definitions.js の canonicalize を通して正本 code にそろえる。
   function applySecondaryLangFallback(settings, navLanguage) {
     const result = { ...settings };
+
     if (!result.secondaryLang) {
-      const lang = navLanguage || "en";
-      result.secondaryLang = lang.toLowerCase().split("-")[0];
+      const fallbackLanguage = canonicalizeLanguageCode(navLanguage || "en");
+      result.secondaryLang = fallbackLanguage || "en";
     }
+
     return result;
   }
 
-  // sync 設定を正規化してマージする
-  // stored の値を DEFAULT_SYNC_SETTINGS で補完し、extensionEnabled / panelDefaultOpen を正規化する
+  // sync 設定を正規化してマージする。
+  // stored の値を DEFAULT_SYNC_SETTINGS で補完し、extensionEnabled / panelDefaultOpen を正規化する。
   function mergeSyncSettings(stored) {
     const merged = { ...DEFAULT_SYNC_SETTINGS, ...(stored || {}) };
+
     merged.extensionEnabled = normalizeExtensionEnabled(merged.extensionEnabled);
-    // panelDefaultOpen は永続設定として保存される (panelOpen とは別)
+
+    // panelDefaultOpen は永続設定として保存される (panelOpen とは別)。
     merged.panelDefaultOpen = normalizePanelDefaultOpen(merged.panelDefaultOpen);
+
     return merged;
   }
 
-  // language selection が完了しているか (primaryLang が空でなければ完了とみなす)
+  // language selection が完了しているかを返す。
+  // primaryLang が空でなければ完了とみなす。
   function isLanguageSelectionReady(settings) {
     return Boolean(settings && settings.primaryLang);
   }
@@ -99,6 +127,7 @@
     DEFAULT_LOCAL_SETTINGS,
     normalizeExtensionEnabled,
     normalizePanelDefaultOpen,
+    canonicalizeLanguageCode,
     applySecondaryLangFallback,
     mergeSyncSettings,
     isLanguageSelectionReady,

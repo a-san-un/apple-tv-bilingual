@@ -20,6 +20,7 @@
       "js": [
         "vtt-normalizer.js",
         "debug-logger.js",
+        "modules/language-definitions.js",
         "subtitle-track-resolver.js",
         "modules/settings-schema.js",
         "modules/settings-store.js",
