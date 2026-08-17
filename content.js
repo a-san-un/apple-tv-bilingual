@@ -722,15 +722,17 @@ function forwardContentLog(...args) {
       }
 
       const trackCount = state.video?.textTracks?.length ?? 0;
+      const extensionEnabled = state.contentSettings?.extensionEnabled !== false;
       const shouldAttemptPrimaryRecovery =
-        hasSecondarySignal && !hasPrimarySignal && trackCount > 1;
+        extensionEnabled && hasSecondarySignal && !hasPrimarySignal && trackCount > 1;
 
       // [binder/cue: recovery - sync interval path]
       // secondary signal はあるが primary signal が無い場合、
       // sync interval 経由で primary recovery を試行する。
+      // extensionEnabled=false の間は recovery 自体を止める。
 
       if (!shouldAttemptPrimaryRecovery) {
-        if (hasPrimarySignal) {
+        if (hasPrimarySignal || !extensionEnabled) {
           state.lastPrimaryRecoveryAttemptAt = 0;
         }
         return;

@@ -653,7 +653,14 @@
       unbindSecondarySubtitleTrack();
 
       const previousMode = track?.mode || "";
-      secondaryTrackOriginalMode = previousMode;
+
+      // F-5:
+      // secondary は拡張の補助字幕レーンとして bind するため、
+      // restore 時に native 側へ showing を残さないよう、
+      // bind 前が showing でも復元先は hidden として扱う。
+      // primary の native 字幕状態は primaryTrackOriginalMode 側で復元する。
+      secondaryTrackOriginalMode =
+        previousMode === "showing" ? "hidden" : previousMode;
 
       const getReadableSnapshot = () => {
         const currentTime = getCurrentTime();

@@ -435,6 +435,9 @@
                 typeof cueController?.restoreNativeSubtitles === "function",
             });
 
+            syncIntervalOrchestrator?.stop?.();
+            cleanupInitialAutoStartWatch();
+
             cueController?.restoreNativeSubtitles?.();
 
             logContentSettings("ネイティブトグル OFF restore call after", {
@@ -454,8 +457,6 @@
               extensionEnabled: state.contentSettings.extensionEnabled,
             });
 
-            syncIntervalOrchestrator?.stop?.();
-            cleanupInitialAutoStartWatch();
             state.booted = false;
 
             return { ok: true, reason: "disabled" };
