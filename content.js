@@ -31,7 +31,7 @@
 
   const DEBUG_SECONDARY_SUBS = true;
   // Optional probe logs for #19 regressions. Keep false in normal operation.
-  const DEBUG_PANEL_PROBE = true;
+  const DEBUG_PANEL_PROBE = false;
   const LOG_CATEGORIES = Object.freeze({
     SETTINGS: "settings",
     SUBTITLE: "subtitle",
@@ -1711,6 +1711,8 @@ function forwardContentLog(...args) {
   } = subtitleBlockResolverApi;
   const createCueController = window.ATVB?.cueController?.createCueController;
   const createCueTrackBinder = window.ATVB?.cueTrackBinder?.createCueTrackBinder;
+  const createTrackListenerBinding =
+    window.ATVB?.cueTrackBinder?.createTrackListenerBinding || null;
   const createSubtitleSyncController =
     window.ATVB?.subtitleSyncController?.createSubtitleSyncController;
 
@@ -1858,6 +1860,8 @@ function forwardContentLog(...args) {
     clearTimeout: window.clearTimeout.bind(window),
   });
 
+  root.layoutController = layoutController;
+
   layoutController.initForPanelOpen(state.panelOpen);
 
   const { createOverlayController } = root.overlayController;
@@ -1975,6 +1979,7 @@ function forwardContentLog(...args) {
     cueSequenceBuilder,
     cueRenderCoordinator,
     secondaryTrackRecovery,
+    createTrackListenerBinding,
   });
 
   const cueTrackBinder = createCueTrackBinder
@@ -2618,6 +2623,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       typeof subtitleViewResolver.resolveUiSubtitleView === "function"
       ? subtitleViewResolver.resolveUiSubtitleView(blocks, currentIndex, {
           ...(meta || {}),
+          DEBUG_PANEL_PROBE,
           now: state.video?.currentTime ?? 0,
           currentTime: state.video?.currentTime ?? 0,
           contentKey: historyStore.getCurrentKey() || "",

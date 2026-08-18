@@ -48,6 +48,7 @@
     cueSequenceBuilder = null,
     cueRenderCoordinator = null,
     secondaryTrackRecovery = null,
+    createTrackListenerBinding = null,
   }) {
 
     // 現在 bind されている primary listener の解除関数を保持する。
@@ -472,56 +473,36 @@
       } catch (_) {}
 
       suppressNativeSubtitles();
-      
+
       const video = options.video || null;
+      const binding = createTrackListenerBinding?.({
+        track,
+        onCueChange,
+        video,
+        passTrackToHandler: false,
+        usePlaybackSignals: true,
+      });
 
-      try {
-        track.addEventListener("cuechange", onCueChange);
-
-        const onPlaybackSignal = () => {
-          try {
-            onCueChange();
-          } catch (_) {}
-        };
-
-        if (video && typeof video.addEventListener === "function") {
-          video.addEventListener("timeupdate", onPlaybackSignal);
-          video.addEventListener("seeked", onPlaybackSignal);
-          video.addEventListener("playing", onPlaybackSignal);
-        }
-
-        primaryTrackCleanup = () => {
-          try {
-            track.removeEventListener("cuechange", onCueChange);
-          } catch (_) {}
-
-          if (video && typeof video.removeEventListener === "function") {
-            try {
-              video.removeEventListener("timeupdate", onPlaybackSignal);
-            } catch (_) {}
-            try {
-              video.removeEventListener("seeked", onPlaybackSignal);
-            } catch (_) {}
-            try {
-              video.removeEventListener("playing", onPlaybackSignal);
-            } catch (_) {}
-          }
-        };
-
-        primaryTrackBound = track;
-
-        requestAnimationFrame(() => {
-          try {
-            onCueChange();
-          } catch (_) {}
-        });
-
-        return true;
-      } catch (_) {
+      if (!binding) {
         primaryTrackCleanup = null;
         primaryTrackBound = null;
         return false;
       }
+
+      primaryTrackBound = track;
+      primaryTrackCleanup = () => {
+        try {
+          binding.cleanup();
+        } catch (_) {}
+      };
+
+      requestAnimationFrame(() => {
+        try {
+          binding.notifyInitial();
+        } catch (_) {}
+      });
+
+      return true;
     }
 
     // secondary bind 時の mode を、実行文脈と readable snapshot から決定する。
@@ -757,7 +738,7 @@
         });
       }
 
-      const handler = () => {
+      const handleSecondaryCueChange = () => {
         if (false && DEBUG_SECONDARY_SUBS) {
           logContent("secondary-sync cuechange-fired", {
             reason: "secondaryTrackEvent",
@@ -823,14 +804,24 @@
         onCueChange(track);
       };
 
-      try {
-        track.addEventListener("cuechange", handler);
-      } catch (_) {}
+      const binding = createTrackListenerBinding?.({
+        track,
+        onCueChange: handleSecondaryCueChange,
+        video: null,
+        passTrackToHandler: false,
+        usePlaybackSignals: false,
+      });
+
+      if (!binding) {
+        secondaryTrackBound = null;
+        secondaryTrackCleanup = null;
+        return;
+      }
 
       secondaryTrackBound = track;
       secondaryTrackCleanup = () => {
         try {
-          track.removeEventListener("cuechange", handler);
+          binding.cleanup();
         } catch (_) {}
       };
 
@@ -838,7 +829,8 @@
 
       // hidden track でも現在 cue は読み出せる。
       // bind 後に一度だけ描画して、次の cuechange を待つ間の空表示を防ぐ。
-      onCueChange(track);
+      binding.notifyInitial();
+
     }
 
     // secondary track の再解決と再同期を行い、必要なら nearby rebuild まで進める。

@@ -308,7 +308,7 @@
       else state.panelOpen = !state.panelOpen;
 
       // レイアウトとパネル表示を新しい状態へ合わせる
-      applyLayout?.();
+      applyLayout?.(state.panelOpen);
       applyPanelVisibility(state.panelOpen);
 
       // ランタイム状態を local へ保存する

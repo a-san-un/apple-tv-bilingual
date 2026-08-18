@@ -1,9 +1,5 @@
 /* overlay.css - minimal global styles only, most styles are in Shadow DOM */
 
-/* Hide native subtitle rendering to avoid double display */
-video::cue {
-  visibility: hidden;
-}
 
 /* Floating toggle button base reset */
 #atv-toggle-btn {

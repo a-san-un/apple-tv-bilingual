@@ -54,10 +54,10 @@
       const baseMeta = meta && typeof meta === "object" ? meta : {};
       const now = Number(baseMeta.now ?? baseMeta.currentTime ?? NaN);
       const endTime = Number(block?.endTime ?? NaN);
-      const startTime = Number(block?.startTime ?? NaN);  // ← 追加
+      const startTime = Number(block?.startTime ?? NaN);
 
       if (!Number.isFinite(now) || !Number.isFinite(endTime)) return false;
-      if (Number.isFinite(startTime) && now < startTime - 5) return false;  // ← 追加
+      if (Number.isFinite(startTime) && now < startTime - 5) return false;
       if (now < endTime) return true;
       return now - endTime <= HOLD_WINDOW_SECONDS;
     }
@@ -112,6 +112,7 @@
       const currentBlock = pickCurrentBlock(list, currentIndex);
       const baseMeta = meta && typeof meta === "object" ? { ...meta } : {};
       const holdBlock = pickHoldBlock(baseMeta);
+      const debugPanelProbe = Boolean(baseMeta.DEBUG_PANEL_PROBE);
 
       if (currentBlock) {
         const view = buildSharedSubtitleViewFromBlock(currentBlock, {
@@ -122,22 +123,24 @@
           currentIndex,
         });
 
-        console.debug("[ATVB] subtitle-view-resolver debug", { // eslint-disable-line no-console
-          currentIndex,
-          totalBlockCount: list.length,
-          resolutionSource: "currentBlock",
-          currentBlock: {
-            key: currentBlock.key || "",
-            startTime: Number(currentBlock.startTime ?? 0),
-            endTime: Number(currentBlock.endTime ?? 0),
-            state: currentBlock.state || "",
-            primaryText: normalizeText(currentBlock.primaryText),
-            secondaryText: normalizeText(currentBlock.secondaryText),
-          },
-          subtitleViewPrimary: view.primary,
-          subtitleViewSecondary: view.secondary,
-          viewStatus: view.meta?.viewStatus || "",
-        });
+        if (debugPanelProbe) {
+          console.debug("[ATVB] subtitle-view-resolver debug", { // eslint-disable-line no-console
+            currentIndex,
+            totalBlockCount: list.length,
+            resolutionSource: "currentBlock",
+            currentBlock: {
+              key: currentBlock.key || "",
+              startTime: Number(currentBlock.startTime ?? 0),
+              endTime: Number(currentBlock.endTime ?? 0),
+              state: currentBlock.state || "",
+              primaryText: normalizeText(currentBlock.primaryText),
+              secondaryText: normalizeText(currentBlock.secondaryText),
+            },
+            subtitleViewPrimary: view.primary,
+            subtitleViewSecondary: view.secondary,
+            viewStatus: view.meta?.viewStatus || "",
+          });
+        }
 
         return view;
       }
@@ -152,22 +155,24 @@
           resolutionSource: "holdBlock",
         });
 
-        console.debug("[ATVB] subtitle-view-resolver debug", { // eslint-disable-line no-console
-          currentIndex,
-          totalBlockCount: list.length,
-          resolutionSource: "holdBlock",
-          currentBlock: {
-            key: holdBlock.key || "",
-            startTime: Number(holdBlock.startTime ?? 0),
-            endTime: Number(holdBlock.endTime ?? 0),
-            state: holdBlock.state || holdBlock.sourceReason || "",
-            primaryText: normalizeText(holdBlock.primaryText),
-            secondaryText: normalizeText(holdBlock.secondaryText),
-          },
-          subtitleViewPrimary: view.primary,
-          subtitleViewSecondary: view.secondary,
-          viewStatus: view.meta?.viewStatus || "",
-        });
+        if (debugPanelProbe) {
+          console.debug("[ATVB] subtitle-view-resolver debug", { // eslint-disable-line no-console
+            currentIndex,
+            totalBlockCount: list.length,
+            resolutionSource: "holdBlock",
+            currentBlock: {
+              key: holdBlock.key || "",
+              startTime: Number(holdBlock.startTime ?? 0),
+              endTime: Number(holdBlock.endTime ?? 0),
+              state: holdBlock.state || holdBlock.sourceReason || "",
+              primaryText: normalizeText(holdBlock.primaryText),
+              secondaryText: normalizeText(holdBlock.secondaryText),
+            },
+            subtitleViewPrimary: view.primary,
+            subtitleViewSecondary: view.secondary,
+            viewStatus: view.meta?.viewStatus || "",
+          });
+        }
 
         return view;
       }
@@ -183,16 +188,18 @@
         currentIndex: Number.isInteger(currentIndex) ? currentIndex : null,
       });
 
-      console.debug("[ATVB] subtitle-view-resolver debug", { // eslint-disable-line no-console
-        currentIndex,
-        totalBlockCount: list.length,
-        resolutionSource: "waiting",
-        currentBlock: null,
-        subtitleViewPrimary: view.primary,
-        subtitleViewSecondary: view.secondary,
-        viewStatus: view.meta?.viewStatus || "",
-        waitingReason: view.meta?.waitingReason || "",
-      });
+      if (debugPanelProbe) {
+        console.debug("[ATVB] subtitle-view-resolver debug", { // eslint-disable-line no-console
+          currentIndex,
+          totalBlockCount: list.length,
+          resolutionSource: "waiting",
+          currentBlock: null,
+          subtitleViewPrimary: view.primary,
+          subtitleViewSecondary: view.secondary,
+          viewStatus: view.meta?.viewStatus || "",
+          waitingReason: view.meta?.waitingReason || "",
+        });
+      }
 
       return view;
     }

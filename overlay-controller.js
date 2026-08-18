@@ -38,6 +38,7 @@
         showPopup,
         getPlaybackControlsLayoutTargets: _getPlaybackControlsLayoutTargets,
         PLAYBACK_CONTROLS_LAYOUT: _PLAYBACK_CONTROLS_LAYOUT,
+        DEBUG_PANEL_PROBE = false,
       } = {}) {
 
       // content 切替時の残留テキストを防ぐため、簡単な前回 state を保持する。
@@ -430,6 +431,7 @@
           state.lastContentKey = contentKey;
         }
 
+      if (DEBUG_PANEL_PROBE) {
         console.debug("[ATVB] overlay render debug", { // eslint-disable-line no-console
           contentKey,
           isVisible,
@@ -444,6 +446,7 @@
               }
             : null,
         });
+      }
 
         if (!container) return;
 
