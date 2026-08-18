@@ -1,6 +1,6 @@
-# Bugfix マスタープラン 2026-08-17（改訂版）
+# Bugfix マスタープラン 2026-08-18（改訂版）
 
-**作成日:** 2026-08-13 ／ **最終更新:** 2026-08-17 ／ **ブランチ:** `issue-32-content-core-split`  
+**作成日:** 2026-08-13 ／ **最終更新:** 2026-08-18 ／ **ブランチ:** `issue-32-content-core-split`
 **入口資料：** 新しいスレッドでもこの資料1枚を読めばプロジェクトの文脈と、現在の優先事項がわかります。
 
 ***
@@ -53,23 +53,17 @@
 
 ## 現状精査
 
-### 本日修正分（2026-08-17）
+### 本日修正分（2026-08-18）
 
-以下のファイルに修正を反映済み。
+以下のファイルに修正を反映中。
 
 - `content.js`
 - `cue-controller.js`
-- `modules/playback-context-controller.js`
-- `modules/playback-controls-layout-controller.js`
-- `modules/subtitle-sync-controller.js`
-- `options.html`
-- `options.js`
-- `panel-renderer.js`
+- `modules/cue-track-binder.js`
+- `overlay-controller.js`
+- `overlay.css`
 - `panel-ui.js`
-- `secondary-subtitle-dom.js`
-- `settings-runtime.js`
-- `subtitle-track-resolver.js`
-- `sync-interval-orchestrator.js`
+- `subtitle-view-resolver.js`
 
 ### ✅ 完了済み・動作確認済み
 
@@ -88,7 +82,25 @@
 - **設定ページのデバッグログで全ログ表示が可能になり、content の `settings` / `ui` / `subtitle` ログを常時確認できる**
 - **F-5 調査用に `restoreNativeSubtitles before/after` の snapshot を取得できる状態になった**
 - **`tv-log.txt` で `SETTINGS_CHANGED disable-branch`、`ネイティブトグル OFF apply start`、`restore call before/after`、`text track snapshot before/after` が同時に確認できる状態まで観測導線を整備済み**
-- **最新コミット `fix: F-5 調査向けに字幕 restore とログ観測を整理する (Issue #32)` を push 済み**
+- **字幕パネル開閉時の overlay 位置追従・文字サイズ維持は完了済み**
+- **字幕パネル開閉時の動画本体レイアウト追従も修正済み**
+  - `panel-ui.js` の `togglePanel()` から `applyLayout(state.panelOpen)` を渡すよう修正し、通常操作でも `.video-player__video-container` が `70%`、`.video-container.is-opaque` が `right: 30%` になることを確認した
+  - DevConsole からの manual `layoutController.applyPanelLayout(true)` と同等の 70/30 状態へ通常操作でも到達できる
+- **`subtitle-view-resolver.js` / `overlay-controller.js` の probe ログは通常時 suppress 済み**
+- **`overlay.css` から `video::cue { visibility: hidden; }` を削除済み**
+  - native 字幕メニューに干渉しない方向へ方針を切り替えた
+- **F-5 の前段として primary / secondary の track listener binding 共通化を着手済み**
+  - `modules/cue-track-binder.js` に `createTrackListenerBinding()` を追加
+  - `content.js` から `createCueController` へ helper を注入
+  - `cue-controller.js` の primary / secondary bind を helper 利用へ置換
+  - 現時点では `track.mode` はまだ変更していない
+
+### ⚠ 継続観測中の横断課題
+
+- **Chrome Renderer プロセスで 6GB 級メモリ消費を観測**
+  - F-5 本線とは別に、listener / observer / timer の登録解除漏れ調査を並行実施中
+  - 一時点では `EventListener` / `V8EventListener` / `RegisteredEventListener` が増加しており、長時間再生と UI 再初期化の繰り返しで蓄積している可能性がある
+  - 特に `panel-ui.js` の resize listener など、無名関数登録と解除経路の整合性を次スレッドでも確認する
 
 #### F-1: 字幕パネル開閉でオーバーレイ位置が追従しない（2026-08-16 完了）
 
@@ -105,89 +117,92 @@
   - フォントサイズは開閉前後とも `primaryFontSize=28.192px`、`secondaryFontSize=23.787px` で維持される
 - **判定:** 完了。位置追従・幅追従・文字サイズ維持を実機確認済み。
 
+#### F-1a: 字幕パネル開閉で動画本体が 70/30 に追従しない（2026-08-18 完了）
+
+- **症状:** 字幕パネルを開いても `.video-player__video-container` の幅が変化せず、動画本体が右パネルぶん縮まらない。
+- **原因:** `panel-ui.js` の `togglePanel()` が `applyLayout?.()` を引数なしで呼んでおり、`playback-controls-layout-controller.js` の `applyPanelLayout(isVisible, options)` に `undefined` が渡っていた。
+- **修正内容:** `panel-ui.js` で `applyLayout?.(state.panelOpen)` を呼ぶよう修正。
+- **確認結果:**
+  - manual `layoutController.applyPanelLayout(true)` 実行後に `.video-player__video-container` の inline / computed が `width: 70%`, `maxWidth: 70%`, `flexShrink: 0` となることを確認
+  - 同時に `.video-container.is-opaque` 側も `right: 30%` / computed `471.891px` となることを確認
+  - 通常のパネル開閉でも同等のレイアウト追従が起きるようになった
+- **判定:** 完了。
+
 #### F-2: restart 後にネイティブトグルが表示されない（2026-08-16 完了）
 
 - **症状:** 別エピソードや別作品へ移動すると、`#atvb-native-toggle` が DOM に追加されない。
 - **再現条件:** 字幕パネルを開閉するとトグルが表示されるため、初期化フローの途中で処理が止まっていると推定した。
 - **原因:** Apple TV+ の Svelte がエピソード遷移時にタブ DOM を再マウントすることで `#atvb-native-toggle` が消える。従来の `watchForPlayerTabs` は初回注入後に `obs.disconnect()` していたため、再マウント後の消失に気づけなかった。
 - **修正内容:** `watchForPlayerTabs` の Observer を disconnect しないよう変更し、「タブが存在するがトグルが消えている」状態を検知したら即再注入するループに切り替えた。あわせて `destroyUiHosts` に `closest("li")` が null のときの fallback 除去を追加した。
-- **確認結果:** 別エピソードや別作品への遷移後も、字幕パネルを開閉しなくても `#atvb-native-toggle` が再生成されることを確認。
+- **確認結果:** 別エピソードや別作品への遷移後も、字幕パネルを開閉しなくても `#atvb-native-toggle` が表示されることを確認した。
 - **判定:** 完了。
 
-#### F-3: 言語設定変更で secondary track が不安定になる（2026-08-16 完了）
+#### F-3: 言語設定変更時の secondary track が不安定（2026-08-17 完了）
 
-- **症状:** 言語設定の切り替え後、secondary 字幕が消えたり誤った track を参照したりする。
-- **原因:** secondary track の再選定タイミングと resolver の戻り値利用が不安定で、primary / secondary の責務境界も曖昧だった。
-- **修正内容:** `subtitle-track-resolver.js` と `modules/subtitle-sync-controller.js` 周辺の責務を見直し、設定変更時の再 bind と同期更新を整理した。
-- **確認結果:** 言語設定変更後も secondary 字幕が安定して表示されることを確認。
+- **症状:** popup で secondary 言語を変更すると、候補 track は見つかるが実表示されないケースがあった。
+- **修正内容:** `modules/language-definitions.js` の導入、resolver / binder / controller の責務整理により、secondary 候補選定と bind 後表示を安定化した。
+- **確認結果:** `ja → ko`、`ko → ja`、`ja → en` を popup 保存で実機確認済み。
 - **判定:** 完了。
 
-#### F-4: `message channel closed` / `asynchronous response` 系エラー（2026-08-17 部分改善・持ち越し）
+#### F-4: message チャネルクローズエラー（持ち越し）
 
-- **症状:** 初回付近で以下のエラーが残ることがある。
-  ```text
-  Uncaught (in promise) Error: A listener indicated an asynchronous response
-  by returning true, but the message channel closed before a response was received
-  ```
-- **対応状況:**
-  - `background.js` に recoverable error 判定と再送処理を追加済み
-  - `settings-runtime.js` で `waitForPlaybackReady()` 後に `state.video` / `state.dialogEl` を反映する修正を実施済み
-  - ON 復帰時の `#atv-toggle-btn` / overlay 字幕未表示は F-4 に吸収して解消済み
-- **現状:** UI 側の復旧は達成しているが、初回の async response エラーは完全には消えていない。
-- **優先度:** F-5 の主調査を優先し、F-4 は持ち越し。
-- **判定:** 未完了。
+- **現状:** `A listener indicated an asynchronous response...` はまだ初回に残ることがある。
+- **完了済み部分:** `background.js` 側で recoverable error 判定と再送処理を追加し、UI 復旧自体は達成済み。
+- **残件:** 初回のみ残るチャネルクローズ警告の根治。
 
-#### F-5: OFF 後にネイティブ字幕が復元されない（2026-08-17 調査導線整備済み・次の主対象）
+#### F-5: ネイティブ字幕メニューに干渉せず OFF 後復元できるようにする（進行中）
 
-- **症状:** 拡張を OFF にした後、Apple TV+ 本来のネイティブ字幕へ戻らないことがある。
-- **今回までの修正内容:**
-  - `cue-controller.js` に `restoreNativeSubtitles before/after` の snapshot ログを追加
-  - `options.html` / `options.js` で「全ログ表示」を追加し、content の `settings` / `ui` / `subtitle` ログを確認できるようにした
-  - `tv-log.txt` で `SETTINGS_CHANGED disable-branch`、`restore call before/after`、`text track snapshot before/after` を確認済み
-- **現時点の主仮説:**
-  - restore 実装そのものが完全に壊れているというより、**`spa_navigation` 直後など `textTrackCount=0` の未準備タイミングで restore が走って空振りしている可能性が高い**
-  - Apple TV+ native 字幕は DOM 直接復元対象ではなく、`<video>.textTracks` / `activeCues` 側で把握すべき
-  - 画面表示字幕は `mode === "showing"` かつ `activeCueCount > 0` の track から特定できるため、復元対象は **拡張が変更した `TextTrack.mode` と `atvb-cue-suppress`** とみなすのが妥当
-- **次の調査ポイント:**
-  - `restoreNativeSubtitles()` が現在どの track / mode を復元対象にしているか
-  - `primaryTrackOriginalMode` など元状態保存と復元が対になっているか
-  - secondary 用に触った track / mode の影響が native 側へ残っていないか
-  - OFF 分岐での呼び出し順が `destroyUiHosts()` より前後どちらであるべきか
-  - native menu 状態と `TextTrack.mode` 復元の責務分担が一致しているか
-  - `textTrackCount=0` タイミングをどう扱うか
-- **関連メモ:** 詳細な構造観測と再利用コマンドは `docs/Bugfix/F-5 調査メモ.md` を参照
-- **判定:** 未完了。次スレッドの最優先対象。
+- **現状の方針:**
+  - native 字幕メニューに干渉しない
+  - 拡張側 primary / secondary を同じ処理モデルへ寄せる
+  - ただし共通化のベースは secondary 側の hidden-lock モデルを採用する
+  - primary 側で使っていた `timeupdate` / `seeked` / `playing` の補助発火は共通 helper に取り込む
+- **今完了している段階:**
+  - `modules/cue-track-binder.js` に `createTrackListenerBinding()` を追加済み
+  - `content.js` で `createCueController` に helper を渡す配線済み
+  - `cue-controller.js` の primary bind を helper 利用へ置換済み
+  - `cue-controller.js` の secondary bind を helper 利用へ置換済み
+  - `track.mode` の変更はまだ行っていない
+- **同時に行った方針変更:**
+  - `overlay.css` の `video::cue { visibility: hidden; }` を削除し、native 字幕レンダリングを CSS で強制抑止しない構成へ戻した
+- **次スレッドの着手点:**
+  1. 共通 helper 化後の primary / secondary bind / cleanup の安定性確認
+  2. `track.mode` を secondary ベースの hidden-lock モデルへ統一する設計の確定
+  3. OFF 時 restore と native menu 操作が両立するかの再検証
+  4. `restoreNativeSubtitles before/after` と実画面の整合確認
 
-#### F-6: デバッグパネル OFF 時に設定ページへ入れない（2026-08-16 完了）
+#### F-6: トグル OFF 時にデバッグパネルが見られない（2026-08-17 完了）
 
-- **症状:** デバッグパネル OFF 時に設定ページへ遷移できない。
-- **原因:** 設定導線がデバッグ UI に依存していた。
-- **修正内容:** `options.html` / `options.js` の導線を見直し、デバッグパネル非表示時でも設定ページへ入れるようにした。
-- **確認結果:** デバッグパネル OFF 状態でも設定ページへ遷移可能。
+- **修正内容:** `options.js` の `bindDebugLogRealtimeWatch()` 未定義問題を修正し、さらに全ログ表示を追加。
+- **結果:** content の `settings` / `ui` / `subtitle` ログを ON/OFF 状態と独立して追えるようになった。
 - **判定:** 完了。
 
-#### F-8: DevConsole の大量ログ削減（2026-08-17 一次整理済み）
+#### F-8: DevConsole の大量ログ整理（一次整理済み）
 
-- **症状:** `secondary-sync force-rebind skipped` などの常設ログが多く、必要なログの視認性を下げていた。
-- **対応状況:** noisy ログの一部 suppress は実施済み。
-- **現状:** 一次整理までは完了したが、恒久的なログレベル設計は未完了。
-- **優先度:** F-5 の後。
-- **判定:** 部分完了。
+- **現状:** `secondary-sync force-rebind skipped` などの noisy ログは一次 suppress 済み。
+- **今回追加:** `subtitle-view-resolver.js` / `overlay-controller.js` の probe ログも通常時は抑制。
+- **残件:** 恒久的なログレベル整理と、必要時だけ個別フラグで再有効化できる設計への整理。
 
 ***
 
-## 次スレッドで最初にやること
+## 次スレッド開始時の優先順位
 
-1. `docs/Bugfix/Bugfix 実装シート.md` と `docs/Bugfix/Bugfix-仕様確定書.md` を読み、F-5 の前提を合わせる
-2. `cue-controller.js` の `restoreNativeSubtitles()` を中心に、保存した元 mode と復元処理の対を確認する
-3. `textTrackCount=0` のタイミングを考慮し、restore をどの責務で待つべきか整理する
-4. 必要なら `settings-runtime.js` / `content.js` の OFF 分岐順序も合わせて見直す
-5. F-5 の修正後に、Apple TV+ 再生中の ON/OFF 実機確認を行う
+1. **F-5 継続**
+   - `createTrackListenerBinding()` 共通化後の挙動確認
+   - primary / secondary の `track.mode` 統一方針を確定
+   - native 字幕メニュー非干渉を守ったまま OFF 復元を成立させる
+2. **メモリ調査継続**
+   - listener / observer / timer のリーク候補の再点検
+   - 長時間再生時の heap / listener 増加再観測
+3. **F-4 持ち越し**
+   - 初回のみ残る async response 警告の根治
 
 ***
 
-## 補足メモ
+## 次スレッドに必ず持ち込む要点
 
-- `hidden && cuesLength === 0` のような強いフィルタは、日本語 primary の初期 cue 読み込みまで止める副作用があったため、F-5 調査でも安易に再導入しない
-- Apple TV+ の SPA / Svelte 再マウント、Top Layer、再生コントロール再生成が不安定さの根本要因になっている
-- 今回の優先は **F-5 完了**。F-4 / F-8 はその後でよい
+- F-5 は **未完了**。今は `track.mode` を触る前段の listener binding 共通化まで進んだ段階。
+- `overlay.css` の `video::cue` 非表示は **削除済み**。native 字幕メニュー非干渉が現在の設計方針。
+- `panel-ui.js` の `applyLayout(state.panelOpen)` 修正により、動画本体の 70/30 追従は **完了済み**。
+- `subtitle-view-resolver.js` / `overlay-controller.js` の probe ログは通常時 **抑制済み**。
+- Renderer 6GB 問題は **別線の重要課題**。F-5 と並行して継続監視する。
