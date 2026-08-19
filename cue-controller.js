@@ -69,6 +69,10 @@
     // secondary track を拡張が変更する前の mode を保持する。
     let secondaryTrackOriginalMode = null;
 
+    // ensureSubtitleTracksUsable() で一時的に mode を変更した track 一覧。
+    // bound 済み primary / secondary 以外も含めて、拡張OFF時に元 mode を復元するために使う。
+    const temporarilyActivatedTrackModes = new Map();
+
     function getUsableTrackDebugPayload(track) {
       if (textTrackDebug?.getUsableTrackDebugPayload) {
         return textTrackDebug.getUsableTrackDebugPayload(track);
@@ -114,6 +118,22 @@
       return payload;
     }
 
+    function rememberOriginalTrackMode(track) {
+      if (!track || temporarilyActivatedTrackModes.has(track)) return;
+      try {
+        temporarilyActivatedTrackModes.set(track, track.mode);
+      } catch (_) {}
+    }
+
+    function restoreTemporarilyActivatedTrackModes() {
+      for (const [track, originalMode] of temporarilyActivatedTrackModes.entries()) {
+        try {
+          track.mode = originalMode;
+        } catch (_) {}
+      }
+      temporarilyActivatedTrackModes.clear();
+    }
+
     function ensureSubtitleTracksUsable(video, requestedLang, options = {}) {
       const finalMode = options.finalMode === "showing" ? "showing" : "hidden";
       const reason = options.reason || "unknown";
@@ -156,6 +176,7 @@
       let activatedTrackCount = 0;
       for (const track of targets) {
         try {
+          rememberOriginalTrackMode(track);
           track.mode = "showing";
           activatedTrackCount += 1;
         } catch (_) {}
@@ -168,7 +189,11 @@
         const restoreHidden = (restoreReason) => {
           for (const track of targets) {
             try {
-              track.mode = "hidden";
+              const originalMode = temporarilyActivatedTrackModes.has(track)
+                ? temporarilyActivatedTrackModes.get(track)
+                : "hidden";
+              track.mode = originalMode;
+              temporarilyActivatedTrackModes.delete(track);
             } catch (_) {}
           }
 
@@ -353,6 +378,8 @@
         } catch (_) {}
       }
 
+      restoreTemporarilyActivatedTrackModes();
+
       if (false) {
         dumpTextTrackSnapshot("handoffPrimarySubtitleToNative after-restore", {
           targetTrack: getUsableTrackDebugPayload(track),
@@ -410,6 +437,8 @@
           secondaryTrack.mode = secondaryOriginalMode;
         } catch (_) {}
       }
+
+      restoreTemporarilyActivatedTrackModes();
 
       const suppress = document.getElementById("atvb-cue-suppress");
       if (suppress) suppress.remove();
@@ -1301,8 +1330,46 @@
       const primaryText = cleanCueText(primaryCue);
       const secondaryText = cleanCueText(secondaryCue);
 
-      const primaryCues = getPrimaryTrackCues();
-      const secondaryCues = getSecondaryTrackCues();
+      const primaryCueWindowBeforeSeconds = 180;
+      const primaryCueWindowAfterSeconds = 30;
+      const secondaryCueWindowBeforeSeconds = 300;
+      const secondaryCueWindowAfterSeconds = 60;
+
+      function toCueArray(cuesLike) {
+        return Array.from(cuesLike || []);
+      }
+
+      function filterCuesByTimeWindow(
+        cuesLike,
+        now,
+        beforeSeconds,
+        afterSeconds,
+      ) {
+        return toCueArray(cuesLike).filter((cue) => {
+          const startTime = Number(cue?.startTime ?? Number.NaN);
+          const endTime = Number(cue?.endTime ?? Number.NaN);
+          if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+            return false;
+          }
+          return (
+            endTime >= now - beforeSeconds &&
+            startTime <= now + afterSeconds
+          );
+        });
+      }
+
+      const primaryCues = filterCuesByTimeWindow(
+        getPrimaryTrackCues(),
+        currentTime,
+        primaryCueWindowBeforeSeconds,
+        primaryCueWindowAfterSeconds,
+      );
+      const secondaryCues = filterCuesByTimeWindow(
+        getSecondaryTrackCues(),
+        currentTime,
+        secondaryCueWindowBeforeSeconds,
+        secondaryCueWindowAfterSeconds,
+      );
 
       const previousSequence = getPreviousSubtitleBlocks();
       const previousBlocks = Array.isArray(previousSequence?.blocks)
@@ -1321,7 +1388,10 @@
       });
 
       const blocks = Array.isArray(sequence?.blocks) ? sequence.blocks : [];
-      setSubtitleBlocks(sequence);
+      setSubtitleBlocks(sequence, {
+        sourceTag: "cue-controller",
+        reason: "cue_controller_rebuild",
+      });
 
       const currentIndex = Number.isInteger(sequence?.currentIndex)
         ? sequence.currentIndex
@@ -1515,6 +1585,7 @@
     function destroy() {
       unbindPrimarySubtitleTrack();
       unbindSecondarySubtitleTrack({ restoreMode: true });
+      restoreTemporarilyActivatedTrackModes();
       secondaryTrackRecovery?.destroy?.();
       cueRenderCoordinator?.destroy?.();
     }

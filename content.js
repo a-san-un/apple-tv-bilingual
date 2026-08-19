@@ -29,7 +29,7 @@
     preferredAiProvider: "auto",
   };
 
-  const DEBUG_SECONDARY_SUBS = true;
+  const DEBUG_SECONDARY_SUBS = false; // Optional probe logs for #19 regressions. Keep false in normal operation.
   // Optional probe logs for #19 regressions. Keep false in normal operation.
   const DEBUG_PANEL_PROBE = false;
   const LOG_CATEGORIES = Object.freeze({
@@ -90,6 +90,7 @@
     popupDocClickHandler: null,
     playbackCloseClickHandler: null,
     popupResizeObserver: null,
+    toggleButtonResizeHandler: null,
     popupLastContext: null,
     messageListenerAttached: false,
     playbackControlsRafId: 0,
@@ -126,13 +127,127 @@
 // =====================================================================
 
 function appendContentDebugBufferEntry(args) {
+  function summarizeDebugValue(value, depth = 0) {
+    if (value == null) return value;
+
+    if (typeof value === "string") {
+      return value.length > 160 ? `${value.slice(0, 160)}…` : value;
+    }
+
+    if (
+      typeof value === "number" ||
+      typeof value === "boolean" ||
+      typeof value === "bigint"
+    ) {
+      return value;
+    }
+
+    if (typeof value === "function") {
+      return `[Function ${value.name || "anonymous"}]`;
+    }
+
+    if (depth >= 2) {
+      if (Array.isArray(value)) {
+        return `[Array(${value.length})]`;
+      }
+      return `[Object ${value?.constructor?.name || "Object"}]`;
+    }
+
+    if (Array.isArray(value)) {
+      return {
+        __type: "Array",
+        length: value.length,
+        items: value.slice(0, 5).map((item) => summarizeDebugValue(item, depth + 1)),
+      };
+    }
+
+    if (typeof Node !== "undefined" && value instanceof Node) {
+      return {
+        __type: "DOMNode",
+        nodeName: value.nodeName,
+        id: value.id || "",
+        className:
+          typeof value.className === "string" ? value.className.slice(0, 120) : "",
+      };
+    }
+
+    const constructorName = value?.constructor?.name || "Object";
+
+    if (constructorName === "TextTrack") {
+      return {
+        __type: "TextTrack",
+        kind: value.kind || "",
+        label: value.label || "",
+        language: value.language || "",
+        mode: value.mode || "",
+        cuesLength: getTrackCuesLength(value),
+        activeCuesLength: getTrackActiveCuesLength(value),
+      };
+    }
+
+    if (constructorName === "VTTCue" || constructorName === "TextTrackCue") {
+      return {
+        __type: constructorName,
+        id: value.id || "",
+        startTime: Number.isFinite(value.startTime) ? value.startTime : null,
+        endTime: Number.isFinite(value.endTime) ? value.endTime : null,
+        text:
+          typeof value.text === "string"
+            ? value.text.slice(0, 120)
+            : "",
+      };
+    }
+
+    const summary = {
+      __type: constructorName,
+    };
+
+    const entries = Object.entries(value).slice(0, 12);
+    for (const [key, child] of entries) {
+      if (
+        key === "cues" ||
+        key === "activeCues" ||
+        key === "track" ||
+        key === "tracks" ||
+        key === "video" ||
+        key === "element" ||
+        key === "elements" ||
+        key === "node" ||
+        key === "target" ||
+        key === "currentSubtitleBlock" ||
+        key === "panelPastBlocks" ||
+        key === "subtitleBlocks" ||
+        key === "subtitleHistory"
+      ) {
+        if (Array.isArray(child)) {
+          summary[key] = `[Array(${child.length}) omitted]`;
+        } else if (child && typeof child === "object") {
+          summary[key] = `[${child?.constructor?.name || "Object"} omitted]`;
+        } else {
+          summary[key] = child ?? null;
+        }
+        continue;
+      }
+
+      summary[key] = summarizeDebugValue(child, depth + 1);
+    }
+
+    return summary;
+  }
+
   try {
     const buffer = (window.__atvDebugLogs = window.__atvDebugLogs || []);
+    const category = args.length >= 3 ? args[0] : null;
+    const message = args.length >= 3 ? args[1] : args[0];
+    const payload = args.length >= 3 ? args[2] : args[1];
+
     const entry = {
       ts: new Date().toISOString(),
-      message: String(args[0] ?? ""),
-      payload: args[1] ?? null,
+      category: category == null ? null : String(category),
+      message: String(message ?? ""),
+      payload: summarizeDebugValue(payload),
     };
+
     buffer.push(entry);
     if (buffer.length > 400) buffer.splice(0, buffer.length - 400);
   } catch (_) {}
@@ -686,7 +801,6 @@ function forwardContentLog(...args) {
         now - state.lastPrimarySnapshotAt <= 3000;
       const hasSecondarySignal =
         secondaryActiveCues > 0 || Boolean(secondaryCueText);
-      const hasPrimarySignal = hasPrimaryLiveSignal || hasFreshPrimarySnapshot;
 
       const syncContextSummary = JSON.stringify({
         trackCount: state.video?.textTracks?.length ?? 0,
@@ -723,16 +837,26 @@ function forwardContentLog(...args) {
 
       const trackCount = state.video?.textTracks?.length ?? 0;
       const extensionEnabled = state.contentSettings?.extensionEnabled !== false;
-      const shouldAttemptPrimaryRecovery =
-        extensionEnabled && hasSecondarySignal && !hasPrimarySignal && trackCount > 1;
+      // primary / secondary の両方が現在の cue signal を失った場合に
+      // パイプライン再初期化を試みる。
+      // 従来は secondary が生きている場合しか primary を救済しなかったため、
+      // 両トラックが同時に cue を失うケースで自動復旧が一切発火しなかった。
+      // hasPrimarySignal（過去3秒以内のスナップショットも含む）ではなく
+      // hasPrimaryLiveSignal（現在の cue のみ）を使うことで、
+      // 古いスナップショットを「正常」と誤判定しないようにする。
+      const shouldAttemptTrackRecovery =
+        extensionEnabled &&
+        !hasPrimaryLiveSignal &&
+        !hasSecondarySignal &&
+        trackCount > 1;
 
       // [binder/cue: recovery - sync interval path]
-      // secondary signal はあるが primary signal が無い場合、
-      // sync interval 経由で primary recovery を試行する。
+      // primary / secondary の両方に現在時刻の cue signal が無い場合、
+      // sync interval 経由でトラック解決とリスナー再バインドを試行する。
       // extensionEnabled=false の間は recovery 自体を止める。
 
-      if (!shouldAttemptPrimaryRecovery) {
-        if (hasPrimarySignal || !extensionEnabled) {
+      if (!shouldAttemptTrackRecovery) {
+        if (hasPrimaryLiveSignal || hasSecondarySignal || !extensionEnabled) {
           state.lastPrimaryRecoveryAttemptAt = 0;
         }
         return;
@@ -747,18 +871,22 @@ function forwardContentLog(...args) {
 
       state.lastPrimaryRecoveryAttemptAt = now;
       const recoveryResult = reinitializeCoordinator?.reinitializeSubtitlePipeline?.(
-        "sync_interval_primary_recovery",
+        "sync_interval_track_recovery",
       );
       if (recoveryResult) {
-        logContent("sync interval primary recovery", {
+        logContent("sync interval track recovery", {
           trackCount,
           primaryTrackFound: recoveryResult.primaryTrackFound,
           secondaryTrackFound: recoveryResult.secondaryTrackFound,
           primaryListenerBound: recoveryResult.primaryListenerBound,
           secondaryListenerBound: recoveryResult.secondaryListenerBound,
+          primaryActiveCues,
+          secondaryActiveCues,
+          hasPrimaryLiveSignal,
+          hasSecondarySignal,
         });
 
-        if (recoveryResult.primaryTrackFound) {
+        if (recoveryResult.primaryTrackFound && recoveryResult.secondaryTrackFound) {
           state.lastPrimaryRecoveryAttemptAt = 0;
         }
       }
@@ -1761,34 +1889,97 @@ function forwardContentLog(...args) {
     })
   : null;
 
-  function setSubtitleBlocks(blocksOrSequence) {
+  function setSubtitleBlocks(blocksOrSequence, options = null) {
+    const MAX_SUBTITLE_BLOCKS = 200;
+
+    function trimSequenceBlocks(sequenceLike) {
+      const blocks = Array.isArray(sequenceLike?.blocks)
+        ? sequenceLike.blocks
+        : Array.isArray(sequenceLike)
+          ? sequenceLike
+          : [];
+
+      if (blocks.length <= MAX_SUBTITLE_BLOCKS) {
+        return {
+          blocks,
+          currentIndex: Number.isInteger(sequenceLike?.currentIndex)
+            ? sequenceLike.currentIndex
+            : -1,
+          meta: sequenceLike?.meta || null,
+        };
+      }
+
+      const trimmedBlocks = blocks.slice(-MAX_SUBTITLE_BLOCKS);
+      const rawCurrentIndex = Number.isInteger(sequenceLike?.currentIndex)
+        ? sequenceLike.currentIndex
+        : -1;
+      const droppedCount = blocks.length - trimmedBlocks.length;
+      const adjustedCurrentIndex =
+        rawCurrentIndex >= droppedCount
+          ? rawCurrentIndex - droppedCount
+          : -1;
+
+      const trimmedSequence = {
+        blocks: trimmedBlocks,
+        currentIndex: adjustedCurrentIndex,
+        meta: {
+          ...(sequenceLike?.meta || null),
+          trimmedBlockCount: droppedCount,
+          maxSubtitleBlocks: MAX_SUBTITLE_BLOCKS,
+        },
+      };
+
+      return trimmedSequence;
+    }
+
+    const beforeCount = Array.isArray(state.subtitleBlocks?.blocks)
+      ? state.subtitleBlocks.blocks.length
+      : Array.isArray(state.subtitleBlocks)
+        ? state.subtitleBlocks.length
+        : 0;
+
+    const incomingCount = Array.isArray(blocksOrSequence?.blocks)
+      ? blocksOrSequence.blocks.length
+      : Array.isArray(blocksOrSequence)
+        ? blocksOrSequence.length
+        : 0;
+
+    let nextSequence;
+
     if (Array.isArray(blocksOrSequence)) {
-      state.subtitleBlocks = {
+      nextSequence = trimSequenceBlocks({
         blocks: blocksOrSequence,
         currentIndex: -1,
         meta: null,
+      });
+    } else if (blocksOrSequence && typeof blocksOrSequence === "object") {
+      nextSequence = trimSequenceBlocks(blocksOrSequence);
+    } else {
+      nextSequence = {
+        blocks: [],
+        currentIndex: -1,
+        meta: null,
       };
-      return;
     }
 
-    if (blocksOrSequence && typeof blocksOrSequence === "object") {
-      state.subtitleBlocks = {
-        blocks: Array.isArray(blocksOrSequence.blocks)
-          ? blocksOrSequence.blocks
-          : [],
-        currentIndex: Number.isInteger(blocksOrSequence.currentIndex)
-          ? blocksOrSequence.currentIndex
-          : -1,
-        meta: blocksOrSequence.meta || null,
-      };
-      return;
-    }
+    state.subtitleBlocks = nextSequence;
 
-    state.subtitleBlocks = {
-      blocks: [],
-      currentIndex: -1,
-      meta: null,
-    };
+    const afterCount = Array.isArray(nextSequence?.blocks)
+      ? nextSequence.blocks.length
+      : 0;
+    const sourceTag = options?.sourceTag || "unknown";
+    const reason = options?.reason || "";
+
+    if (afterCount > beforeCount || incomingCount !== afterCount) {
+      logContent("subtitle blocks set", {
+        sourceTag,
+        reason,
+        beforeCount,
+        incomingCount,
+        afterCount,
+        trimmed: incomingCount > afterCount,
+      });
+    }
   }
 
   function getSubtitleBlockSequence() {
@@ -1868,7 +2059,7 @@ function forwardContentLog(...args) {
   const createTextTrackDebug =
     root.textTrackDebug?.createTextTrackDebug || null;
   const createCueSequenceBuilder =
-    root.cueSequenceBuilder?.createCueSequenceBuilder || null;
+    root.createCueSequenceBuilder || null;
   const createCueRenderCoordinator =
     root.cueRenderCoordinator?.createCueRenderCoordinator || null;
   const createSecondaryTrackRecovery =
@@ -2792,26 +2983,58 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
     // resolver 前の textTracks 生状態をログする
     try {
       const rawTracks = Array.from(state.video?.textTracks || []);
-      logContentSubtitle("textTracks snapshot before track selection", {
-        reason: "startBilingual",
-        requestedPrimaryLang: state.contentSettings.primaryLang || "",
-        requestedSecondaryLang: state.contentSettings.secondaryLang || "",
-        trackCount: rawTracks.length,
-        tracks: rawTracks.map((t, i) => ({
+
+      const normalizedTracks = rawTracks.map((t, i) => {
+        const cuesLength = (() => {
+          try {
+            return t?.cues ? t.cues.length : 0;
+          } catch (_) {
+            return 0;
+          }
+        })();
+
+        const activeCuesLength = (() => {
+          try {
+            return t?.activeCues ? t.activeCues.length : 0;
+          } catch (_) {
+            return 0;
+          }
+        })();
+
+        return {
           index: i,
           language: t?.language || "",
           label: t?.label || "",
           kind: t?.kind || "",
           mode: t?.mode || "",
-          cuesLength: (() => {
-            try {
-              return t?.cues ? t.cues.length : 0;
-            } catch (_) {
-              return 0;
-            }
-          })(),
-        })),
+          cuesLength,
+          activeCuesLength,
+        };
       });
+
+      const groupMap = new Map();
+      for (const track of normalizedTracks) {
+        const key = [
+          track.language,
+          track.label,
+          track.kind,
+          track.mode,
+          track.cuesLength > 0 ? "hasCues" : "noCues",
+        ].join(" | ");
+
+        const prev = groupMap.get(key) || {
+          language: track.language,
+          label: track.label,
+          kind: track.kind,
+          mode: track.mode,
+          cueState: track.cuesLength > 0 ? "hasCues" : "noCues",
+          count: 0,
+        };
+
+        prev.count += 1;
+        groupMap.set(key, prev);
+      }
+
     } catch (error) {
       logContentError("textTracks snapshot logging failed", {
         reason: "startBilingual",

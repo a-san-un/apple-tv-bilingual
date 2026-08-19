@@ -448,11 +448,20 @@
       }
 
       // パネル表示中だけ resize 時の位置を再計算する
+      // ★ M-1 fix: 無名関数のままだと destroy 時に removeEventListener できないため、
+      // state に参照を保持して対称に解除できるようにする
+      if (state.toggleButtonResizeHandler) {
+        window.removeEventListener("resize", state.toggleButtonResizeHandler);
+        state.toggleButtonResizeHandler = null;
+      }
+
+      state.toggleButtonResizeHandler = () => {
+        if (state.panelOpen) updateToggleButton(true);
+      };
+
       window.addEventListener(
         "resize",
-        () => {
-          if (state.panelOpen) updateToggleButton(true);
-        },
+        state.toggleButtonResizeHandler,
         { passive: true }
       );
     }

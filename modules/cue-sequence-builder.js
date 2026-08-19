@@ -70,15 +70,85 @@
       const primaryText = cleanCueText(primaryCue);
       const secondaryText = cleanCueText(secondaryCue);
 
-      const primaryCues = getPrimaryTrackCues();
-      const secondaryCues = getSecondaryTrackCues();
+      const primaryCueWindowBeforeSeconds = 180;
+      const primaryCueWindowAfterSeconds = 30;
+      const secondaryCueWindowBeforeSeconds = 300;
+      const secondaryCueWindowAfterSeconds = 60;
+
+      function toCueArray(cuesLike) {
+        return Array.from(cuesLike || []);
+      }
+
+      function filterCuesByTimeWindow(
+        cuesLike,
+        now,
+        beforeSeconds,
+        afterSeconds,
+      ) {
+        return toCueArray(cuesLike).filter((cue) => {
+          const startTime = Number(cue?.startTime ?? Number.NaN);
+          const endTime = Number(cue?.endTime ?? Number.NaN);
+          if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+            return false;
+          }
+          return (
+            endTime >= now - beforeSeconds &&
+            startTime <= now + afterSeconds
+          );
+        });
+      }
+
+      const rawPrimaryCues = getPrimaryTrackCues();
+      const rawSecondaryCues = getSecondaryTrackCues();
+
+      const primaryCues = filterCuesByTimeWindow(
+        rawPrimaryCues,
+        currentTime,
+        primaryCueWindowBeforeSeconds,
+        primaryCueWindowAfterSeconds,
+      );
+
+      const secondaryCueWindowFallbackBeforeSeconds = 900;
+      const secondaryCueWindowFallbackAfterSeconds = 180;
+      const secondaryCueFallbackMaxCount = 150;
+
+      const secondaryCuesInPrimaryWindow = filterCuesByTimeWindow(
+        rawSecondaryCues,
+        currentTime,
+        secondaryCueWindowBeforeSeconds,
+        secondaryCueWindowAfterSeconds,
+      );
+
+      const secondaryHasAnyCues = toCueArray(rawSecondaryCues).length > 0;
+
+      const shouldUseSecondaryFallbackWindow =
+        secondaryHasAnyCues &&
+        secondaryCuesInPrimaryWindow.length === 0 &&
+        !secondaryCue;
+
+      const secondaryCues = shouldUseSecondaryFallbackWindow
+        ? filterCuesByTimeWindow(
+            rawSecondaryCues,
+            currentTime,
+            secondaryCueWindowFallbackBeforeSeconds,
+            secondaryCueWindowFallbackAfterSeconds,
+          ).slice(-secondaryCueFallbackMaxCount)
+        : secondaryCuesInPrimaryWindow;
 
       const previousSequence = getPreviousSubtitleBlocks();
-      const previousBlocks = Array.isArray(previousSequence?.blocks)
-        ? previousSequence.blocks
-        : Array.isArray(previousSequence)
-          ? previousSequence
-          : [];
+
+      const shouldDropPreviousBlocks =
+        rebuildReason === "nearbyRebuild" ||
+        rebuildReason === "sync_interval_large_seek_resync" ||
+        rebuildReason === "content_key_changed";
+
+      const previousBlocks = shouldDropPreviousBlocks
+        ? []
+        : Array.isArray(previousSequence?.blocks)
+          ? previousSequence.blocks
+          : Array.isArray(previousSequence)
+            ? previousSequence
+            : [];
 
       const sequence = buildSubtitleBlockSequence({
         primaryCues,
@@ -89,8 +159,12 @@
         rebuildReason,
       });
 
+      setSubtitleBlocks(sequence, {
+        sourceTag: "cue-sequence-builder",
+        reason: rebuildReason,
+      });
+
       const blocks = Array.isArray(sequence?.blocks) ? sequence.blocks : [];
-      setSubtitleBlocks(sequence);
 
       const currentIndex = Number.isInteger(sequence?.currentIndex)
         ? sequence.currentIndex

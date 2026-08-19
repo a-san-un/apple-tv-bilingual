@@ -212,9 +212,16 @@
       }
     }
 
-    // current block は常時追従させず、
-    // 下端近くまで来たときだけ current 行を上側へ送り返す。
-    // 送り先は上端ぴったりではなく、1〜2 行ぶんの余白を残す。
+    // 直近でスクロールを実行した current block の key を覚えておく。
+    // 同じ current に対して renderPanel() が連続で呼ばれても、
+    // 毎回スクロールをやり直して動きがガクつくのを防ぐ。
+    let lastScrolledCurrentKey = null;
+
+    // current block は「今再生しているブロックにマークが付いた状態」を維持する。
+    // 上下に約1ブロック分の余白を確保し、
+    // 余白を割り込んだときだけ current 行を余白ぶん離れた位置へ戻す。
+    // (下端の余白を割り込んだ場合、結果的に current 行は
+    //  スクロールによって画面下から画面上の余白位置まで移動して見える)
     function scrollCurrentPanelBlockIntoView() {
       const root = state.panelShadowRoot;
       if (!root) return;
@@ -230,29 +237,50 @@
         currentRect.top - scrollerRect.top + scroller.scrollTop;
       const currentBottom = currentTop + currentRect.height;
 
-      // 上側に残したい余白。1〜2行ぶんを少し広めに取る。
-      const topPadding = Math.max(currentRect.height * 1.5, 56);
+      // 上下の余白は「1ブロック分」に固定する。
+      // ブロックごとに高さが変わっても、余白の考え方をぶらさない。
+      const margin = currentRect.height || 56;
 
-      // 下端判定は「最後の1〜2ブロック付近」に入ったかどうかの目安。
-      const bottomThreshold =
-        scroller.scrollTop + scroller.clientHeight - currentRect.height * 2;
+      const viewTop = scroller.scrollTop + margin;
+      const viewBottom = scroller.scrollTop + scroller.clientHeight - margin;
 
-      // current が上へ外れていた場合だけ最小限戻す。
-      if (currentTop < scroller.scrollTop + topPadding) {
+      const maxScrollTop = Math.max(
+        0,
+        scroller.scrollHeight - scroller.clientHeight,
+      );
+
+      // current block を一意に識別する key（同一判定用）。
+      const currentKey =
+        current.getAttribute("data-seek-time") ||
+        current.getAttribute("data-time") ||
+        "";
+
+      const isSameAsLastScrolled =
+        Boolean(currentKey) && currentKey === lastScrolledCurrentKey;
+
+      // 上余白を割り込んでいる場合（巻き戻し・シーク直後など）。
+      if (currentTop < viewTop) {
+        const target = Math.max(
+          0,
+          Math.min(maxScrollTop, currentTop - margin),
+        );
         scroller.scrollTo({
-          top: Math.max(0, currentTop - topPadding),
-          behavior: "smooth",
+          top: target,
+          behavior: isSameAsLastScrolled ? "auto" : "smooth",
         });
+        lastScrolledCurrentKey = currentKey;
         return;
       }
 
-      // current が下端近くに来たら、
-      // current 行を上から 1〜2 行ぶん空けた位置へ送る。
-      if (currentBottom > bottomThreshold) {
-        scroller.scrollTo({
-          top: Math.max(0, currentTop - topPadding),
-          behavior: "smooth",
-        });
+      // 下余白まで到達したら、current 行を上余白ぶん離れた位置へ戻す。
+      // 同じ current に対しては再発火させない。
+      if (currentBottom > viewBottom && !isSameAsLastScrolled) {
+        const target = Math.max(
+          0,
+          Math.min(maxScrollTop, currentTop - margin),
+        );
+        scroller.scrollTo({ top: target, behavior: "smooth" });
+        lastScrolledCurrentKey = currentKey;
       }
     }
 
@@ -464,11 +492,118 @@
         subtitleView,
       });
 
-      list.innerHTML = panelBlocks
-        .map((block) => buildPanelBlockHtml(block))
-        .join("");
+      // ブロック構成（件数 + 各ブロックの識別子）の signature を作る。
+      // 前回描画と同じ構成であれば、DOM を丸ごと作り直さない。
+      const blockSignature = panelBlocks
+        .map((block) => `${block.key || block.startTime || ""}`)
+        .join("|");
 
-      bindPanelBlockInteractions(list);
+      const shouldRebuildList = state.lastPanelBlockSignature !== blockSignature;
+
+      // ブロックの追加/削除がリストのどこで起きても、
+      // ユーザーが見ている位置が視覚的にズレないようにする。
+      // scrollHeight の差分ではなく、「現在ビューポート上端に
+      // 見えている実在のブロック（アンカー）」を基準に、
+      // 再構築後も同じ見た目の位置へ scrollTop を復元する。
+      const scrollerEl =
+        state.panelShadowRoot?.getElementById("panel-scroll") || null;
+
+      let anchorKey = null;
+      let anchorViewportOffset = 0;
+
+      if (scrollerEl) {
+        const scrollerRect = scrollerEl.getBoundingClientRect();
+        const candidates = Array.from(
+          list.querySelectorAll(".subtitle-block"),
+        );
+        // ビューポート上端に最初にかかっている要素をアンカーにする。
+        const anchorEl = candidates.find((el) => {
+          const rect = el.getBoundingClientRect();
+          return rect.bottom > scrollerRect.top;
+        });
+
+        if (anchorEl) {
+          const anchorRect = anchorEl.getBoundingClientRect();
+          anchorKey =
+            anchorEl.getAttribute("data-seek-time") ||
+            anchorEl.getAttribute("data-time");
+          // ビューポート上端からアンカーまでの距離（見た目上の位置）。
+          anchorViewportOffset = anchorRect.top - scrollerRect.top;
+        }
+      }
+
+      if (shouldRebuildList) {
+        list.innerHTML = panelBlocks
+          .map((block) => buildPanelBlockHtml(block))
+          .join("");
+
+        bindPanelBlockInteractions(list);
+        state.lastPanelBlockSignature = blockSignature;
+
+        if (scrollerEl && anchorKey !== null) {
+          const newAnchorEl = list.querySelector(
+            `[data-seek-time="${anchorKey}"]`,
+          );
+          if (newAnchorEl) {
+            // ★ offsetTop は使わない。
+            // #panel はShadow DOM内にあり、#panel-scroll / .subtitle-block に
+            // position指定が無いため、offsetParent の探索が Shadow DOM の
+            // 境界を越えてページ側まで遡ってしまい、無関係な絶対座標が
+            // 返ってくることがある。
+            // getBoundingClientRect() はビューポート基準の絶対座標であり、
+            // offsetParent の有無や Shadow DOM 境界に影響されないため、
+            // #panel-scroll という「実際にスクロールする要素」の中での
+            // 相対位置を確実に再現できる。
+            const scrollerRectNow = scrollerEl.getBoundingClientRect();
+            const newAnchorRectNow = newAnchorEl.getBoundingClientRect();
+
+            // 再構築直後、現状の scrollTop のままでアンカーが
+            // ビューポート上端からどれだけ離れて見えているか。
+            const currentViewportOffset =
+              newAnchorRectNow.top - scrollerRectNow.top;
+
+            // 「見たかった位置(anchorViewportOffset)」との差分だけ
+            // scrollTop を動かす。
+            const delta = currentViewportOffset - anchorViewportOffset;
+
+            const maxScrollTop = Math.max(
+              0,
+              scrollerEl.scrollHeight - scrollerEl.clientHeight,
+            );
+            scrollerEl.scrollTop = Math.max(
+              0,
+              Math.min(maxScrollTop, scrollerEl.scrollTop + delta),
+            );
+          }
+        }
+      } else {
+        // 構成が同じ場合は current の付け替えだけ行い、
+        // スクロールアニメーションを中断させないようにする。
+        const existingCurrent = list.querySelector("#current-block");
+        if (existingCurrent && existingCurrent.id === "current-block") {
+          existingCurrent.removeAttribute("id");
+          existingCurrent.setAttribute("data-sequential-current", "false");
+          existingCurrent.setAttribute("data-panel-emphasized", "false");
+          const mark = existingCurrent.querySelector(".subtitle-mark");
+          if (mark) mark.innerHTML = "";
+        }
+
+        const newCurrentEl = currentBlock
+          ? list.querySelector(
+              `[data-seek-time="${currentBlock.startTime ?? ""}"]`,
+            )
+          : null;
+        if (newCurrentEl) {
+          newCurrentEl.id = "current-block";
+          newCurrentEl.setAttribute("data-sequential-current", "true");
+          newCurrentEl.setAttribute("data-panel-emphasized", "true");
+          const mark = newCurrentEl.querySelector(".subtitle-mark");
+          if (mark) {
+            mark.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" /><polygon class="play-core" points="10,8 17,12 10,16" /></svg>`;
+          }
+        }
+      }
+
       scrollCurrentPanelBlockIntoView();
     }
 
