@@ -17,7 +17,7 @@
     DEBUG_SECONDARY_SUBS,
     DEBUG_MEMORY_PROBE,
     getSecondaryTrackDebugPayload,
-    resolveSecondarySubtitleTrack,
+    selectSecondarySubtitleTrack,
     getCurrentCueText,
     getTrackCuesLength,
     getTrackActiveCuesLength,
@@ -57,8 +57,6 @@
     let primaryTrackBound = null;
     let primaryTrackOriginalMode = null;
 
-    let secondaryTrackCleanup = null;
-    let secondaryTrackCleanupMeta = null;
     let secondaryTrackBound = null;
     let secondaryTrackOriginalMode = null;
 
@@ -341,69 +339,6 @@
       };
     }
 
-    function getTrackReadabilitySnapshot(
-      track,
-      currentTime = getCurrentTime(),
-    ) {
-      const currentCue = getCurrentCue(track, currentTime);
-      const currentCueText = cleanCueText(currentCue);
-
-      return {
-        cuesLength: getTrackCuesLength(track),
-        activeCuesLength: getTrackActiveCuesLength(track),
-        hasCueOverlapAtCurrentTime: Boolean(currentCue),
-        currentCueTextLength: currentCueText.length,
-      };
-    }
-
-    function scoreTrackForCurrentTime(track, currentTime = getCurrentTime()) {
-      const snapshot = getTrackReadabilitySnapshot(track, currentTime);
-
-      let score = 0;
-      if (snapshot.hasCueOverlapAtCurrentTime) score += 1000;
-      if (snapshot.currentCueTextLength > 0) score += 500;
-      if (snapshot.activeCuesLength > 0) score += 100;
-      if (snapshot.cuesLength > 0) score += 10;
-
-      return {
-        score,
-        snapshot,
-      };
-    }
-
-    function pickMostReadableTrack(
-      tracks,
-      currentTime = getCurrentTime(),
-      preferredTrack = null,
-    ) {
-      let bestTrack = null;
-      let bestScore = -1;
-      let bestSnapshot = null;
-
-      for (const track of tracks || []) {
-        if (!track) continue;
-
-        const { score, snapshot } = scoreTrackForCurrentTime(
-          track,
-          currentTime,
-        );
-        const preferredBonus =
-          preferredTrack && track === preferredTrack ? 1 : 0;
-        const totalScore = score + preferredBonus;
-
-        if (totalScore > bestScore) {
-          bestTrack = track;
-          bestScore = totalScore;
-          bestSnapshot = snapshot;
-        }
-      }
-
-      return {
-        track: bestTrack,
-        snapshot: bestSnapshot,
-        score: bestScore,
-      };
-    }
 
     function evaluateSecondaryRecovery({
       now,
@@ -488,14 +423,6 @@
       const track = primaryTrackBound;
       const originalMode = primaryTrackOriginalMode;
 
-      if (false) {
-        dumpTextTrackSnapshot("handoffPrimarySubtitleToNative before", {
-          targetTrack: getUsableTrackDebugPayload(track),
-          originalMode,
-          hasPrimaryTrackCleanup: Boolean(primaryTrackCleanup),
-        });
-      }
-
       if (primaryTrackCleanup) {
         primaryTrackCleanup();
         primaryTrackCleanup = null;
@@ -517,21 +444,8 @@
 
       restoreTemporarilyActivatedTrackModes();
 
-      if (false) {
-        dumpTextTrackSnapshot("handoffPrimarySubtitleToNative after-restore", {
-          targetTrack: getUsableTrackDebugPayload(track),
-          originalMode,
-        });
-      }
-
       primaryTrackBound = null;
       primaryTrackOriginalMode = null;
-
-      if (false) {
-        dumpTextTrackSnapshot("handoffPrimarySubtitleToNative after-clear", {
-          targetTrack: getUsableTrackDebugPayload(track),
-        });
-      }
 
       return track || null;
     }
@@ -544,13 +458,17 @@
       const primaryOriginalMode = primaryTrackOriginalMode;
       const secondaryOriginalMode = secondaryTrackOriginalMode;
 
+      const binder = window.ATVB?.cueTrackBinder?.instance || null;
+      const secondaryMonitorState =
+        binder?.getSecondaryMonitorState?.() || null;
+
       dumpTextTrackSnapshot("restoreNativeSubtitles before", {
         primaryTrack: getUsableTrackDebugPayload(primaryTrack),
         secondaryTrack: getUsableTrackDebugPayload(secondaryTrack),
         primaryOriginalMode,
         secondaryOriginalMode,
         hasPrimaryTrackCleanup: Boolean(primaryTrackCleanup),
-        hasSecondaryTrackCleanup: Boolean(secondaryTrackCleanup),
+        hasSecondaryTrackCleanup: Boolean(secondaryMonitorState?.active),
       });
 
       if (primaryTrackCleanup) {
@@ -558,9 +476,12 @@
         primaryTrackCleanup = null;
       }
 
-      if (secondaryTrackCleanup) {
-        secondaryTrackCleanup();
-        secondaryTrackCleanup = null;
+      // Step 4: secondary の解除も binder の停止 API のみを使う。
+      // binder / secondaryMonitorState は関数冒頭で取得済みのものを再利用する。
+      if (secondaryMonitorState?.active) {
+        try {
+          binder.stopSecondaryMonitor();
+        } catch (_) {}
       }
 
       if (primaryTrack && primaryOriginalMode != null) {
@@ -592,27 +513,29 @@
     }
 
     // secondary track の listener を解除し、必要に応じて拡張が変更する前の mode に戻す。
+    // Step 4: 解除の実体は binder.stopSecondaryMonitor() のみを使う。
     function unbindSecondarySubtitleTrack(options = {}) {
       const restoreMode = options.restoreMode !== false;
       const track = secondaryTrackBound;
-      const cleanupMeta = secondaryTrackCleanupMeta;
+      const binder = window.ATVB?.cueTrackBinder?.instance || null;
+      const monitorState = binder?.getSecondaryMonitorState?.() || null;
 
-      if (secondaryTrackCleanup) {
+      if (monitorState?.active) {
         logMemoryProbe(
           "track-listener-cleaned",
-          buildExistingBindingMeta(cleanupMeta, {
+          buildExistingBindingMeta(monitorState.meta, {
             hadCleanup: true,
           }),
         );
 
-        secondaryTrackCleanup();
-        secondaryTrackCleanup = null;
-        secondaryTrackCleanupMeta = null;
+        try {
+          binder?.stopSecondaryMonitor?.();
+        } catch (_) {}
       }
 
       logMemoryProbe(
         "secondary-track-unbound",
-        buildExistingBindingMeta(cleanupMeta, {
+        buildExistingBindingMeta(monitorState?.meta, {
           hadTrack: Boolean(track),
           restoreMode,
           originalMode: secondaryTrackOriginalMode,
@@ -712,60 +635,6 @@
       return true;
     }
 
-    // secondary bind 時の mode を、実行文脈と readable snapshot から決定する。
-    // Round 10:
-    // - 既定は hidden
-    // - same track / unreadable snapshot 成立時だけ showing へ readability-promote する
-    // - DEBUG 時は showing を強制できる
-    function resolveSecondaryTrackModePolicy({
-      track,
-      reason,
-      debugForceShowing = false,
-      allowShowing = true,
-      unreadableSnapshot = null,
-    }) {
-      if (!track) {
-        return {
-          requestedMode: "hidden",
-          policy: "no-track",
-          rationale: "track_missing",
-          reason: reason || "unknown",
-        };
-      }
-
-      if (debugForceShowing) {
-        return {
-          requestedMode: "showing",
-          policy: "debug-force-showing",
-          rationale: "debug_override",
-          reason: reason || "unknown",
-        };
-      }
-
-      const unreadable =
-        unreadableSnapshot &&
-        unreadableSnapshot.cuesLength > 0 &&
-        unreadableSnapshot.activeCuesLength === 0 &&
-        !unreadableSnapshot.hasCueOverlapAtCurrentTime &&
-        unreadableSnapshot.currentCueTextLength === 0;
-
-      if (allowShowing && unreadable) {
-        return {
-          requestedMode: "showing",
-          policy: "readability-promote",
-          rationale: "same_track_unreadable_in_hidden_mode",
-          reason: reason || "unknown",
-        };
-      }
-
-      return {
-        requestedMode: "hidden",
-        policy: "default-hidden",
-        rationale: "no_readability_issue_detected",
-        reason: reason || "unknown",
-      };
-    }
-
     // secondary cue change を受けて secondary 表示と primary 側更新を進める。
     function onCueChange(track) {
       if (track && false && DEBUG_SECONDARY_SUBS) {
@@ -802,9 +671,13 @@
     }
 
     // secondary track を bind して cuechange 監視を始める。
-    // mode の決定は呼び出し側で行い、ここでは mode 適用 + listener attach / cleanup のみを担う。
+    // mode の決定は呼び出し側で行い、listener の開始・差し替え・停止は
+    // cue-track-binder.js 側の secondary monitor API へ委譲する。
     function bindSecondarySubtitleTrack(track, modeDecision) {
       if (!track) return;
+
+      const binder = window.ATVB?.cueTrackBinder?.instance || null;
+      const monitorState = binder?.getSecondaryMonitorState?.() || null;
 
       const previousBoundTrack = secondaryTrackBound;
       const requestedMode = modeDecision?.requestedMode || "hidden";
@@ -814,29 +687,13 @@
         String(currentTrackMode || "").toLowerCase() ===
         String(requestedMode || "").toLowerCase();
 
-      if (sameTrackRef && sameMode && secondaryTrackCleanup) {
+      // Step 4:
+      // skip 判定は controller 側の cleanup 保持ではなく、
+      // binder が実際に監視中かどうか（monitor state）で行う。
+      if (sameTrackRef && sameMode && monitorState?.active) {
         return;
       }
 
-      if (false) {
-        logContent("secondary-sync state-transition", {
-          phase: "bind-apply",
-          requestedLang: getRequestedSecondaryLanguage(),
-          previousBoundTrackLanguage: previousBoundTrack?.language || "",
-          previousBoundTrackMode: previousBoundTrack?.mode || "",
-          selectedTrackLanguage: track?.language || "",
-          selectedTrackKind: track?.kind || "",
-          selectedTrackModeBefore: currentTrackMode,
-          selectedTrackCuesLength: getTrackCuesLength(track),
-          requestedMode,
-          decisionPolicy: modeDecision?.policy || "",
-          decisionReason: modeDecision?.reason || "",
-          sameTrackRef,
-          sameMode,
-          willSkipBind: false,
-          willApplyMode: true,
-        });
-      }
 
       unbindSecondarySubtitleTrack();
 
@@ -849,26 +706,6 @@
       // primary の native 字幕状態は primaryTrackOriginalMode 側で復元する。
       secondaryTrackOriginalMode =
         previousMode === "showing" ? "hidden" : previousMode;
-
-      const getReadableSnapshot = () => {
-        const currentTime = getCurrentTime();
-        const cuesLength = getTrackCuesLength(track);
-        const activeCuesLength = getTrackActiveCuesLength(track);
-        const overlapCue = getCurrentCue(track, currentTime);
-        const currentCueText = getCurrentCueText(track, currentTime);
-
-        return {
-          currentTime,
-          cuesLength,
-          activeCuesLength,
-          hasCueOverlapAtCurrentTime: Boolean(overlapCue),
-          currentCueTextLength: currentCueText?.length ?? 0,
-          readableNow:
-            activeCuesLength > 0 ||
-            Boolean(overlapCue) ||
-            (currentCueText?.length ?? 0) > 0,
-        };
-      };
 
       const applyTrackMode = (nextMode, reason = "direct-apply") => {
         try {
@@ -886,49 +723,9 @@
             message: String(error?.message || error || ""),
           });
         }
-
-        if (false) {
-          logContent("secondary-sync mode-applied", {
-            trackLanguage: track?.language || "",
-            trackKind: track?.kind || "",
-            requestedMode: nextMode,
-            appliedMode: track?.mode || "",
-            policy: modeDecision?.policy || "",
-            rationale: modeDecision?.rationale || "",
-            decisionReason: modeDecision?.reason || "",
-            applyReason: reason,
-            cuesLength: getTrackCuesLength(track),
-            activeCuesLength: getTrackActiveCuesLength(track),
-            sameAsPreviousBound: previousBoundTrack === track,
-            currentTime: getCurrentTime(),
-          });
-        }
       };
 
-      const maybePromoteTrackReadability = () => {
-        if (requestedMode !== "hidden") return;
-
-        const initialSnapshot = getReadableSnapshot();
-        const shouldPromote =
-          initialSnapshot.cuesLength > 0 && !initialSnapshot.readableNow;
-
-        if (DEBUG_SECONDARY_SUBS) {
-          logContent("secondary-sync post-bind readability-check", {
-            trackLanguage: track?.language || "",
-            trackKind: track?.kind || "",
-            requestedMode,
-            policy: modeDecision?.policy || "",
-            rationale: modeDecision?.rationale || "",
-            decisionReason: modeDecision?.reason || "",
-            ...initialSnapshot,
-            shouldPromote,
-            promotionSkipped: true,
-            skipReason: "secondary-track-hidden-lock",
-          });
-        }
-
-        return;
-      };
+      const maybePromoteTrackReadability = () => {};
 
       applyTrackMode(requestedMode, "bind-initial");
 
@@ -1013,17 +810,16 @@
         onCueChange(track);
       };
 
-      const binding = createTrackListenerBinding?.({
+      // Step 4:
+      // binder は既に宣言済み（guard 判定で取得したものを再利用する）。
+      const monitorResult = binder?.replaceSecondaryMonitor?.(
         track,
-        onCueChange: handleSecondaryCueChange,
-        video: null,
-        passTrackToHandler: false,
-        usePlaybackSignals: false,
-      });
+        handleSecondaryCueChange,
+        { video: null },
+      );
 
-      if (!binding) {
+      if (!monitorResult || monitorResult.reason === "binding-failed") {
         secondaryTrackBound = null;
-        secondaryTrackCleanup = null;
         return;
       }
 
@@ -1040,13 +836,10 @@
         }),
       );
 
+      // Step 4:
+      // cleanup の実体は controller 側で持たない。
+      // 「本当に監視中か」は binder.getSecondaryMonitorState() が唯一の正とする。
       secondaryTrackBound = track;
-      secondaryTrackCleanupMeta = bindingMeta;
-      secondaryTrackCleanup = () => {
-        try {
-          binding.cleanup();
-        } catch (_) {}
-      };
 
       logMemoryProbe(
         "secondary-track-bound",
@@ -1058,15 +851,10 @@
       );
 
       maybePromoteTrackReadability();
-
-      // hidden track でも現在 cue は読み出せる。
-      // bind 後に一度だけ描画して、次の cuechange を待つ間の空表示を防ぐ。
-      binding.notifyInitial();
-
     }
 
     // secondary track の再解決と再同期を行い、必要なら nearby rebuild まで進める。
-    function syncSecondarySubtitleTrack(
+    function syncSecondaryTrackOrchestration(
       video,
       requestedLang,
       renderSecondarySubtitleOverride,
@@ -1090,105 +878,26 @@
         reason: "secondary-sync",
       });
 
-      const currentTime = getCurrentTime();
-      const resolvedTrack = resolveSecondarySubtitleTrack(video, requestedLang);
-
-      const secondaryCandidates = Array.from(video?.textTracks || []).filter(
-        (candidateTrack) => {
-          if (!candidateTrack) return false;
-
-          const kind = String(candidateTrack.kind || "").toLowerCase();
-          if (kind !== "subtitles" && kind !== "captions") return false;
-          if (isForcedLikeTrack?.(candidateTrack)) return false;
-
-          return matchesRequestedLanguage?.(candidateTrack, requestedLang);
-        },
+      const selection = selectSecondarySubtitleTrack(
+        video,
+        requestedLang,
+        previousBoundTrack,
       );
 
-      const picked = pickMostReadableTrack(
-        secondaryCandidates,
-        currentTime,
-        resolvedTrack || previousBoundTrack || null,
+      const currentTime = selection.currentTime;
+      const track = selection.track;
+      const sameTrackRef = selection.sameTrackRef;
+      const requestedLanguageChanged = Boolean(
+        selection.requestedLanguageChanged,
       );
-
-      const track = picked.track || resolvedTrack || null;
-      const sameTrackRef = Boolean(track && previousBoundTrack === track);
-
-      // selection と bind のズレを診断するための差分観測。
-      // rebind 条件には影響させず、ログのみに使う。
-      const selectedTrackLanguage = track?.language || "";
-      const boundTrackLanguageBeforeSync = previousBoundTrack?.language || "";
-      const selectedTrackId = track?.id || "";
-      const boundTrackIdBeforeSync = previousBoundTrack?.id || "";
-
-      if (false) {
-        logContent("secondary-sync track-diff", {
-          requestedLang: requestedLang || "",
-          selectedTrackLanguage,
-          boundTrackLanguageBeforeSync,
-          selectedTrackId,
-          boundTrackIdBeforeSync,
-          sameTrackRef,
-          sameLanguageButDifferentTrackRef:
-            Boolean(selectedTrackLanguage) &&
-            Boolean(boundTrackLanguageBeforeSync) &&
-            selectedTrackLanguage === boundTrackLanguageBeforeSync &&
-            !sameTrackRef,
-          differentLanguage:
-            Boolean(selectedTrackLanguage) &&
-            Boolean(boundTrackLanguageBeforeSync) &&
-            selectedTrackLanguage !== boundTrackLanguageBeforeSync,
-        });
-      }
-      const resolvedTrackSnapshot = getTrackReadabilitySnapshot(
-        track,
-        currentTime,
-      );
-      const resolvedTrackActiveCuesLength =
-        resolvedTrackSnapshot.activeCuesLength;
-      const resolvedTrackCuesLength = resolvedTrackSnapshot.cuesLength;
-      const resolvedTrackCurrentCue = getCurrentCue(track, currentTime);
-      const resolvedTrackCurrentCueText = cleanCueText(resolvedTrackCurrentCue);
-
-      if (false) {
-        logContent("secondary-sync resolver-selected", {
-          reason: "syncSecondarySubtitleTrack",
-          requestedLang: requestedLang || "",
-          forceRebind,
-          suppressRender,
-          currentTime,
-          boundTrackExistsBefore: Boolean(previousBoundTrack),
-          sameTrackRef,
-          previousBoundTrackLanguage: previousBoundTrack?.language || "",
-          previousBoundTrackMode: previousBoundTrack?.mode || "",
-          resolvedTrackExists: Boolean(resolvedTrack),
-          selectedTrackExists: Boolean(track),
-          pickedTrackScore: picked?.score ?? -1,
-          ...getSecondaryTrackObservation(resolvedTrack, "resolvedTrack"),
-          ...getSecondaryTrackObservation(track, "selectedTrack"),
-        });
-      }
-
-      if (false) {
-        logContent("secondary sync raw", {
-          requestedLang: requestedLang || "",
-          suppressRender,
-          forceRebind,
-          boundTrackExistsBefore: Boolean(previousBoundTrack),
-          resolvedTrackExists: Boolean(track),
-          sameTrackRef,
-          boundTrackLanguageBefore: previousBoundTrack?.language || "",
-          boundTrackModeBefore: previousBoundTrack?.mode || "",
-          resolvedTrackLanguage: track?.language || "",
-          resolvedTrackKind: track?.kind || "",
-          resolvedTrackMode: track?.mode || "",
-          resolvedTrackCuesLength,
-          resolvedTrackActiveCuesLength,
-          resolvedTrackCurrentCueTextLength: resolvedTrackCurrentCueText.length,
-          resolvedTrackHasCueOverlapAtCurrentTime: Boolean(resolvedTrackCurrentCue),
-          currentTime,
-        });
-      }
+      const unreadableSnapshot = {
+        cuesLength: selection.snapshot?.cuesLength ?? 0,
+        activeCuesLength: selection.snapshot?.activeCuesLength ?? 0,
+        hasCueOverlapAtCurrentTime: Boolean(
+          selection.snapshot?.hasCueOverlapAtCurrentTime,
+        ),
+        currentCueTextLength: selection.snapshot?.currentCueTextLength ?? 0,
+      };
 
       if (!track) {
         unbindSecondarySubtitleTrack();
@@ -1198,192 +907,41 @@
         return;
       }
 
-      const normalizedRequestedLang = String(requestedLang || "")
-        .trim()
-        .toLowerCase();
-      const previousRequestedSecondaryLang = String(
-        previousBoundTrack?.language || "",
-      )
-        .trim()
-        .toLowerCase();
-      const requestedLanguageChanged =
-        normalizedRequestedLang !== previousRequestedSecondaryLang;
-
-      const unreadableSnapshot = {
-        cuesLength: resolvedTrackCuesLength,
-        activeCuesLength: resolvedTrackActiveCuesLength,
-        hasCueOverlapAtCurrentTime: Boolean(resolvedTrackCurrentCue),
-        currentCueTextLength: resolvedTrackCurrentCueText.length,
-      };
-
-      const shouldRebindBecauseUnreadable =
-        sameTrackRef &&
-        unreadableSnapshot.cuesLength > 0 &&
-        unreadableSnapshot.activeCuesLength === 0 &&
-        !unreadableSnapshot.hasCueOverlapAtCurrentTime &&
-        unreadableSnapshot.currentCueTextLength === 0;
-
-      if (shouldRebindBecauseUnreadable) {
-        if (DEBUG_SECONDARY_SUBS) {
-          logContent("secondary-sync rebind-required", {
-            reason: "sameTrackButUnreadableAtCurrentTime",
-            requestedLang: requestedLang || "",
-            normalizedRequestedLang,
-            previousRequestedSecondaryLang,
-            requestedLanguageChanged,
-            currentTime,
-            sameTrackRef,
-            forceRebind,
-            resolvedTrackLanguage: track?.language || "",
-            resolvedTrackMode: track?.mode || "",
-            resolvedTrackCuesLength,
-            resolvedTrackActiveCuesLength,
-            resolvedTrackCurrentCueTextLength: resolvedTrackCurrentCueText.length,
-            resolvedTrackHasCueOverlapAtCurrentTime: Boolean(
-              resolvedTrackCurrentCue,
-            ),
-          });
-        }
-      }
-
-      const shouldPrimeUnreadableSelectedTrack =
-        requestedLanguageChanged &&
-        !sameTrackRef &&
-        Boolean(track) &&
-        resolvedTrackCuesLength > 0 &&
-        resolvedTrackActiveCuesLength === 0 &&
-        !resolvedTrackCurrentCue &&
-        resolvedTrackCurrentCueText.length === 0;
-
-      const selectedTrackHasNoCues =
-        Boolean(track) &&
-        resolvedTrackCuesLength === 0 &&
-        resolvedTrackActiveCuesLength === 0 &&
-        resolvedTrackCurrentCueText.length === 0;
-
-      if (forceRebind && selectedTrackHasNoCues) {
-        logContent("secondary-sync force-rebind skipped", {
-          reason: "selectedTrackHasNoCues",
-          requestedLang: requestedLang || "",
-          currentTime,
-          trackLanguage: track?.language || "",
-          trackKind: track?.kind || "",
-          trackMode: track?.mode || "",
-          cuesLength: resolvedTrackCuesLength,
-          activeCuesLength: resolvedTrackActiveCuesLength,
-          currentCueTextLength: resolvedTrackCurrentCueText.length,
-        });
-
-        if (!suppressRender) {
-          (renderSecondarySubtitleOverride || renderSecondarySubtitle)("", track);
-        }
-
-        rebuildCurrentSceneSubtitleBlocks();
-        return;
-      }
-
-      if (forceRebind && !selectedTrackHasNoCues) {
-        unbindSecondarySubtitleTrack();
-      }
-
-      const modeDecision = resolveSecondaryTrackModePolicy({
-        track,
-        reason: shouldPrimeUnreadableSelectedTrack
-          ? "primeUnreadableSelectedTrack"
-          : forceRebind
-            ? "forceRebind"
-            : shouldRebindBecauseUnreadable
-              ? "sameTrackUnreadable"
-              : "syncSecondarySubtitleTrack",
-        debugForceShowing: DEBUG_SECONDARY_SUBS,
-        allowShowing: false,
-        unreadableSnapshot,
-      });
-
-      if (
-        modeDecision.policy === "readability-promote" ||
-        modeDecision.policy === "debug-force-showing"
-      ) {
-        logContent("secondary-sync mode-policy force-showing", {
-          requestedLang: requestedLang || "",
-          normalizedRequestedLang,
-          previousRequestedSecondaryLang,
-          requestedLanguageChanged,
-          currentTime,
-          sameTrackRef,
-          forceRebind,
-          shouldPrimeUnreadableSelectedTrack,
-          trackLanguage: track?.language || "",
-          trackKind: track?.kind || "",
-          trackModeBefore: track?.mode || "",
-          requestedMode: modeDecision.requestedMode,
-          policy: modeDecision.policy,
-          rationale: modeDecision.rationale,
-          decisionReason: modeDecision.reason,
+      if (!sameTrackRef || forceRebind) {
+        bindSecondarySubtitleTrack(track, {
+          requestedMode: "hidden",
+          policy: "secondary-sync",
+          rationale: forceRebind
+            ? "force-rebind"
+            : "selected-track-changed",
           unreadableSnapshot,
-          selectedTrackSnapshot: {
-            cuesLength: resolvedTrackCuesLength,
-            activeCuesLength: resolvedTrackActiveCuesLength,
-            currentCueTextLength: resolvedTrackCurrentCueText.length,
-            hasCueOverlapAtCurrentTime: Boolean(resolvedTrackCurrentCue),
-          },
         });
       }
 
-      const selectedTrackUnreadable =
-        Boolean(track) &&
-        resolvedTrackCuesLength === 0 &&
-        resolvedTrackActiveCuesLength === 0 &&
-        resolvedTrackCurrentCueText.length === 0;
-
-      if (
-        !requestedLanguageChanged &&
-        !sameTrackRef &&
-        selectedTrackUnreadable &&
-        previousBoundTrack
-      ) {
-        logContent("secondary-sync keep-previous-track", {
-          requestedLang: requestedLang || "",
-          normalizedRequestedLang,
-          previousRequestedSecondaryLang,
-          requestedLanguageChanged,
-          previousBoundTrackLanguage: previousBoundTrack?.language || "",
-          selectedTrackLanguage: track?.language || "",
-          selectedTrackMode: track?.mode || "",
-          selectedTrackCuesLength: resolvedTrackCuesLength,
-          selectedTrackActiveCuesLength: resolvedTrackActiveCuesLength,
-          selectedTrackCurrentCueTextLength: resolvedTrackCurrentCueText.length,
-        });
-
-        if (!suppressRender) {
-          (renderSecondarySubtitleOverride || renderSecondarySubtitle)(
-            getCurrentCueText(previousBoundTrack),
-            previousBoundTrack,
-          );
-        }
-
-        rebuildCurrentSceneSubtitleBlocks();
-        return;
-      }
-
-      if (
-        secondaryTrackBound !== track ||
-        forceRebind ||
-        shouldRebindBecauseUnreadable
-      ) {
-        bindSecondarySubtitleTrack(track, modeDecision);
-        rebuildCurrentSceneSubtitleBlocks();
-        return;
-      }
+      const currentCue = getCurrentCue(track, currentTime);
+      const currentCueText = cleanCueText(currentCue);
 
       if (!suppressRender) {
         (renderSecondarySubtitleOverride || renderSecondarySubtitle)(
-          getCurrentCueText(track),
-          track,
+          currentCueText,
+          currentCue,
         );
       }
 
-      rebuildCurrentSceneSubtitleBlocks();
+      const rebuildResult = rebuildCurrentSceneSubtitleBlocks();
+      if (rebuildResult?.currentBlock) {
+        setCurrentSubtitleBlock(rebuildResult.currentBlock);
+      }
+
+      if (DEBUG_MEMORY_PROBE) {
+        logContent("secondary-sync memory-probe", {
+          requestedLang: requestedLang || "",
+          sameTrackRef,
+          forceRebind,
+          requestedLanguageChanged,
+          hasCurrentBlock: Boolean(rebuildResult?.currentBlock),
+        });
+      }
     }
 
     // runtime / current cue / sequence を 1 つにまとめ、
@@ -1777,7 +1335,7 @@
       }
 
       if (recoveryDecision?.action === "recover") {
-        syncSecondarySubtitleTrack(
+        syncSecondaryTrackOrchestration(
           getVideoElement(),
           getRequestedSecondaryLanguage(),
           null,
@@ -1790,7 +1348,7 @@
       }
 
       if (recoveryDecision?.action === "force-rebind") {
-        syncSecondarySubtitleTrack(
+        syncSecondaryTrackOrchestration(
           getVideoElement(),
           getRequestedSecondaryLanguage(),
           null,
@@ -1822,7 +1380,7 @@
       getBoundSecondaryTrack,
       unbindSecondarySubtitleTrack,
       bindSecondarySubtitleTrack,
-      syncSecondarySubtitleTrack,
+      syncSecondaryTrackOrchestration,
       onCueChange,
       onPrimaryCueChange,
       getMergedSubtitleHealth: () => lastMergedSubtitleHealth,

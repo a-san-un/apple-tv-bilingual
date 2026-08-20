@@ -121,12 +121,19 @@
         };
       }
 
+      const safeDerived = {
+        ...derived,
+        shouldRecoverSecondary: derived?.shouldRecoverSecondary === true,
+        shouldForceSecondaryRebind:
+          derived?.shouldForceSecondaryRebind === true,
+      };
+
       return secondaryTrackRecovery.evaluateSecondaryRecovery({
         now,
         runtime,
         currentCue,
         sequence,
-        derived,
+        derived: safeDerived,
       });
     }
 

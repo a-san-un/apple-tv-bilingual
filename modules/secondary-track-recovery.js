@@ -319,7 +319,7 @@
 
       const shouldRecoverSecondary =
         secondaryLane.missingDurationMs >= SECONDARY_RECOVERY_WINDOW_MS &&
-        (derived?.shouldRecoverSecondary === true || secondaryLane.isMissing);
+        derived?.shouldRecoverSecondary === true;
 
       if (!shouldRecoverSecondary) {
         secondaryLane.lastDecision = "idle";
@@ -328,7 +328,10 @@
           primaryLane,
           secondaryLane,
           action: "idle",
-          reason: "secondary_missing_waiting_window",
+          reason:
+            secondaryLane.missingDurationMs >= SECONDARY_RECOVERY_WINDOW_MS
+              ? "secondary_missing_observation_only"
+              : "secondary_missing_waiting_window",
         };
       }
 
@@ -352,7 +355,7 @@
 
       if (
         secondaryLane.missCount >= SECONDARY_RECOVERY_MISS_LIMIT &&
-        derived?.shouldRecoverSecondary !== true
+        derived?.shouldForceSecondaryRebind !== true
       ) {
         secondaryLane.terminated = true;
         secondaryLane.lastDecision = "terminated";
@@ -366,7 +369,7 @@
       }
 
       const shouldForceSecondaryRebind =
-        derived?.shouldForceSecondaryRebind === true ||
+        derived?.shouldForceSecondaryRebind === true &&
         secondaryLane.missCount >= SECONDARY_FORCE_REBIND_MISS_COUNT;
 
       secondaryLane.lastDecision = shouldForceSecondaryRebind
@@ -380,7 +383,7 @@
         action: secondaryLane.lastDecision,
         reason: shouldForceSecondaryRebind
           ? "secondary_force_rebind_after_repeated_miss"
-          : "secondary_current_missing_with_primary_present",
+          : "secondary_recovery_continued_failure",
       };
     }
 

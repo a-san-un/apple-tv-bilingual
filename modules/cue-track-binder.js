@@ -15,8 +15,14 @@
   const root = (window.ATVB = window.ATVB || {});
 
   /**
-   * cueController の公開APIを、呼び出し側で扱いやすい binder 形に束ねる。
-   * 現時点では実処理を持たず、委譲レイヤーとして振る舞う。
+   * cueController の公開 API を、呼び出し側で扱いやすい binder 形に束ねる。
+   * primary の bind / unbind は従来どおり cueController に委譲しつつ、
+   * secondary については monitor state を binder 側で保持する。
+   *
+   * Step 3:
+   * - secondary listener の開始・差し替え・停止を binder module 側へ寄せる。
+   * - cleanup の実体は createTrackListenerBinding().cleanup を使い、
+   *   新しい解除実装は増やさない。
    *
    * @param {{ cueController: object }} deps
    * @returns {{
@@ -28,55 +34,172 @@
    *   unbindSecondary: Function,
    *   getBoundPrimary: Function,
    *   getBoundSecondary: Function,
+   *   startSecondaryMonitor: Function,
+   *   replaceSecondaryMonitor: Function,
+   *   stopSecondaryMonitor: Function,
+   *   getSecondaryMonitorState: Function,
    * }}
    */
   function createCueTrackBinder({ cueController }) {
+    // secondary monitor が現在監視している track 本体。
+    // same track の差し替え回避判定にも使う。
+    let secondaryMonitorTrack = null;
+
+    // createTrackListenerBinding() から受け取る唯一の cleanup 経路。
+    // Step 4 ではこの保持をさらに binder 主体へ寄せていく前提。
+    let secondaryMonitorCleanup = null;
+
+    // debug / state 観測用の軽量メタ情報。
+    // track 全体ではなく id / language のみ持つ。
+    let secondaryMonitorMeta = null;
+
+    /**
+     * 現在の secondary monitor を停止する。
+     * cleanup は createTrackListenerBinding() が返したものだけを使う。
+     */
+    function stopSecondaryMonitor() {
+      try {
+        secondaryMonitorCleanup?.();
+      } catch (_) {}
+
+      secondaryMonitorTrack = null;
+      secondaryMonitorCleanup = null;
+      secondaryMonitorMeta = null;
+    }
+
+    /**
+     * secondary monitor を新規開始する。
+     * 既存 monitor があれば先に stop してから付け直す。
+     *
+     * @param {TextTrack} track
+     * @param {Function} onCueChange
+     * @param {{
+     *   video?: HTMLVideoElement | null,
+     * }} options
+     * @returns {{
+     *   track: TextTrack,
+     *   notifyInitial: Function,
+     *   cleanup: Function,
+     * } | null}
+     */
+    function startSecondaryMonitor(track, onCueChange, options = {}) {
+      if (!track || typeof onCueChange !== "function") return null;
+
+      stopSecondaryMonitor();
+
+      const binding = createTrackListenerBinding({
+        track,
+        onCueChange,
+        video: options.video || null,
+        passTrackToHandler: true,
+        usePlaybackSignals: false,
+      });
+
+      if (!binding) return null;
+
+      secondaryMonitorTrack = track;
+      secondaryMonitorCleanup = binding.cleanup;
+      secondaryMonitorMeta = {
+        trackId: track?.id || "",
+        language: track?.language || "",
+      };
+
+      // bind 直後に 1 回だけ同期させ、最初の cuechange 待ちで空表示になるのを防ぐ。
+      binding.notifyInitial?.();
+      return binding;
+    }
+
+    /**
+     * secondary monitor を差し替える。
+     * すでに同じ track を監視中なら bind 自体をスキップする。
+     *
+     * @param {TextTrack} track
+     * @param {Function} onCueChange
+     * @param {{
+     *   video?: HTMLVideoElement | null,
+     * }} options
+     * @returns {{
+     *   skipped: boolean,
+     *   reason: string,
+     *   track: TextTrack | null,
+     *   meta: { trackId: string, language: string } | null,
+     * }}
+     */
+    function replaceSecondaryMonitor(track, onCueChange, options = {}) {
+      const sameTrackRef = Boolean(track && secondaryMonitorTrack === track);
+
+      if (sameTrackRef && secondaryMonitorCleanup) {
+        return {
+          skipped: true,
+          reason: "same-track-ref",
+          track: secondaryMonitorTrack,
+          meta: secondaryMonitorMeta,
+        };
+      }
+
+      const binding = startSecondaryMonitor(track, onCueChange, options);
+
+      return {
+        skipped: false,
+        reason: binding ? "replaced" : "binding-failed",
+        track: binding?.track || null,
+        meta: secondaryMonitorMeta,
+      };
+    }
+
     return {
-      // primary track の bind を cueController に委譲する。
-      // 実際の mode 制御や listener 管理は cueController 側で行う。
+      // primary bind は従来どおり cueController に委譲する。
       bindPrimary: (track, onCueChange, options) =>
         cueController.bindPrimarySubtitleTrack(track, onCueChange, options),
 
-      // primary track の unbind を cueController に委譲する。
-      // 復元有無などの詳細オプションもそのまま渡す。
+      // primary unbind も cueController に委譲する。
       unbindPrimary: (options) =>
         cueController.unbindPrimarySubtitleTrack(options),
 
-      // primary 字幕から native 字幕へ制御を戻す。
-      // handoff の実装詳細は cueController 側に集約する。
+      // primary 字幕から native 字幕へ handoff する。
       handoffPrimaryToNative: () =>
         cueController.handoffPrimarySubtitleToNative(),
 
-      // native 字幕復元処理を呼び出す。
-      // 実装が未提供でも安全に呼べるよう optional chain を使う。
+      // native 字幕の復元処理を呼び出す。
       restoreNative: () =>
         cueController.restoreNativeSubtitles?.(),
 
-      // secondary track の bind を cueController に委譲する。
-      // modeDecision の解釈や適用は cueController 側で行う。
+      // secondary の mode 決定や bind 自体はまだ cueController 側に委譲する。
       bindSecondary: (track, modeDecision) =>
         cueController.bindSecondarySubtitleTrack(track, modeDecision),
 
-      // secondary track の unbind を cueController に委譲する。
-      // restoreMode などのオプションもそのまま透過する。
-      unbindSecondary: (options) =>
-        cueController.unbindSecondarySubtitleTrack(options),
+      // secondary unbind 前に monitor を必ず止める。
+      // listener cleanup を先に通してから controller 側 unbind へ進む。
+      unbindSecondary: (options) => {
+        stopSecondaryMonitor();
+        return cueController.unbindSecondarySubtitleTrack(options);
+      },
 
-      // 現在 bind 済みの primary track を取得する。
-      // 実体は cueController が保持している state を参照する。
+      // 現在 bind 済みの primary track を返す。
       getBoundPrimary: () =>
         cueController.getBoundPrimaryTrack(),
 
-      // 現在 bind 済みの secondary track を取得する。
-      // 呼び出し側は secondary の状態確認に使える。
+      // 現在 bind 済みの secondary track を返す。
       getBoundSecondary: () =>
         cueController.getBoundSecondaryTrack(),
+
+      // secondary monitor API。
+      startSecondaryMonitor,
+      replaceSecondaryMonitor,
+      stopSecondaryMonitor,
+
+      // monitor state の観測用 API。
+      getSecondaryMonitorState: () => ({
+        track: secondaryMonitorTrack,
+        meta: secondaryMonitorMeta,
+        active: Boolean(secondaryMonitorCleanup),
+      }),
     };
   }
 
   /**
-   * primary / secondary で共通の cuechange listener bind を行う。
-   * track.mode は一切変更せず、purely listener の attach / cleanup だけを担う。
+   * primary / secondary 共通の cuechange listener binding を作る。
+   * track.mode は一切変更せず、listener の attach / cleanup だけを担う。
    *
    * @param {{
    *   track: TextTrack,
@@ -100,7 +223,7 @@
   }) {
     if (!track || typeof onCueChange !== "function") return null;
 
-    // handler 種別（primary: 引数なし呼び出し / secondary: track を渡す呼び出し）を統一的に扱う。
+    // primary は引数なし、secondary は track を渡す形をここで吸収する。
     const invoke = () => {
       if (passTrackToHandler) {
         onCueChange(track);
@@ -109,7 +232,8 @@
       onCueChange();
     };
 
-    // cuechange イベント本体のハンドラ。例外を握って呼び出し元へ伝播させない。
+    // cuechange 本体のハンドラ。
+    // listener 経由で例外を外へ漏らさない。
     const cueHandler = () => {
       try {
         invoke();
@@ -122,8 +246,9 @@
       return null;
     }
 
-    // primary 用途向け: timeupdate / seeked / playing でも onCueChange を補助発火させる。
+    // primary 用では playback signal でも補助発火できるようにする。
     let playbackHandler = null;
+
     if (
       usePlaybackSignals &&
       video &&
@@ -138,9 +263,11 @@
       try {
         video.addEventListener("timeupdate", playbackHandler);
       } catch (_) {}
+
       try {
         video.addEventListener("seeked", playbackHandler);
       } catch (_) {}
+
       try {
         video.addEventListener("playing", playbackHandler);
       } catch (_) {}
@@ -149,14 +276,16 @@
     return {
       track,
 
-      // bind 直後に一度だけ描画させ、次の cuechange を待つ間の空表示を防ぐ。
+      // bind 直後の初回同期。
+      // 次の cuechange を待つ間の空表示を防ぐ。
       notifyInitial() {
         try {
           invoke();
         } catch (_) {}
       },
 
-      // listener を全て解除する。video 側の補助 listener も対象に含める。
+      // attach した listener を全て解除する。
+      // video 側の補助 listener もここでまとめて外す。
       cleanup() {
         try {
           track.removeEventListener("cuechange", cueHandler);
@@ -170,9 +299,11 @@
           try {
             video.removeEventListener("timeupdate", playbackHandler);
           } catch (_) {}
+
           try {
             video.removeEventListener("seeked", playbackHandler);
           } catch (_) {}
+
           try {
             video.removeEventListener("playing", playbackHandler);
           } catch (_) {}
@@ -181,8 +312,7 @@
     };
   }
 
-  root.cueTrackBinder = {
-    createCueTrackBinder,
-    createTrackListenerBinding,
-  };
+  root.cueTrackBinder = root.cueTrackBinder || {};
+  root.cueTrackBinder.createCueTrackBinder = createCueTrackBinder;
+  root.cueTrackBinder.createTrackListenerBinding = createTrackListenerBinding;
 })();

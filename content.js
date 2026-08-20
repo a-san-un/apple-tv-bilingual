@@ -1989,8 +1989,9 @@ function forwardContentLog(...args) {
       })
     : null;
 
-  const cueController = createCueController({
-    state,
+  let cueController = null;
+
+  const cueServices = {
     logContent,
     DEBUG_SECONDARY_SUBS,
     DEBUG_MEMORY_PROBE,
@@ -2035,6 +2036,52 @@ function forwardContentLog(...args) {
     cueRenderCoordinator,
     subtitleRecoveryManager,
     createTrackListenerBinding,
+  };
+
+  const subtitleSyncServices = {
+    logContent,
+    createSyncIntervalOrchestrator:
+      window.ATVB?.createSyncIntervalOrchestrator,
+    createSubtitleHealthSnapshot:
+      window.ATVB?.createSubtitleHealthSnapshot,
+    resolver: resolverDeps,
+    bindSecondaryTrack: (track, options = {}) => {
+      const modeDecision = {
+        requestedMode: options?.requestedMode || "showing",
+        policy: options?.policy || "subtitle-sync-controller",
+        rationale: options?.reason || "subtitle_sync_controller_bind",
+        reason: options?.reason || "subtitle-sync-controller",
+        unreadableSnapshot: options?.unreadableSnapshot || null,
+      };
+
+      cueController?.bindSecondarySubtitleTrack(track, modeDecision);
+    },
+    syncNativeSubtitleSelection: async ({
+      primaryLang = "",
+      secondaryLang = "",
+      preferredSource = "",
+    } = {}) => {
+      return await resolverDeps.syncNativeSubtitleSelectionViaMenu?.({
+        primaryLang,
+        secondaryLang,
+        preferredSource,
+      });
+    },
+    pollIntervalMs: 100,
+    activationHoldMs: 500,
+    activationTimeoutMs: 1500,
+  };
+
+  const subtitleSyncController = createSubtitleSyncController({
+    state,
+    services: subtitleSyncServices,
+  });
+
+  cueController = createCueController({
+    state,
+    ...cueServices,
+    selectSecondarySubtitleTrack:
+      subtitleSyncController.selectSecondarySubtitleTrack,
   });
 
   const cueTrackBinder = createCueTrackBinder
@@ -2043,43 +2090,6 @@ function forwardContentLog(...args) {
 
   root.cueTrackBinder = root.cueTrackBinder ?? {};
   if (cueTrackBinder) root.cueTrackBinder.instance = cueTrackBinder;
-
-  const subtitleSyncController = createSubtitleSyncController({
-    state,
-    services: {
-      logContent,
-      createSyncIntervalOrchestrator:
-        window.ATVB?.createSyncIntervalOrchestrator,
-      createSubtitleHealthSnapshot:
-        window.ATVB?.createSubtitleHealthSnapshot,
-      resolver: resolverDeps,
-      bindSecondaryTrack: (track, options = {}) => {
-        const modeDecision = {
-          requestedMode: options?.requestedMode || "showing",
-          policy: options?.policy || "subtitle-sync-controller",
-          rationale: options?.reason || "subtitle_sync_controller_bind",
-          reason: options?.reason || "subtitle-sync-controller",
-          unreadableSnapshot: options?.unreadableSnapshot || null,
-        };
-
-        cueController.bindSecondarySubtitleTrack(track, modeDecision);
-      },
-      syncNativeSubtitleSelection: async ({
-        primaryLang = "",
-        secondaryLang = "",
-        preferredSource = "",
-      } = {}) => {
-        return await resolverDeps.syncNativeSubtitleSelectionViaMenu?.({
-          primaryLang,
-          secondaryLang,
-          preferredSource,
-        });
-      },
-      pollIntervalMs: 100,
-      activationHoldMs: 500,
-      activationTimeoutMs: 1500,
-    },
-  });
 
   function rebuildSubtitleBlocksForPanelOpen(reason = "panel_open") {
     const sequence = getSubtitleBlockSequence();
@@ -2133,9 +2143,9 @@ let syncIntervalOrchestrator = null;
       // ② その後 overlay を非表示・state リセット
       setOverlayVisible(false);
       overlayController.clearOverlayState?.();
-      // ③ cue unbind
+      // ③ cue unbind（secondary monitor cleanup は unbindSecondarySubtitleTrack 経由で一本化）
       cueController.handoffPrimarySubtitleToNative();
-      cueController.unbindSecondarySubtitleTrack(); 
+      cueController.unbindSecondarySubtitleTrack({ restoreMode: false });
       // ④ interval 停止
       if (secondaryTrackSyncInterval) {
         clearInterval(secondaryTrackSyncInterval);
@@ -2368,7 +2378,7 @@ let syncIntervalOrchestrator = null;
     // [attach: secondary] secondary は showing warmup / native fallback を含むため非同期。
     // ここで await して bind 完了後の実トラックを state に反映する。
     if (secondaryLang) {
-      await subtitleSyncController.syncSecondarySubtitleTrack(
+      await subtitleSyncController.syncSecondaryTrackBinding(
         video,
         secondaryLang,
         {
