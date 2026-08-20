@@ -1,17 +1,12 @@
 // =============================================================
 // tests/panel-ui-toggle.test.js
-// Step 3: updateToggleButton / applyPanelVisibility の挙動テスト
-// =============================================================
+// panel-ui.js の applyPanelVisibility / updateToggleButton の挙動テスト
 //
-// テスト対象の変更点（Step 3-A / 3-B）:
-//   - updateToggleButton(false) が btn.style.display = "none" を設定する
-//   - updateToggleButton(true)  が btn.style.display = "" を設定する
-//   - applyPanelVisibility が OFF 時に後書き上書きブロックを持たない
-//     → updateToggleButton の呼び出し 1 回で display 制御が完結する
-//
-// panel-ui.js は IIFE 形式のため、内部関数を直接 import できない。
-// DOM を jsdom で構築し、panel-ui.js をスクリプトとして評価することで
-// createToggleButton / applyPanelVisibility を間接的に検証する。
+// 現在仕様:
+// - OFF 時もトグルボタンは表示される
+// - applyPanelVisibility は panelHost の display を切り替えた後、
+//   requestAnimationFrame 内で overlay 位置同期と toggle button 更新を行う
+// - panelDefaultOpen は初期値専用であり、applyPanelVisibility では永続設定を書かない
 // =============================================================
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -27,22 +22,34 @@ function makeEnv({ panelOpen = false } = {}) {
   const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>", {
     url: "https://tv.apple.com/",
   });
+
   const { window } = dom;
   const { document } = window;
 
-  window.matchMedia = window.matchMedia || (() => ({
-    matches: false,
-    addListener: () => {},
-    removeListener: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  }));
+  window.matchMedia =
+    window.matchMedia ||
+    (() => ({
+      matches: false,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
 
-  window.ResizeObserver = window.ResizeObserver || class {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  };
+  window.ResizeObserver =
+    window.ResizeObserver ||
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+
+  window.requestAnimationFrame = vi.fn((cb) => {
+    cb();
+    return 1;
+  });
+
+  window.cancelAnimationFrame = vi.fn();
 
   const chromeMock = {
     storage: {
@@ -50,10 +57,20 @@ function makeEnv({ panelOpen = false } = {}) {
         get: vi.fn((key, cb) => cb({})),
         set: vi.fn((obj, cb) => cb?.()),
       },
+      sync: {
+        get: vi.fn(),
+        set: vi.fn(),
+      },
     },
-    runtime: { lastError: null },
+    runtime: {
+      lastError: null,
+      getURL: vi.fn((path) => path),
+      sendMessage: vi.fn(),
+    },
   };
+
   window.chrome = chromeMock;
+  globalThis.chrome = chromeMock;
 
   window.ATVB_PANEL_VISIBILITY = {
     load: vi.fn(async (def) => def),
@@ -61,44 +78,40 @@ function makeEnv({ panelOpen = false } = {}) {
   };
 
   const stubs = {
-    clearDebugLogs:        vi.fn(),
-    sendToBackground:      vi.fn(),
-    applyLayout:           vi.fn(),
-    logContent:            vi.fn(),
+    clearDebugLogs: vi.fn(),
+    sendToBackground: vi.fn(),
+    applyLayout: vi.fn(),
+    logContent: vi.fn(),
     renderCurrentSnapshot: vi.fn(),
-    renderPanel:           vi.fn(),
-    getSubtitleView:       vi.fn(() => null),
+    renderPanel: vi.fn(),
     rebuildSubtitleBlocksForPanelOpen: vi.fn(),
-    getState:              vi.fn(() => ({ panelOpen })),
-    setState:              vi.fn(),
-    getTarget:             vi.fn(() => {
-      let host = document.getElementById("atv-panel-host");
-      if (!host) {
-        host = document.createElement("div");
-        host.id = "atv-panel-host";
-        document.body.appendChild(host);
-      }
-      return host.parentElement;
-    }),
+    destroyOverlay: vi.fn(),
+    overlayController: {
+      syncOverlayPositionToPlayer: vi.fn(),
+    },
+    getTarget: vi.fn(() => document.body),
   };
 
-  const code = readFileSync(
-    resolve(__dirname, "../panel-ui.js"),
-    "utf8"
-  );
+  const code = readFileSync(resolve(__dirname, "../panel-ui.js"), "utf8");
 
   let panelUi;
   try {
     const fn = new Function(
-      "window", "document", "chrome",
+      "window",
+      "document",
+      "chrome",
       "ATVB_PANEL_VISIBILITY",
       `
-        const module = { exports: {} };
         ${code}
         const factory = window.ATVB?.panelUi?.createPanelUi;
         if (!factory) return null;
         return factory({
-          state: { panelOpen: false, contentSettings: { panelDefaultOpen: true } },
+          state: {
+            panelOpen: ${panelOpen ? "true" : "false"},
+            contentSettings: { panelDefaultOpen: true },
+            panelShadowRoot: null,
+            toggleButtonResizeHandler: null,
+          },
           getTarget: window.__testGetTarget,
           getLiveDebugLogFilter: () => "",
           getDebugLogText: () => "",
@@ -108,22 +121,53 @@ function makeEnv({ panelOpen = false } = {}) {
           logContent: () => {},
           renderCurrentSnapshot: () => {},
           renderPanel: () => {},
-          getSubtitleView: () => null,
           rebuildSubtitleBlocksForPanelOpen: () => {},
+          destroyOverlay: () => {},
+          overlayController: window.__testOverlayController,
         });
-      `
+      `,
     );
 
-    // getTarget をグローバル経由で渡す（new Function のスコープ制限回避）
     window.__testGetTarget = stubs.getTarget;
+    window.__testOverlayController = stubs.overlayController;
 
     panelUi = fn(window, document, chromeMock, window.ATVB_PANEL_VISIBILITY);
   } catch (_e) {
     panelUi = null;
   }
 
-
   return { window, document, panelUi, stubs };
+}
+
+function addPanelHost(document, { display = "" } = {}) {
+  const host = document.createElement("div");
+  host.id = "atv-panel-host";
+  host.style.display = display;
+
+  host.getBoundingClientRect = () => ({
+    width: 300,
+    height: 0,
+    top: 0,
+    left: 0,
+    right: 300,
+    bottom: 0,
+    x: 0,
+    y: 0,
+    toJSON() {
+      return {};
+    },
+  });
+
+  document.body.appendChild(host);
+  return host;
+}
+
+function addOverlayHost(document, { display = "" } = {}) {
+  const host = document.createElement("div");
+  host.id = "atv-overlay-host";
+  host.style.display = display;
+  document.body.appendChild(host);
+  return host;
 }
 
 function addToggleButton(document, { display = "", right = "0px" } = {}) {
@@ -135,112 +179,144 @@ function addToggleButton(document, { display = "", right = "0px" } = {}) {
   return btn;
 }
 
+async function flushRaf() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 // =============================================================
-// updateToggleButton の display 制御
+// applyPanelVisibility の表示制御
 // =============================================================
 
-describe("updateToggleButton: OFF 時は display:none を設定する (Step 3-A)", () => {
+describe("applyPanelVisibility: パネル本体の表示制御", () => {
   let env;
 
   beforeEach(() => {
     env = makeEnv({ panelOpen: false });
+    addPanelHost(env.document, { display: "" });
+    addOverlayHost(env.document, { display: "" });
+    addToggleButton(env.document, { display: "", right: "300px" });
   });
 
   afterEach(() => {
     env.document.body.innerHTML = "";
   });
 
-  it("applyPanelVisibility(false) 後にトグルボタンが display:none になる", () => {
-    addToggleButton(env.document, { display: "" });
+  it("applyPanelVisibility(false) 後に panel host が display:none になる", async () => {
     env.panelUi?.applyPanelVisibility?.(false);
+    await flushRaf();
 
-    const btn = env.document.body.querySelector("#atv-toggle-btn");
-    expect(btn?.style.display).toBe("none");
+    const panelHost = env.document.body.querySelector("#atv-panel-host");
+    expect(panelHost?.style.display).toBe("none");
   });
 
-  it("applyPanelVisibility(true) 後にトグルボタンが display:'' になる", () => {
-    addToggleButton(env.document, { display: "none" });
-    env.panelUi?.applyPanelVisibility?.(true);
-
-    const btn = env.document.body.querySelector("#atv-toggle-btn");
-    expect(btn?.style.display).toBe("");
-  });
-
-  it("OFF → ON → OFF と切り替えたとき最終状態が display:none になる", () => {
-    addToggleButton(env.document, { display: "" });
-
-    env.panelUi?.applyPanelVisibility?.(false);
-    env.panelUi?.applyPanelVisibility?.(true);
-    env.panelUi?.applyPanelVisibility?.(false);
-
-    const btn = env.document.body.querySelector("#atv-toggle-btn");
-    expect(btn?.style.display).toBe("none");
-  });
-
-  it("ON → OFF → ON と切り替えたとき最終状態が display:'' になる", () => {
-    addToggleButton(env.document, { display: "" });
+  it("applyPanelVisibility(true) 後に panel host が display:'' になる", async () => {
+    const panelHost = env.document.body.querySelector("#atv-panel-host");
+    panelHost.style.display = "none";
 
     env.panelUi?.applyPanelVisibility?.(true);
-    env.panelUi?.applyPanelVisibility?.(false);
-    env.panelUi?.applyPanelVisibility?.(true);
+    await flushRaf();
 
-    const btn = env.document.body.querySelector("#atv-toggle-btn");
-    expect(btn?.style.display).toBe("");
+    expect(panelHost?.style.display).toBe("");
   });
 });
 
 // =============================================================
-// applyPanelVisibility の後書き上書きブロック削除の確認（Step 3-B）
+// updateToggleButton の display / text / right 制御
 // =============================================================
 
-describe("applyPanelVisibility: updateToggleButton 呼び出しが 1 回で display 制御が完結する (Step 3-B)", () => {
-  it("applyPanelVisibility(false) 呼び出し後に display:none が維持される", () => {
-    const env = makeEnv({ panelOpen: false });
-    addToggleButton(env.document, { display: "" });
-
-    env.panelUi?.applyPanelVisibility?.(false);
-
-    const btn = env.document.body.querySelector("#atv-toggle-btn");
-    expect(btn?.style.display).toBe("none");
-
-    env.document.body.innerHTML = "";
-  });
-});
-
-// =============================================================
-// updateToggleButton の textContent / right 制御
-// =============================================================
-
-describe("updateToggleButton: テキスト・right 位置の制御", () => {
+describe("applyPanelVisibility: トグルボタンは ON/OFF どちらでも表示される", () => {
   let env;
 
   beforeEach(() => {
-    env = makeEnv();
+    env = makeEnv({ panelOpen: false });
+    addPanelHost(env.document, { display: "" });
+    addToggleButton(env.document, { display: "", right: "0px" });
   });
 
   afterEach(() => {
     env.document.body.innerHTML = "";
   });
 
-  it("ON 時はボタンテキストが '‹' になる", () => {
-    addToggleButton(env.document);
+  it("OFF 後もトグルボタンは display:'' のまま表示される", async () => {
+    env.panelUi?.applyPanelVisibility?.(false);
+    await flushRaf();
+
+    const btn = env.document.body.querySelector("#atv-toggle-btn");
+    expect(btn?.style.display).toBe("");
+  });
+
+  it("ON 後もトグルボタンは display:'' のまま表示される", async () => {
+    const btn = env.document.body.querySelector("#atv-toggle-btn");
+    btn.style.display = "none";
+
     env.panelUi?.applyPanelVisibility?.(true);
+    await flushRaf();
+
+    expect(btn?.style.display).toBe("");
+  });
+
+  it("OFF → ON → OFF と切り替えても最終状態で表示される", async () => {
+    env.panelUi?.applyPanelVisibility?.(false);
+    env.panelUi?.applyPanelVisibility?.(true);
+    env.panelUi?.applyPanelVisibility?.(false);
+    await flushRaf();
+
+    const btn = env.document.body.querySelector("#atv-toggle-btn");
+    expect(btn?.style.display).toBe("");
+  });
+
+  it("ON → OFF → ON と切り替えても最終状態で表示される", async () => {
+    env.panelUi?.applyPanelVisibility?.(true);
+    env.panelUi?.applyPanelVisibility?.(false);
+    env.panelUi?.applyPanelVisibility?.(true);
+    await flushRaf();
+
+    const btn = env.document.body.querySelector("#atv-toggle-btn");
+    expect(btn?.style.display).toBe("");
+  });
+});
+
+describe("applyPanelVisibility: テキスト・right 位置の制御", () => {
+  let env;
+
+  beforeEach(() => {
+    env = makeEnv({ panelOpen: false });
+    addPanelHost(env.document, { display: "" });
+    addToggleButton(env.document, { display: "", right: "300px" });
+  });
+
+  afterEach(() => {
+    env.document.body.innerHTML = "";
+  });
+
+  it("ON 時はボタンテキストが '‹' になる", async () => {
+    env.panelUi?.applyPanelVisibility?.(true);
+    await flushRaf();
 
     const btn = env.document.body.querySelector("#atv-toggle-btn");
     expect(btn?.textContent).toBe("‹");
   });
 
-  it("OFF 時はボタンテキストが '›' になる", () => {
-    addToggleButton(env.document);
+  it("OFF 時はボタンテキストが '›' になる", async () => {
     env.panelUi?.applyPanelVisibility?.(false);
+    await flushRaf();
 
     const btn = env.document.body.querySelector("#atv-toggle-btn");
     expect(btn?.textContent).toBe("›");
   });
 
-  it("OFF 時は right が '0px' になる", () => {
-    addToggleButton(env.document, { right: "300px" });
+  it("ON 時は right が panel host 幅ぶんの '300px' になる", async () => {
+    env.panelUi?.applyPanelVisibility?.(true);
+    await flushRaf();
+
+    const btn = env.document.body.querySelector("#atv-toggle-btn");
+    expect(btn?.style.right).toBe("300px");
+  });
+
+  it("OFF 時は right が '0px' になる", async () => {
     env.panelUi?.applyPanelVisibility?.(false);
+    await flushRaf();
 
     const btn = env.document.body.querySelector("#atv-toggle-btn");
     expect(btn?.style.right).toBe("0px");
@@ -248,17 +324,60 @@ describe("updateToggleButton: テキスト・right 位置の制御", () => {
 });
 
 // =============================================================
-// panelDefaultOpen と panelOpen の責務分離（不変条件）
+// overlay controller 呼び出し
+// =============================================================
+
+describe("applyPanelVisibility: overlay 位置同期", () => {
+  let env;
+
+  beforeEach(() => {
+    env = makeEnv({ panelOpen: false });
+    addPanelHost(env.document, { display: "" });
+    addToggleButton(env.document);
+  });
+
+  afterEach(() => {
+    env.document.body.innerHTML = "";
+  });
+
+  it("OFF 時は panelOpen:false で overlay 位置同期を呼ぶ", async () => {
+    env.panelUi?.applyPanelVisibility?.(false);
+    await flushRaf();
+
+    expect(
+      env.stubs.overlayController.syncOverlayPositionToPlayer,
+    ).toHaveBeenCalledWith({
+      reason: "panel-visibility-change",
+      panelOpen: false,
+    });
+  });
+
+  it("ON 時は panelOpen:true で overlay 位置同期を呼ぶ", async () => {
+    env.panelUi?.applyPanelVisibility?.(true);
+    await flushRaf();
+
+    expect(
+      env.stubs.overlayController.syncOverlayPositionToPlayer,
+    ).toHaveBeenCalledWith({
+      reason: "panel-visibility-change",
+      panelOpen: true,
+    });
+  });
+});
+
+// =============================================================
+// panelDefaultOpen と panelOpen の責務分離
 // =============================================================
 
 describe("applyPanelVisibility: panelDefaultOpen と panelOpen を混同しない", () => {
-  it("applyPanelVisibility は chrome.storage.sync（panelDefaultOpen）に書かない", () => {
+  it("applyPanelVisibility は chrome.storage.sync（panelDefaultOpen）に書かない", async () => {
     const env = makeEnv();
-    env.window.chrome.storage.sync = { set: vi.fn(), get: vi.fn() };
+    addPanelHost(env.document, { display: "" });
     addToggleButton(env.document);
 
     env.panelUi?.applyPanelVisibility?.(true);
     env.panelUi?.applyPanelVisibility?.(false);
+    await flushRaf();
 
     expect(env.window.chrome.storage.sync.set).not.toHaveBeenCalled();
 

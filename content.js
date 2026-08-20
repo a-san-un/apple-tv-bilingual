@@ -29,9 +29,9 @@
     preferredAiProvider: "auto",
   };
 
-  const DEBUG_SECONDARY_SUBS = false; // Optional probe logs for #19 regressions. Keep false in normal operation.
-  // Optional probe logs for #19 regressions. Keep false in normal operation.
-  const DEBUG_PANEL_PROBE = false;
+  const DEBUG_SECONDARY_SUBS = false; // Subtitle probe logs. Keep false in normal operation.
+  const DEBUG_PANEL_PROBE = false; // Panel/UI probe logs. Keep false in normal operation.
+  const DEBUG_MEMORY_PROBE = true; // Memory lifecycle probe logs. Keep false in normal operation.
   const LOG_CATEGORIES = Object.freeze({
     SETTINGS: "settings",
     SUBTITLE: "subtitle",
@@ -53,6 +53,8 @@
 
   const state = {
     booted: false,
+    bilingualSessionSeq: 0,
+    activeBilingualSessionId: null,
     restarting: false,
     video: null,
     dialogEl: null,
@@ -71,8 +73,6 @@
     currentSubtitleBlock: null,
     lastCurrentSubtitleBlockAt: 0,
     lastAfterRenderSecondarySnapshotSignature: "",
-    lastSecondarySyncContext: "",
-    lastPrimaryRecoveryAttemptAt: 0,
     lastPrimarySnapshotAt: 0,
     lastObservedVideoTime: null,
     lastLargeSeekAt: 0,
@@ -346,6 +346,21 @@ function forwardContentLog(...args) {
       message,
       buildContentScopedPayload(payload),
     );
+
+  function logSubtitleProbe(message, payload = null) {
+    if (!DEBUG_SECONDARY_SUBS) return;
+    logContentSubtitle(message, payload);
+  }
+
+  function logPanelProbe(message, payload = null) {
+    if (!DEBUG_PANEL_PROBE) return;
+    logContentUi(message, payload);
+  }
+
+  function logMemoryProbe(message, payload = null) {
+    if (!DEBUG_MEMORY_PROBE) return;
+    logContentUi(message, payload);
+  }
 
   function getLiveDebugLogFilter() {
     return {
@@ -690,206 +705,25 @@ function forwardContentLog(...args) {
     }
   }
 
-  async function syncSecondarySubtitleTrack(
-    video,
-    requestedLang,
-    renderSecondarySubtitle,
-  ) {
-    if (!video) return;
-
-    if (false && DEBUG_SECONDARY_SUBS) {
-      logContent(
-        "secondary sync",
-        getSecondaryTrackDebugPayload(
-          requestedLang,
-          cueController.getBoundSecondaryTrack(),
-        ),
-      );
-    }
-
-    await subtitleSyncController.syncSecondarySubtitleTrack(
-      video,
-      requestedLang,
-      {
-        primaryLang: state.contentSettings.primaryLang || "",
-        renderSecondarySubtitle,
-      },
-    );
-
-    state.secondaryTrack = cueController.getBoundSecondaryTrack();
-  }
-
   function ensureSecondaryTrackSyncInterval() {
     if (secondaryTrackSyncInterval) return;
 
-    secondaryTrackSyncInterval = window.setInterval(() => {
+    secondaryTrackSyncInterval = window.setInterval(async () => {
       if (state.restarting) return;
       if (syncIntervalOrchestrator?.isPaused?.()) return;
 
-      const found = getVideoAndDialog();
-      const nextVideo = found?.video || state.video;
-      const nextVideoSrcKey = getCurrentVideoSrcKey(nextVideo);
-      const hasCurrentSrcChanged =
-        Boolean(nextVideoSrcKey) &&
-        nextVideoSrcKey !== state.lastVideoSrcKey;
+      syncIntervalOrchestrator?.refreshPlaybackContext?.();
 
-      if (hasCurrentSrcChanged) {
-        logContent("currentSrc changed", {
-          previousVideoSrcKey: state.lastVideoSrcKey,
-          nextVideoSrcKey,
-        });
-      }
+      const effectiveSecondaryLanguage =
+        getResolverRequestedSecondaryLanguage();
 
-      if (found && (found.video !== state.video || hasCurrentSrcChanged)) {
-        state.video = found.video;
-        state.dialogEl = found.dialog;
-        state.lastVideoSrcKey = nextVideoSrcKey;
-        state.lastObservedVideoTime = null;
-        reinitializeCoordinator?.reloadSettingsAndReinitialize?.("video_changed");
-      } else if (found && state.video) {
-        const switched = syncHistoryContextWithPlayback("content_key_changed");
-        if (switched) {
-          requestSnapshotRefresh("content_key_changed");
-          renderPanel();
-        }
-      }
+      syncIntervalOrchestrator?.detectLargeSeek?.();
 
-      const currentVideoTime = Number(state.video?.currentTime ?? 0);
-      const previousObservedTime = Number(state.lastObservedVideoTime);
-      const largeSeekDetected =
-        Number.isFinite(previousObservedTime) &&
-        Number.isFinite(currentVideoTime) &&
-        Math.abs(currentVideoTime - previousObservedTime) > 6;
-      state.lastObservedVideoTime = Number.isFinite(currentVideoTime)
-        ? currentVideoTime
-        : null;
-
-      if (largeSeekDetected) {
-        requestSnapshotRefresh("sync_interval_large_seek_resync");
-      }
-
-      const effectiveSecondaryLanguage = getResolverRequestedSecondaryLanguage();
       if (!state.video || !effectiveSecondaryLanguage) return;
 
-      const previousSecondaryTrack = state.secondaryTrack;
-      syncSecondarySubtitleTrack(
-        state.video,
+      await syncIntervalOrchestrator?.runSecondaryRecoveryPass?.(
         effectiveSecondaryLanguage,
-        renderSecondarySubtitle,
       );
-      state.secondaryTrack = cueController.getBoundSecondaryTrack();
-
-      const secondaryActiveCues = getTrackActiveCuesLength(
-        state.secondaryTrack,
-      );
-      const primaryActiveCues = getTrackActiveCuesLength(state.primaryTrack);
-      const secondaryCueText = normalizeSubtitleText(
-        getCurrentCueText(state.secondaryTrack),
-      );
-      const primaryCueText = normalizeSubtitleText(
-        getCurrentCueText(state.primaryTrack),
-      );
-      const snapshotPrimaryText = normalizeSubtitleText(
-        state.lastPanelRenderSnapshot?.currentSubtitleBlock?.primaryText || "",
-      );
-      const hasPrimaryLiveSignal =
-        primaryActiveCues > 0 || Boolean(primaryCueText);
-      const now = Date.now();
-      const hasFreshPrimarySnapshot =
-        Boolean(snapshotPrimaryText) &&
-        state.lastPrimarySnapshotAt > 0 &&
-        now - state.lastPrimarySnapshotAt <= 3000;
-      const hasSecondarySignal =
-        secondaryActiveCues > 0 || Boolean(secondaryCueText);
-
-      const syncContextSummary = JSON.stringify({
-        trackCount: state.video?.textTracks?.length ?? 0,
-        primaryTrackFound: Boolean(state.primaryTrack),
-        secondaryTrackFound: Boolean(state.secondaryTrack),
-        secondaryTrackLanguage: state.secondaryTrack?.language || "",
-        secondaryActiveCues,
-        primaryActiveCues,
-        primaryCueTextLength: primaryCueText.length,
-        snapshotPrimaryTextLength: snapshotPrimaryText.length,
-        hasFreshPrimarySnapshot,
-      });
-      const shouldLogSyncContext =
-        previousSecondaryTrack !== state.secondaryTrack ||
-        syncContextSummary !== state.lastSecondarySyncContext;
-      if (shouldLogSyncContext) {
-        state.lastSecondarySyncContext = syncContextSummary;
-        if (false) {
-          if (false) logContent("secondary track sync context", {
-            reason: "sync_interval",
-            effectiveSecondaryLanguage,
-            trackCount: state.video?.textTracks?.length ?? 0,
-            primaryTrackFound: Boolean(state.primaryTrack),
-            secondaryTrackFound: Boolean(state.secondaryTrack),
-            secondaryTrackLanguage: state.secondaryTrack?.language || "",
-            secondaryActiveCues,
-            primaryActiveCues,
-            primaryCueTextLength: primaryCueText.length,
-            snapshotPrimaryTextLength: snapshotPrimaryText.length,
-            hasFreshPrimarySnapshot,
-          });
-        }
-      }
-
-      const trackCount = state.video?.textTracks?.length ?? 0;
-      const extensionEnabled = state.contentSettings?.extensionEnabled !== false;
-      // primary / secondary の両方が現在の cue signal を失った場合に
-      // パイプライン再初期化を試みる。
-      // 従来は secondary が生きている場合しか primary を救済しなかったため、
-      // 両トラックが同時に cue を失うケースで自動復旧が一切発火しなかった。
-      // hasPrimarySignal（過去3秒以内のスナップショットも含む）ではなく
-      // hasPrimaryLiveSignal（現在の cue のみ）を使うことで、
-      // 古いスナップショットを「正常」と誤判定しないようにする。
-      const shouldAttemptTrackRecovery =
-        extensionEnabled &&
-        !hasPrimaryLiveSignal &&
-        !hasSecondarySignal &&
-        trackCount > 1;
-
-      // [binder/cue: recovery - sync interval path]
-      // primary / secondary の両方に現在時刻の cue signal が無い場合、
-      // sync interval 経由でトラック解決とリスナー再バインドを試行する。
-      // extensionEnabled=false の間は recovery 自体を止める。
-
-      if (!shouldAttemptTrackRecovery) {
-        if (hasPrimaryLiveSignal || hasSecondarySignal || !extensionEnabled) {
-          state.lastPrimaryRecoveryAttemptAt = 0;
-        }
-        return;
-      }
-
-      if (
-        state.lastPrimaryRecoveryAttemptAt &&
-        now - state.lastPrimaryRecoveryAttemptAt < 4000
-      ) {
-        return;
-      }
-
-      state.lastPrimaryRecoveryAttemptAt = now;
-      const recoveryResult = reinitializeCoordinator?.reinitializeSubtitlePipeline?.(
-        "sync_interval_track_recovery",
-      );
-      if (recoveryResult) {
-        logContent("sync interval track recovery", {
-          trackCount,
-          primaryTrackFound: recoveryResult.primaryTrackFound,
-          secondaryTrackFound: recoveryResult.secondaryTrackFound,
-          primaryListenerBound: recoveryResult.primaryListenerBound,
-          secondaryListenerBound: recoveryResult.secondaryListenerBound,
-          primaryActiveCues,
-          secondaryActiveCues,
-          hasPrimaryLiveSignal,
-          hasSecondarySignal,
-        });
-
-        if (recoveryResult.primaryTrackFound && recoveryResult.secondaryTrackFound) {
-          state.lastPrimaryRecoveryAttemptAt = 0;
-        }
-      }
     }, 1000);
   }
 
@@ -1971,13 +1805,32 @@ function forwardContentLog(...args) {
     const reason = options?.reason || "";
 
     if (afterCount > beforeCount || incomingCount !== afterCount) {
-      logContent("subtitle blocks set", {
+      logSubtitleProbe("subtitle blocks set", {
         sourceTag,
         reason,
         beforeCount,
         incomingCount,
         afterCount,
         trimmed: incomingCount > afterCount,
+        currentTime: Number.isFinite(state.video?.currentTime)
+          ? state.video.currentTime
+          : null,
+        readyState: state.video?.readyState ?? null,
+        paused:
+          typeof state.video?.paused === "boolean"
+            ? state.video.paused
+            : null,
+        videoSrc: state.video?.currentSrc || state.video?.src || "",
+        primaryTrackLanguage: state.primaryTrack?.language || "",
+        primaryTrackMode: state.primaryTrack?.mode || "",
+        primaryTrackCuesLength: state.primaryTrack?.cues?.length ?? 0,
+        primaryTrackActiveCuesLength:
+          state.primaryTrack?.activeCues?.length ?? 0,
+        secondaryTrackLanguage: state.secondaryTrack?.language || "",
+        secondaryTrackMode: state.secondaryTrack?.mode || "",
+        secondaryTrackCuesLength: state.secondaryTrack?.cues?.length ?? 0,
+        secondaryTrackActiveCuesLength:
+          state.secondaryTrack?.activeCues?.length ?? 0,
       });
     }
   }
@@ -2126,10 +1979,21 @@ function forwardContentLog(...args) {
       })
     : null;
 
+  const createSubtitleRecoveryManager =
+    root.createSubtitleRecoveryManager || null;
+  const subtitleRecoveryManager = createSubtitleRecoveryManager
+    ? createSubtitleRecoveryManager({
+        logContent,
+        cooldownMs: 4000,
+        secondaryTrackRecovery,
+      })
+    : null;
+
   const cueController = createCueController({
     state,
     logContent,
     DEBUG_SECONDARY_SUBS,
+    DEBUG_MEMORY_PROBE,
     getSecondaryTrackDebugPayload,
     resolveSecondarySubtitleTrack: resolverDeps.resolveSecondarySubtitleTrack,
     getCurrentCueText,
@@ -2169,7 +2033,7 @@ function forwardContentLog(...args) {
     textTrackDebug,
     cueSequenceBuilder,
     cueRenderCoordinator,
-    secondaryTrackRecovery,
+    subtitleRecoveryManager,
     createTrackListenerBinding,
   });
 
@@ -2186,6 +2050,8 @@ function forwardContentLog(...args) {
       logContent,
       createSyncIntervalOrchestrator:
         window.ATVB?.createSyncIntervalOrchestrator,
+      createSubtitleHealthSnapshot:
+        window.ATVB?.createSubtitleHealthSnapshot,
       resolver: resolverDeps,
       bindSecondaryTrack: (track, options = {}) => {
         const modeDecision = {
@@ -2376,55 +2242,8 @@ let syncIntervalOrchestrator = null;
     },
   }) ?? null;
 
-const getMergedSubtitleHealthSnapshot = () =>
-  cueController?.getMergedSubtitleHealth?.() ?? null;
-
-const syncSecondarySubtitleTrackBinding = (...args) =>
-  cueController?.syncSecondarySubtitleTrack?.(...args);
-
-
-  function _ensureSyncIntervalOrchestrator() {
-    if (syncIntervalOrchestrator) return syncIntervalOrchestrator;
-
-    syncIntervalOrchestrator =
-      subtitleSyncController?.ensureSyncIntervalOrchestrator?.({
-        state,
-        controllers: {
-          cueController,
-        },
-        services: {
-          logContent,
-          getVideoAndDialog,
-          getCurrentVideoSrcKey,
-          syncHistoryContextWithPlayback,
-          renderCurrentSnapshot,
-          renderPanel,
-          reloadSettingsAndReinitialize: (reason) =>
-            reinitializeCoordinator?.reloadSettingsAndReinitialize?.(reason),
-          clearPlaybackSessionUiState: (reason) =>
-            playbackSessionCleanup?.clearPlaybackSessionUiState?.(reason),
-          debugPanelProbe: DEBUG_PANEL_PROBE,
-          getTrackActiveCuesLength,
-          getCurrentCueText,
-          normalizeSubtitleText: vttDeps.normalizeSubtitleText,
-          getMergedSubtitleHealthSnapshot,
-          syncSecondarySubtitleTrackBinding,
-          syncSecondarySubtitleTrack,
-          renderSecondarySubtitle,
-          resolverDeps,
-          panelUi,
-          initialCueRecovery,
-          getRequestedSecondaryLang: () => state.requestedSecondaryLang,
-        },
-      }) || null;
-
-    return syncIntervalOrchestrator;
-  }
-
   const {
     waitForVideo,
-    refreshPlaybackControlResizeObserverTargets: _refreshPlaybackControlResizeObserverTargets,
-    startPlaybackControlLayoutObservers: _startPlaybackControlLayoutObservers,
     stopPlaybackControlLayoutObservers,
   } = runtimeObservers;
 
@@ -2444,29 +2263,33 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
         applyLayout,
         clearInternalSubtitleState,
         cueController,
+        subtitleRecoveryManager,
         runtimeObservers,
       },
     }) ?? null;
 
+  // playback 起動前段の coordination を担当する。
+  // 初回 boot だけでなく、playback target 切替時の cleanup → 再 attach → 再 start もここへ寄せる。
   const playbackStartupCoordinator =
     window.ATVB?.createPlaybackStartupCoordinator?.({
       state,
       services: {
         logContent,
         isLanguageSelectionReady,
+        getPlaybackContext,
+        getPlaybackContextLogPayload,
         getVideoAndDialog,
+        getCurrentVideoSrcKey,
+        resolvePlaybackContentKey,
         waitForVideo,
         attachTracks,
         startBilingual,
         clearSubtitles: () =>
-        clearInternalSubtitleState({ preserveSecondaryDom: false }),
+          clearInternalSubtitleState({ preserveSecondaryDom: false }),
+        playbackSessionCleanup,
       },
     }) ?? null;
     
-  function _loadPanelVisibility() {
-    const panelDefaultOpen = state.contentSettings?.panelDefaultOpen;
-    return globalThis.ATVB_PANEL_VISIBILITY.load(panelDefaultOpen !== false);
-  }
 
   function persistPanelVisibility() {
     globalThis.ATVB_PANEL_VISIBILITY.persist(state.panelOpen, (msg, data) => {
@@ -2497,35 +2320,16 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
     clearInitialCueRecoveryCleanup();
   }
 
-  // [binder/cue: attach] primary / secondary track の選択と bind 完了までをまとめて扱う。
-  // secondary は非同期同期を含むため、完了を待ってから state へ反映し startBilingual に返す。
-  async function selectPrimaryAndSecondaryTracks(
-    video,
-    primaryLang,
-    secondaryLang,
-    reason = "unknown",
-  ) {
-    if (!video?.textTracks) {
-      return {
-        reason,
-        trackCount: 0,
-        primaryTrackFound: false,
-        secondaryTrackFound: false,
-        primaryListenerBound: false,
-        secondaryListenerBound: false,
-      };
-    }
-
-    state.video = video;
-
+  function resetSubtitleTrackBindings() {
     // [attach: primary/secondary reset] 既存 bind を一度解除してから今回の track 選択に入る。
     // 前回の再生状態を残したまま再初期化しないよう、state と listener を先に空にする。
     cueController.unbindPrimarySubtitleTrack();
     cueController.unbindSecondarySubtitleTrack();
     state.primaryTrack = null;
     state.secondaryTrack = null;
+  }
 
-    const tracks = video.textTracks;
+  function attachPrimarySubtitleTrack(video, tracks, primaryLang) {
     let primaryListenerBound = false;
 
     // [attach: primary] primary は同期的に最良候補を選び、その場で bind する。
@@ -2549,6 +2353,18 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       primaryListenerBound = false;
     }
 
+    return {
+      primaryListenerBound,
+      primaryTrackFound: Boolean(state.primaryTrack),
+    };
+  }
+
+  async function attachSecondarySubtitleTrack(
+    video,
+    primaryLang,
+    secondaryLang,
+    reason = "unknown",
+  ) {
     // [attach: secondary] secondary は showing warmup / native fallback を含むため非同期。
     // ここで await して bind 完了後の実トラックを state に反映する。
     if (secondaryLang) {
@@ -2603,28 +2419,71 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
     }
 
     return {
+      secondaryListenerBound: Boolean(state.secondaryTrack),
+      secondaryTrackFound: Boolean(state.secondaryTrack),
+    };
+  }
+
+  function serializeTrackSummary(track) {
+    if (!track) return null;
+
+    return {
+      language: track.language || "",
+      label: track.label || "",
+      kind: track.kind || "",
+      mode: track.mode || "",
+    };
+  }
+
+  // [binder/cue: attach] primary / secondary track の選択と bind 完了までをまとめて扱う。
+  // secondary は非同期同期を含むため、完了を待ってから state へ反映し startBilingual に返す。
+  async function selectPrimaryAndSecondaryTracks(
+    video,
+    primaryLang,
+    secondaryLang,
+    reason = "unknown",
+  ) {
+    if (!video?.textTracks) {
+      return {
+        reason,
+        trackCount: 0,
+        primaryTrackFound: false,
+        secondaryTrackFound: false,
+        primaryListenerBound: false,
+        secondaryListenerBound: false,
+        primaryTrack: null,
+        secondaryTrack: null,
+      };
+    }
+
+    state.video = video;
+
+    resetSubtitleTrackBindings();
+
+    const tracks = video.textTracks;
+
+    const { primaryListenerBound } = attachPrimarySubtitleTrack(
+      video,
+      tracks,
+      primaryLang,
+    );
+
+    const { secondaryListenerBound } = await attachSecondarySubtitleTrack(
+      video,
+      primaryLang,
+      secondaryLang,
+      reason,
+    );
+
+    return {
       reason,
       trackCount: tracks.length,
       primaryTrackFound: Boolean(state.primaryTrack),
       secondaryTrackFound: Boolean(state.secondaryTrack),
       primaryListenerBound,
-      secondaryListenerBound: Boolean(state.secondaryTrack),
-      primaryTrack: state.primaryTrack
-        ? {
-            language: state.primaryTrack.language || "",
-            label: state.primaryTrack.label || "",
-            kind: state.primaryTrack.kind || "",
-            mode: state.primaryTrack.mode || "",
-          }
-        : null,
-      secondaryTrack: state.secondaryTrack
-        ? {
-            language: state.secondaryTrack.language || "",
-            label: state.secondaryTrack.label || "",
-            kind: state.secondaryTrack.kind || "",
-            mode: state.secondaryTrack.mode || "",
-          }
-        : null,
+      secondaryListenerBound,
+      primaryTrack: serializeTrackSummary(state.primaryTrack),
+      secondaryTrack: serializeTrackSummary(state.secondaryTrack),
     };
   }
 
@@ -2640,19 +2499,25 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
   // 新規呼び出しは { preserveSecondaryDom: bool } 形式を使うこと。
   function clearInternalSubtitleState(reasonOrOptions = {}) {
     let preserveSecondaryDom = false;
+    let resetReason = "clear-internal-subtitle-state";
 
-    // 後方互換: 文字列で呼ばれた場合
     if (typeof reasonOrOptions === "string") {
       preserveSecondaryDom =
         reasonOrOptions === "prepareForRestart" ||
         reasonOrOptions === "panelToggle";
+      resetReason = reasonOrOptions || resetReason;
     } else {
       preserveSecondaryDom =
         typeof reasonOrOptions.preserveSecondaryDom === "boolean"
           ? reasonOrOptions.preserveSecondaryDom
           : false;
+      resetReason =
+        typeof reasonOrOptions.reason === "string" && reasonOrOptions.reason
+          ? reasonOrOptions.reason
+          : resetReason;
     }
 
+    subtitleRecoveryManager?.reset?.(resetReason);
     subtitleStateReset.clearSubtitleState({ preserveSecondaryDom });
   }
 
@@ -2673,7 +2538,6 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
   }
 
   // [binder/cue: attach] secondary track binder
-
   // [binder/cue: fan-out] cuechange fan-out:
   // track(primary/secondary) → binder → overlay/history/panel render
   function onCueChange() {
@@ -2909,6 +2773,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
     }
 
     // 起動時点の panelOpen / panelDefaultOpen / keepPanelOpen をログへ残す
+    // 起動時点の panelOpen / panelDefaultOpen / keepPanelOpen をログへ残す
     logContent("startBilingual trace", {
       panelOpen: state.panelOpen,
       keepPanelOpen:
@@ -2918,7 +2783,8 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       requestedContentSettings: {
         primaryLang: state.requestedContentSettings?.primaryLang || "",
         secondaryLang: state.requestedContentSettings?.secondaryLang || "",
-        panelDefaultOpen: state.requestedContentSettings?.panelDefaultOpen ?? null,
+        panelDefaultOpen:
+          state.requestedContentSettings?.panelDefaultOpen ?? null,
       },
       contentSettings: {
         primaryLang: state.contentSettings?.primaryLang || "",
@@ -2926,7 +2792,29 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
         panelDefaultOpen: state.contentSettings?.panelDefaultOpen ?? null,
       },
       requestedSecondaryLang: state.requestedSecondaryLang || "",
+      currentTime: Number.isFinite(state.video?.currentTime)
+        ? state.video.currentTime
+        : null,
+      readyState: state.video?.readyState ?? null,
+      paused:
+        typeof state.video?.paused === "boolean" ? state.video.paused : null,
+      videoSrc: state.video?.currentSrc || state.video?.src || "",
+      textTrackCount: state.video?.textTracks?.length ?? 0,
     });
+
+    state.bilingualSessionSeq += 1;
+    state.activeBilingualSessionId = state.bilingualSessionSeq;
+
+    logMemoryProbe("startBilingual session-start", {
+      sessionId: state.activeBilingualSessionId,
+      reason: options.reason || "",
+      currentTime: Number.isFinite(state.video?.currentTime)
+        ? state.video.currentTime
+        : null,
+      videoSrc: state.video?.currentSrc || state.video?.src || "",
+      textTrackCount: state.video?.textTracks?.length ?? 0,
+    });
+
 
     // console.trace("startBilingual trace");
 
@@ -3132,31 +3020,31 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       });
 
       // 再生画面で使う UI を順番に build する
-      logContent("startBilingual ui build step", {
+      logPanelProbe("startBilingual ui build step", {
         step: "before_createOverlay",
         panelOpen: state.panelOpen,
       });
       createOverlay();
 
-      logContent("startBilingual ui build step", {
+      logPanelProbe("startBilingual ui build step", {
         step: "before_createToggleButton",
         panelOpen: state.panelOpen,
       });
       panelUi.createToggleButton();
 
-      logContent("startBilingual ui build step", {
+      logPanelProbe("startBilingual ui build step", {
         step: "after_createToggleButton",
         hasToggleButton: Boolean(document.body.querySelector("#atv-toggle-btn")),
       });
       panelUi.createRightPanel();
 
-      logContent("startBilingual ui build step", {
+      logPanelProbe("startBilingual ui build step", {
         step: "after_createRightPanel",
         hasPanelHost: Boolean(document.querySelector("#atv-panel-host")),
       });
       panelUi.watchForPlayerTabs();
 
-      logContent("startBilingual ui build step", {
+      logPanelProbe("startBilingual ui build step", {
         step: "after_watchForPlayerTabs",
         hasNativeToggle: Boolean(document.getElementById("atvb-native-toggle")),
       });
@@ -3164,7 +3052,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       createDebugPanel();
 
       // build 後に panelOpen を各 UI へ反映する
-      logContent("startBilingual ui build step", {
+      logPanelProbe("startBilingual ui build step", {
         step: "before_applyPanelVisibility",
         panelOpen: state.panelOpen,
       });
@@ -3173,7 +3061,7 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
       renderPanel();
       panelUi.applyPanelVisibility(state.panelOpen);
 
-      logContent("startBilingual ui build step", {
+      logPanelProbe("startBilingual ui build step", {
         step: "after_applyPanelVisibility",
         hasToggleButton: Boolean(document.body.querySelector("#atv-toggle-btn")),
         hasPanelHost: Boolean(document.querySelector("#atv-panel-host")),
@@ -3226,49 +3114,6 @@ const syncSecondarySubtitleTrackBinding = (...args) =>
     ensureSecondaryTrackSyncInterval();
   }
 
-  let lastObservedUrl = location.href;
-
-  function handlePotentialNavigationChange(reason = "unknown") {
-    if (location.href === lastObservedUrl) return;
-    lastObservedUrl = location.href;
-
-    logContent("navigation changed", {
-      reason,
-      url: location.href,
-    });
-
-    playbackSessionCleanup?.clearPlaybackSessionUiState?.(
-      "reinitialize_before_attach_tracks",
-    );
-
-    const found = getVideoAndDialog();
-    if (found) {
-      state.video = found.video;
-      state.dialogEl = found.dialog;
-      state.lastVideoSrcKey = getCurrentVideoSrcKey(found.video);
-      startBilingual();
-      return;
-    }
-
-    state.video = null;
-    state.dialogEl = null;
-    state.lastVideoSrcKey = "";
-
-    playbackSessionCleanup?.handleNavigationTargetMissing?.({
-      reason,
-      url: location.href,
-      playbackContext: getPlaybackContextLogPayload(),
-    });
-  }
-
-  const navigationObserver = new MutationObserver(() => {
-    handlePotentialNavigationChange("mutation_observer");
-  });
-
-  navigationObserver.observe(document.documentElement, {
-    childList: true,
-    subtree: true,
-  });
 
   let startupCompletedLogged = false;
 

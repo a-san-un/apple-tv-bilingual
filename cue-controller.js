@@ -15,6 +15,7 @@
     state,
     logContent,
     DEBUG_SECONDARY_SUBS,
+    DEBUG_MEMORY_PROBE,
     getSecondaryTrackDebugPayload,
     resolveSecondarySubtitleTrack,
     getCurrentCueText,
@@ -47,27 +48,20 @@
     textTrackDebug = null,
     cueSequenceBuilder = null,
     cueRenderCoordinator = null,
-    secondaryTrackRecovery = null,
+    subtitleRecoveryManager = null,
     createTrackListenerBinding = null,
   }) {
 
-    // 現在 bind されている primary listener の解除関数を保持する。
     let primaryTrackCleanup = null;
-
-    // 現在 bind 済みの primary track を保持する。
+    let primaryTrackCleanupMeta = null;
     let primaryTrackBound = null;
-
-    // primary track を拡張が変更する前の mode を保持する。
     let primaryTrackOriginalMode = null;
 
-    // 現在 bind されている secondary listener の解除関数を保持する。
     let secondaryTrackCleanup = null;
-
-    // 現在 bind 済みの secondary track を保持する。
+    let secondaryTrackCleanupMeta = null;
     let secondaryTrackBound = null;
-
-    // secondary track を拡張が変更する前の mode を保持する。
     let secondaryTrackOriginalMode = null;
+
 
     // ensureSubtitleTracksUsable() で一時的に mode を変更した track 一覧。
     // bound 済み primary / secondary 以外も含めて、拡張OFF時に元 mode を復元するために使う。
@@ -85,6 +79,45 @@
         mode: track?.mode || "",
         cuesLength: getTrackCuesLength(track),
         activeCuesLength: getTrackActiveCuesLength(track),
+      };
+    }
+
+    function logMemoryProbe(message, payload = null) {
+      if (!DEBUG_MEMORY_PROBE) return;
+      logContent(message, payload);
+    }
+
+    let listenerBindingSeq = 0;
+
+    function getActiveSessionId() {
+      return Number.isFinite(state?.activeBilingualSessionId)
+        ? state.activeBilingualSessionId
+        : null;
+    }
+
+    function createListenerBindingMeta(lane, track, extra = {}) {
+      listenerBindingSeq += 1;
+
+      return {
+        bindingId: `${lane}-${listenerBindingSeq}`,
+        sessionId: getActiveSessionId(),
+        lane,
+        trackLanguage: track?.language || "",
+        trackKind: track?.kind || "",
+        trackLabel: track?.label || "",
+        ...extra,
+      };
+    }
+
+    function buildExistingBindingMeta(meta, extra = {}) {
+      return {
+        bindingId: meta?.bindingId || "",
+        sessionId: meta?.sessionId ?? getActiveSessionId(),
+        lane: meta?.lane || "",
+        trackLanguage: meta?.trackLanguage || "",
+        trackKind: meta?.trackKind || "",
+        trackLabel: meta?.trackLabel || "",
+        ...extra,
       };
     }
 
@@ -146,20 +179,30 @@
 
       const targetTrack = options.targetTrack || null;
       if (!video?.textTracks || (!requestedLang && !targetTrack)) {
-        const payload = {
+                const payload = {
           reason,
           requestedLang: requestedLang || "",
-          finalMode,
+          finalMode: "hidden",
           matchedTrackCount: 0,
           activatedTrackCount: 0,
           activated: false,
           activationHoldMs,
           cuePollIntervalMs,
           cuePollTimeoutMs,
+          currentTime: Number.isFinite(video?.currentTime)
+            ? video.currentTime
+            : null,
+          readyState: video?.readyState ?? null,
+          paused:
+            typeof video?.paused === "boolean" ? video.paused : null,
+          videoSrc: video?.currentSrc || video?.src || "",
           tracks: [],
         };
-        logContent("subtitle track usability", payload);
+        if (DEBUG_SECONDARY_SUBS) {
+          logContent("subtitle track usability", payload);
+        }
         return payload;
+
       }
 
       const tracks = Array.from(video.textTracks || []);
@@ -197,16 +240,18 @@
             } catch (_) {}
           }
 
-          logContent("subtitle track usability restore", {
-            reason,
-            requestedLang: requestedLang || "",
-            restoreReason,
-            activationHoldMs,
-            cuePollIntervalMs,
-            cuePollTimeoutMs,
-            elapsedMs: Date.now() - startedAt,
-            tracks: targets.map((track) => getUsableTrackDebugPayload(track)),
-          });
+          if (DEBUG_SECONDARY_SUBS) {
+            logContent("subtitle track usability restore", {
+              reason,
+              requestedLang: requestedLang || "",
+              restoreReason,
+              activationHoldMs,
+              cuePollIntervalMs,
+              cuePollTimeoutMs,
+              elapsedMs: Date.now() - startedAt,
+              tracks: targets.map((track) => getUsableTrackDebugPayload(track)),
+            });
+          }
         };
 
         const pollUntilReady = () => {
@@ -245,11 +290,21 @@
         activationHoldMs,
         cuePollIntervalMs,
         cuePollTimeoutMs,
+        currentTime: Number.isFinite(video?.currentTime)
+          ? video.currentTime
+          : null,
+        readyState: video?.readyState ?? null,
+        paused:
+          typeof video?.paused === "boolean" ? video.paused : null,
+        videoSrc: video?.currentSrc || video?.src || "",
         tracks: targets.map((track) => getUsableTrackDebugPayload(track)),
       };
 
-      logContent("subtitle track usability", payload);
+      if (DEBUG_SECONDARY_SUBS) {
+        logContent("subtitle track usability", payload);
+      }
       return payload;
+
     }
 
     // 最新の merged subtitle health を観測・外部参照用に保持する。
@@ -265,7 +320,7 @@
     const NEARBY_REBUILD_SEEK_WINDOW_MS = 4000;
 
     function resetSecondaryRecoveryLane(reason = "manual-reset") {
-      return secondaryTrackRecovery?.resetSecondaryRecoveryLane?.(reason) ?? null;
+      return subtitleRecoveryManager?.resetSecondaryRecovery?.(reason) ?? null;
     }
 
     // secondary track の identity / readable 状態を Round 8 用に揃えて観測する。
@@ -286,6 +341,70 @@
       };
     }
 
+    function getTrackReadabilitySnapshot(
+      track,
+      currentTime = getCurrentTime(),
+    ) {
+      const currentCue = getCurrentCue(track, currentTime);
+      const currentCueText = cleanCueText(currentCue);
+
+      return {
+        cuesLength: getTrackCuesLength(track),
+        activeCuesLength: getTrackActiveCuesLength(track),
+        hasCueOverlapAtCurrentTime: Boolean(currentCue),
+        currentCueTextLength: currentCueText.length,
+      };
+    }
+
+    function scoreTrackForCurrentTime(track, currentTime = getCurrentTime()) {
+      const snapshot = getTrackReadabilitySnapshot(track, currentTime);
+
+      let score = 0;
+      if (snapshot.hasCueOverlapAtCurrentTime) score += 1000;
+      if (snapshot.currentCueTextLength > 0) score += 500;
+      if (snapshot.activeCuesLength > 0) score += 100;
+      if (snapshot.cuesLength > 0) score += 10;
+
+      return {
+        score,
+        snapshot,
+      };
+    }
+
+    function pickMostReadableTrack(
+      tracks,
+      currentTime = getCurrentTime(),
+      preferredTrack = null,
+    ) {
+      let bestTrack = null;
+      let bestScore = -1;
+      let bestSnapshot = null;
+
+      for (const track of tracks || []) {
+        if (!track) continue;
+
+        const { score, snapshot } = scoreTrackForCurrentTime(
+          track,
+          currentTime,
+        );
+        const preferredBonus =
+          preferredTrack && track === preferredTrack ? 1 : 0;
+        const totalScore = score + preferredBonus;
+
+        if (totalScore > bestScore) {
+          bestTrack = track;
+          bestScore = totalScore;
+          bestSnapshot = snapshot;
+        }
+      }
+
+      return {
+        track: bestTrack,
+        snapshot: bestSnapshot,
+        score: bestScore,
+      };
+    }
+
     function evaluateSecondaryRecovery({
       now,
       runtime,
@@ -293,8 +412,8 @@
       sequence,
       derived,
     }) {
-      if (secondaryTrackRecovery?.evaluateSecondaryRecovery) {
-        return secondaryTrackRecovery.evaluateSecondaryRecovery({
+      if (subtitleRecoveryManager?.evaluateSecondaryRecovery) {
+        return subtitleRecoveryManager.evaluateSecondaryRecovery({
           now,
           runtime,
           currentCue,
@@ -307,7 +426,7 @@
         primaryLane: null,
         secondaryLane: null,
         action: "idle",
-        reason: "secondary_recovery_module_unavailable",
+        reason: "subtitle_recovery_manager_unavailable",
       };
     }
 
@@ -325,11 +444,29 @@
     function unbindPrimarySubtitleTrack(options = {}) {
       const restoreMode = options.restoreMode === true;
       const track = primaryTrackBound;
+      const cleanupMeta = primaryTrackCleanupMeta;
 
       if (primaryTrackCleanup) {
+        logMemoryProbe(
+          "track-listener-cleaned",
+          buildExistingBindingMeta(cleanupMeta, {
+            hadCleanup: true,
+          }),
+        );
+
         primaryTrackCleanup();
         primaryTrackCleanup = null;
+        primaryTrackCleanupMeta = null;
       }
+
+      logMemoryProbe(
+        "primary-track-unbound",
+        buildExistingBindingMeta(cleanupMeta, {
+          hadTrack: Boolean(track),
+          restoreMode,
+          originalMode: primaryTrackOriginalMode,
+        }),
+      );
 
       if (restoreMode && track && primaryTrackOriginalMode != null) {
         try {
@@ -458,11 +595,29 @@
     function unbindSecondarySubtitleTrack(options = {}) {
       const restoreMode = options.restoreMode !== false;
       const track = secondaryTrackBound;
+      const cleanupMeta = secondaryTrackCleanupMeta;
 
       if (secondaryTrackCleanup) {
+        logMemoryProbe(
+          "track-listener-cleaned",
+          buildExistingBindingMeta(cleanupMeta, {
+            hadCleanup: true,
+          }),
+        );
+
         secondaryTrackCleanup();
         secondaryTrackCleanup = null;
+        secondaryTrackCleanupMeta = null;
       }
+
+      logMemoryProbe(
+        "secondary-track-unbound",
+        buildExistingBindingMeta(cleanupMeta, {
+          hadTrack: Boolean(track),
+          restoreMode,
+          originalMode: secondaryTrackOriginalMode,
+        }),
+      );
 
       if (restoreMode && track && secondaryTrackOriginalMode != null) {
         try {
@@ -518,12 +673,35 @@
         return false;
       }
 
+      const bindingMeta = createListenerBindingMeta("primary", track, {
+        usePlaybackSignals: true,
+      });
+
+      logMemoryProbe(
+        "track-listener-created",
+        buildExistingBindingMeta(bindingMeta, {
+          reason: options.reason || "",
+          requestedLang: options.requestedLang || "",
+          videoSrc: video?.currentSrc || video?.src || "",
+        }),
+      );
+
       primaryTrackBound = track;
+      primaryTrackCleanupMeta = bindingMeta;
       primaryTrackCleanup = () => {
         try {
           binding.cleanup();
         } catch (_) {}
       };
+
+      logMemoryProbe(
+        "primary-track-bound",
+        buildExistingBindingMeta(bindingMeta, {
+          reason: options.reason || "",
+          requestedLang: options.requestedLang || "",
+          videoSrc: video?.currentSrc || video?.src || "",
+        }),
+      );
 
       requestAnimationFrame(() => {
         try {
@@ -734,18 +912,20 @@
         const shouldPromote =
           initialSnapshot.cuesLength > 0 && !initialSnapshot.readableNow;
 
-        logContent("secondary-sync post-bind readability-check", {
-          trackLanguage: track?.language || "",
-          trackKind: track?.kind || "",
-          requestedMode,
-          policy: modeDecision?.policy || "",
-          rationale: modeDecision?.rationale || "",
-          decisionReason: modeDecision?.reason || "",
-          ...initialSnapshot,
-          shouldPromote,
-          promotionSkipped: true,
-          skipReason: "secondary-track-hidden-lock",
-        });
+        if (DEBUG_SECONDARY_SUBS) {
+          logContent("secondary-sync post-bind readability-check", {
+            trackLanguage: track?.language || "",
+            trackKind: track?.kind || "",
+            requestedMode,
+            policy: modeDecision?.policy || "",
+            rationale: modeDecision?.rationale || "",
+            decisionReason: modeDecision?.reason || "",
+            ...initialSnapshot,
+            shouldPromote,
+            promotionSkipped: true,
+            skipReason: "secondary-track-hidden-lock",
+          });
+        }
 
         return;
       };
@@ -847,12 +1027,35 @@
         return;
       }
 
+      const bindingMeta = createListenerBindingMeta("secondary", track, {
+        usePlaybackSignals: false,
+      });
+
+      logMemoryProbe(
+        "track-listener-created",
+        buildExistingBindingMeta(bindingMeta, {
+          reason: modeDecision?.reason || "",
+          requestedLang: getRequestedSecondaryLanguage?.() || "",
+          currentTime: getCurrentTime(),
+        }),
+      );
+
       secondaryTrackBound = track;
+      secondaryTrackCleanupMeta = bindingMeta;
       secondaryTrackCleanup = () => {
         try {
           binding.cleanup();
         } catch (_) {}
       };
+
+      logMemoryProbe(
+        "secondary-track-bound",
+        buildExistingBindingMeta(bindingMeta, {
+          reason: modeDecision?.reason || "",
+          requestedLang: getRequestedSecondaryLanguage?.() || "",
+          currentTime: getCurrentTime(),
+        }),
+      );
 
       maybePromoteTrackReadability();
 
@@ -887,9 +1090,29 @@
         reason: "secondary-sync",
       });
 
-      const track = resolveSecondarySubtitleTrack(video, requestedLang);
-      const sameTrackRef = Boolean(track && previousBoundTrack === track);
       const currentTime = getCurrentTime();
+      const resolvedTrack = resolveSecondarySubtitleTrack(video, requestedLang);
+
+      const secondaryCandidates = Array.from(video?.textTracks || []).filter(
+        (candidateTrack) => {
+          if (!candidateTrack) return false;
+
+          const kind = String(candidateTrack.kind || "").toLowerCase();
+          if (kind !== "subtitles" && kind !== "captions") return false;
+          if (isForcedLikeTrack?.(candidateTrack)) return false;
+
+          return matchesRequestedLanguage?.(candidateTrack, requestedLang);
+        },
+      );
+
+      const picked = pickMostReadableTrack(
+        secondaryCandidates,
+        currentTime,
+        resolvedTrack || previousBoundTrack || null,
+      );
+
+      const track = picked.track || resolvedTrack || null;
+      const sameTrackRef = Boolean(track && previousBoundTrack === track);
 
       // selection と bind のズレを診断するための差分観測。
       // rebind 条件には影響させず、ログのみに使う。
@@ -917,20 +1140,13 @@
             selectedTrackLanguage !== boundTrackLanguageBeforeSync,
         });
       }
-      const resolvedTrackActiveCuesLength = (() => {
-        try {
-          return track?.activeCues?.length ?? 0;
-        } catch (_) {
-          return -1;
-        }
-      })();
-      const resolvedTrackCuesLength = (() => {
-        try {
-          return track?.cues?.length ?? 0;
-        } catch (_) {
-          return -1;
-        }
-      })();
+      const resolvedTrackSnapshot = getTrackReadabilitySnapshot(
+        track,
+        currentTime,
+      );
+      const resolvedTrackActiveCuesLength =
+        resolvedTrackSnapshot.activeCuesLength;
+      const resolvedTrackCuesLength = resolvedTrackSnapshot.cuesLength;
       const resolvedTrackCurrentCue = getCurrentCue(track, currentTime);
       const resolvedTrackCurrentCueText = cleanCueText(resolvedTrackCurrentCue);
 
@@ -945,7 +1161,10 @@
           sameTrackRef,
           previousBoundTrackLanguage: previousBoundTrack?.language || "",
           previousBoundTrackMode: previousBoundTrack?.mode || "",
+          resolvedTrackExists: Boolean(resolvedTrack),
           selectedTrackExists: Boolean(track),
+          pickedTrackScore: picked?.score ?? -1,
+          ...getSecondaryTrackObservation(resolvedTrack, "resolvedTrack"),
           ...getSecondaryTrackObservation(track, "selectedTrack"),
         });
       }
@@ -1005,22 +1224,26 @@
         unreadableSnapshot.currentCueTextLength === 0;
 
       if (shouldRebindBecauseUnreadable) {
-        logContent("secondary-sync rebind-required", {
-          reason: "sameTrackButUnreadableAtCurrentTime",
-          requestedLang: requestedLang || "",
-          normalizedRequestedLang,
-          previousRequestedSecondaryLang,
-          requestedLanguageChanged,
-          currentTime,
-          sameTrackRef,
-          forceRebind,
-          resolvedTrackLanguage: track?.language || "",
-          resolvedTrackMode: track?.mode || "",
-          resolvedTrackCuesLength,
-          resolvedTrackActiveCuesLength,
-          resolvedTrackCurrentCueTextLength: resolvedTrackCurrentCueText.length,
-          resolvedTrackHasCueOverlapAtCurrentTime: Boolean(resolvedTrackCurrentCue),
-        });
+        if (DEBUG_SECONDARY_SUBS) {
+          logContent("secondary-sync rebind-required", {
+            reason: "sameTrackButUnreadableAtCurrentTime",
+            requestedLang: requestedLang || "",
+            normalizedRequestedLang,
+            previousRequestedSecondaryLang,
+            requestedLanguageChanged,
+            currentTime,
+            sameTrackRef,
+            forceRebind,
+            resolvedTrackLanguage: track?.language || "",
+            resolvedTrackMode: track?.mode || "",
+            resolvedTrackCuesLength,
+            resolvedTrackActiveCuesLength,
+            resolvedTrackCurrentCueTextLength: resolvedTrackCurrentCueText.length,
+            resolvedTrackHasCueOverlapAtCurrentTime: Boolean(
+              resolvedTrackCurrentCue,
+            ),
+          });
+        }
       }
 
       const shouldPrimeUnreadableSelectedTrack =
@@ -1586,7 +1809,6 @@
       unbindPrimarySubtitleTrack();
       unbindSecondarySubtitleTrack({ restoreMode: true });
       restoreTemporarilyActivatedTrackModes();
-      secondaryTrackRecovery?.destroy?.();
       cueRenderCoordinator?.destroy?.();
     }
 
@@ -1604,7 +1826,7 @@
       onCueChange,
       onPrimaryCueChange,
       getMergedSubtitleHealth: () => lastMergedSubtitleHealth,
-      getLaneStates: () => secondaryTrackRecovery?.laneStates || null,
+      getLaneStates: () => subtitleRecoveryManager?.getLaneStates?.() || null,
       resetSecondaryRecoveryLane,
       evaluateSecondaryRecovery,
       destroy,                          // ← 追加

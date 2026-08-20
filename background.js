@@ -8,6 +8,7 @@
 const DEBUG_LOGS_KEY = "debugLogs";
 const DEBUG_LOGS_MAX = 400;
 let trackedAppleTvTabId = null;
+const settingsStore = globalThis.ATVB_SETTINGS_STORE || null;
 
 function maskSensitive(value) {
   if (typeof value !== "string") return value;
@@ -295,8 +296,38 @@ async function sendSettingsChangedWithRecovery(
 }
 
 async function notifySettingsChangedToTab(tabId, reason = "tab_activated") {
-  const syncSettings = await chrome.storage.sync.get(null);
+  const syncSettings =
+    typeof settingsStore?.loadDispatchableSyncSettings === "function"
+      ? await settingsStore.loadDispatchableSyncSettings()
+      : await chrome.storage.sync.get(null);
+
+  await logBackground("notifySettingsChangedToTab resolved settings", {
+    tabId,
+    reason,
+    usedDispatchableSettings:
+      typeof settingsStore?.loadDispatchableSyncSettings === "function",
+    extensionEnabled: syncSettings?.extensionEnabled,
+    primaryLang: syncSettings?.primaryLang,
+    secondaryLang: syncSettings?.secondaryLang,
+  });
+
   await sendSettingsChangedWithRecovery(tabId, reason, syncSettings);
+}
+
+async function resolveSettingsForAppleTvDispatch(partialSettings = null) {
+  const baseSettings =
+    typeof settingsStore?.loadDispatchableSyncSettings === "function"
+      ? await settingsStore.loadDispatchableSyncSettings()
+      : await chrome.storage.sync.get(null);
+
+  if (!partialSettings || typeof partialSettings !== "object") {
+    return baseSettings;
+  }
+
+  return {
+    ...baseSettings,
+    ...partialSettings,
+  };
 }
 
 // Keep the service worker alive and claim clients immediately on activation.
@@ -376,10 +407,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "APPLY_SETTINGS_TO_APPLE_TV") {
     (async () => {
       try {
-        const settings = msg.settings || null;
+        const requestedSettings =
+          msg.settings && typeof msg.settings === "object" ? msg.settings : null;
+
         await logBackground("APPLY_SETTINGS_TO_APPLE_TV requested", {
           reason: msg.reason || "unknown",
-          settings,
+          requestedSettings,
         });
 
         const tabId = await findAppleTvTabId();
@@ -391,16 +424,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
+        const dispatchSettings =
+          await resolveSettingsForAppleTvDispatch(requestedSettings);
+
         await logBackground("sending SETTINGS_CHANGED to Apple TV tab", {
           tabId,
           reason: msg.reason || "unknown",
-          settings,
+          requestedSettings,
+          dispatchSettings,
         });
 
         const result = await sendSettingsChangedWithRecovery(
           tabId,
           msg.reason || "apply_settings",
-          settings,
+          dispatchSettings,
         );
         sendResponse(result);
       } catch (error) {

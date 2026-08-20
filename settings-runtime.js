@@ -190,22 +190,11 @@
     }
 
     function resolveSettingsChangeNextSettings(incoming = {}) {
-      const requestedBase = {
+      return {
         ...DEFAULT_SETTINGS,
-        ...state.requestedContentSettings,
-      };
-
-      const requestedNext = {
-        ...requestedBase,
+        ...state.contentSettings,
         ...incoming,
       };
-
-      const effectiveNext = {
-        ...requestedNext,
-        secondaryLang: applySecondaryLangFallback(requestedNext),
-      };
-
-      return effectiveNext;
     }
 
     async function loadSettingsSnapshot() {
@@ -280,9 +269,6 @@
 
       state.requestedSecondaryLang =
         state.requestedContentSettings.secondaryLang || "";
-      state.contentSettings.secondaryLang = applySecondaryLangFallback(
-        state.contentSettings
-      );
 
       // panelOpen は「今の UI 状態」が正本なので、設定値で上書きしない。
       state.panelOpen = Boolean(keepPanelOpen);
@@ -403,7 +389,25 @@
             });
           }
 
-          if (!state.contentSettings.extensionEnabled) {
+          const shouldIgnoreDisableTransition =
+            state.booted === false &&
+            incoming &&
+            Object.prototype.hasOwnProperty.call(incoming, "extensionEnabled") &&
+            incoming.extensionEnabled !== false &&
+            !isLanguageSelectionReady?.(state.contentSettings);
+
+          if (shouldIgnoreDisableTransition) {
+            logContentSettings("SETTINGS_CHANGED disable-branch skipped", {
+              triggerReason,
+              incoming,
+              contentExtensionEnabled: state.contentSettings.extensionEnabled,
+              requestedExtensionEnabled:
+                state.requestedContentSettings.extensionEnabled,
+              booted: state.booted,
+              primaryLang: state.contentSettings.primaryLang,
+              secondaryLang: state.contentSettings.secondaryLang,
+            });
+          } else if (!state.contentSettings.extensionEnabled) {
             state.requestedContentSettings = {
               ...state.requestedContentSettings,
               extensionEnabled: false,

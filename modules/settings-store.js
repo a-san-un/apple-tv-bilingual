@@ -59,6 +59,16 @@
     });
   }
 
+  /**
+   * Apple TV タブへ通知してよい完成済み sync 設定だけを返す。
+   * background.js の SETTINGS_CHANGED 配信で使う。
+   */
+  function loadDispatchableSyncSettings() {
+    return loadSyncSnapshot().then((snapshot) => ({
+      ...snapshot.effectiveSettings,
+    }));
+  }
+
   /** chrome.storage.local から LOCAL キーを取得する */
   function loadLocalSettings() {
     return new Promise((resolve, reject) => {
@@ -165,13 +175,16 @@
    */
   function saveEnabledFlag(extensionEnabled) {
     return new Promise((resolve, reject) => {
-      chrome.storage.sync.set({ extensionEnabled: extensionEnabled === true }, () => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
+      chrome.storage.sync.set(
+        { extensionEnabled: extensionEnabled === true },
+        () => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve();
         }
-        resolve();
-      });
+      );
     });
   }
 
@@ -180,6 +193,7 @@
   // -------------------------------------------------------
   const ATVB_STORE = Object.freeze({
     loadSyncSnapshot,
+    loadDispatchableSyncSettings,
     loadLocalSettings,
     loadAllSettings,
     saveSyncSettings,
@@ -189,11 +203,5 @@
     saveEnabledFlag,
   });
 
-  root.ATVB_STORE = ATVB_STORE;
-
-  // eslint-disable-next-line no-undef
-  if (typeof module !== "undefined" && module.exports) {
-    // eslint-disable-next-line no-undef
-    module.exports = ATVB_STORE;
-  }
+  root.ATVB_SETTINGS_STORE = ATVB_STORE;
 })(typeof globalThis !== "undefined" ? globalThis : window);

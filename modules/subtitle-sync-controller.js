@@ -72,6 +72,41 @@
       };
     }
 
+    async function waitForReadableTrack(track, options = {}) {
+      const {
+        currentTime = NaN,
+        maxWaitMs = 350,
+        intervalMs = 50,
+      } = options;
+
+      if (!track) return null;
+
+      const startedAt = Date.now();
+      let lastReadability = getTrackReadability(track, currentTime);
+
+      if (lastReadability.readable) {
+        return { track, readability: lastReadability, waitedMs: 0 };
+      }
+
+      while (Date.now() - startedAt < maxWaitMs) {
+        await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
+        lastReadability = getTrackReadability(track, currentTime);
+        if (lastReadability.readable) {
+          return {
+            track,
+            readability: lastReadability,
+            waitedMs: Date.now() - startedAt,
+          };
+        }
+      }
+
+      return {
+        track,
+        readability: lastReadability,
+        waitedMs: Date.now() - startedAt,
+      };
+    }
+
     async function syncSecondarySubtitleTrack(
       video,
       requestedLang,
@@ -84,12 +119,21 @@
         resolver?.resolveSecondarySubtitleTrack?.(video, requestedLang) || null;
 
       if (selectedTrack) {
-        const readability = getTrackReadability(selectedTrack, currentTime);
+        const warmupResult = await waitForReadableTrack(selectedTrack, {
+          currentTime,
+          maxWaitMs: 350,
+          intervalMs: 50,
+        });
+        const readability =
+          warmupResult?.readability ||
+          getTrackReadability(selectedTrack, currentTime);
 
         bindSecondaryTrack?.(selectedTrack, {
           ...options,
           requestedLang,
-          reason: "secondary-sync-direct-bind",
+          reason: readability.readable
+            ? "secondary-sync-direct-bind:readable"
+            : "secondary-sync-direct-bind:unreadable",
         });
 
         state.secondaryTrack = selectedTrack || null;

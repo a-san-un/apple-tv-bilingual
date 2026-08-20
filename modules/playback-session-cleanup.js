@@ -35,6 +35,7 @@
       applyLayout,
       clearInternalSubtitleState,
       cueController,
+      subtitleRecoveryManager,
       runtimeObservers,
     } = teardownDeps;
 
@@ -69,7 +70,8 @@
 
       cueController?.handoffPrimarySubtitleToNative?.();
       cueController?.unbindSecondarySubtitleTrack?.({ restoreMode: false });
-      cueController?.destroy?.();       // ← 追加
+      cueController?.destroy?.();
+      subtitleRecoveryManager?.dispose?.();
     }
 
     // extensionEnabled=false 用の cleanup。
@@ -88,13 +90,17 @@
 
       cueController?.handoffPrimarySubtitleToNative?.();
       cueController?.unbindSecondarySubtitleTrack?.({ restoreMode: true });
-      cueController?.destroy?.();       // ← 追加
+      cueController?.destroy?.();
+      subtitleRecoveryManager?.dispose?.();
     }
 
     // 再起動前に、再生セッション由来の一時 state だけを初期化する。
     // 保存済み設定は保持し、直後の startBilingual() で新しい字幕状態を積み直す前提で使う。
     function prepareForRestart() {
-      clearInternalSubtitleState?.({ preserveSecondaryDom: true });
+      clearInternalSubtitleState?.({
+        preserveSecondaryDom: true,
+        reason: "prepareForRestart",
+      });
 
       state.primaryTrack = null;
       state.secondaryTrack = null;
@@ -106,6 +112,37 @@
       state.panelPastBlocks = [];
       state.subtitleBlocks = [];
       state.subtitleCurrentIndex = -1;
+    }
+
+    // SPA で別コンテンツへ切り替わるときの cleanup。
+    // 設定は保持したまま、旧 playback session に紐づく UI / track / subtitle state を撤収する。
+    // clearPlaybackSessionUiState よりは「次の再生へすぐ繋ぐ前提」の軽い cleanup として扱う。
+    function resetForContentSwitch(reason = "content_switch") {
+      logContent?.(reason, {
+        previousVideoSrcKey: state.lastVideoSrcKey,
+        currentContentKey: state.currentContentKey,
+        preservedSettings: {
+          primaryLang: state.contentSettings?.primaryLang || "",
+          secondaryLang: state.contentSettings?.secondaryLang || "",
+          panelDefaultOpen: state.contentSettings?.panelDefaultOpen,
+          requestedSecondaryLang: state.requestedSecondaryLang || "",
+        },
+      });
+
+      teardownForRestart();
+      prepareForRestart();
+
+      // prepareForRestart は secondary DOM を残すので、
+      // コンテンツ切替では旧エピソードの字幕残留を避けるため明示的に消す。
+      clearInternalSubtitleState?.({
+        preserveSecondaryDom: false,
+        reason: "resetForContentSwitch",
+      });
+
+      state.video = null;
+      state.dialogEl = null;
+      state.lastObservedVideoTime = null;
+      state.currentContentKey = "";
     }
 
     // 動画クローズや再生終了時に、playback session 由来の UI と一時 state をまとめて消す。
@@ -202,6 +239,7 @@
       detachForDisabled,
       prepareForRestart,
       clearPlaybackSessionUiState,
+      resetForContentSwitch,
       handleNavigationTargetMissing,
       isPlaybackCloseButtonClick,
       ensureCloseClickListener,

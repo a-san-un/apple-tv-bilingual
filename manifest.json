@@ -36,6 +36,8 @@
         "secondary-subtitle-dom.js",
         "initial-cue-recovery.js",
         "modules/secondary-track-recovery.js",
+        "modules/subtitle-health-snapshot.js",
+        "modules/subtitle-recovery-manager.js",
         "cue-controller.js",
         "modules/cue-track-binder.js",
         "modules/text-track-debug.js",
