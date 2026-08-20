@@ -1,6 +1,6 @@
-# Bugfix マスタープラン 2026-08-18（改訂版）
+# Bugfix マスタープラン 2026-08-21（改訂版）
 
-**作成日:** 2026-08-13 ／ **最終更新:** 2026-08-18 ／ **ブランチ:** `issue-32-content-core-split`
+**作成日:** 2026-08-13 ／ **最終更新:** 2026-08-21 ／ **ブランチ:** `issue-32-content-core-split`
 **入口資料：** 新しいスレッドでもこの資料1枚を読めばプロジェクトの文脈と、現在の優先事項がわかります。
 
 ***
@@ -53,17 +53,15 @@
 
 ## 現状精査
 
-### 本日修正分（2026-08-18）
+### 修正対象ファイル（直近スレッド）
 
-以下のファイルに修正を反映中。
+以下のファイルが今回のスレッドで確認・修正対象となった。
 
-- `content.js`
 - `cue-controller.js`
 - `modules/cue-track-binder.js`
-- `overlay-controller.js`
-- `overlay.css`
-- `panel-ui.js`
-- `subtitle-view-resolver.js`
+- `modules/subtitle-sync-controller.js`
+- `modules/subtitle-recovery-manager.js`
+- `modules/secondary-track-recovery.js`
 
 ### ✅ 完了済み・動作確認済み
 
@@ -94,11 +92,17 @@
   - `content.js` から `createCueController` へ helper を注入
   - `cue-controller.js` の primary / secondary bind を helper 利用へ置換
   - 現時点では `track.mode` はまだ変更していない
+- **メモリリーク対策としてリーク対策表（7項目）と実装ステップ表（Step 1〜10）を整理済み**（2026-08-20）
+- **メモリリーク対策 Step 1〜4 完了済み**
+  - Step 1: secondary 選択フェーズ分離（`subtitle-sync-controller.js` / `cue-controller.js`）
+  - Step 2: `sameTrackRef` を主軸にした identity 判定へ統一
+  - Step 3: secondary monitor の start / replace / stop を `cue-track-binder.js` 経由へ一本化
+  - Step 4: secondary cleanup 責務を binder 側へ集約、controller 側の cleanup state 保持を解消
 
 ### ⚠ 継続観測中の横断課題
 
 - **Chrome Renderer プロセスで 6GB 級メモリ消費を観測**
-  - F-5 本線とは別に、listener / observer / timer の登録解除漏れ調査を並行実施中
+  - listener / observer / timer の登録解除漏れ調査を並行実施中
   - 一時点では `EventListener` / `V8EventListener` / `RegisteredEventListener` が増加しており、長時間再生と UI 再初期化の繰り返しで蓄積している可能性がある
   - 特に `panel-ui.js` の resize listener など、無名関数登録と解除経路の整合性を次スレッドでも確認する
 
@@ -185,22 +189,70 @@
 
 ***
 
+## メモリリーク対策
+
+メモリリーク対策として以下の7項目を整理し、実装ステップ（Step 1〜10）で順次解消する。
+
+### リーク対策表
+
+| 対象 | 現状 | リスク | 対策 | 実装先 |
+|---|---|---|---|---|
+| Secondary listener cleanup | `createTrackListenerBinding()` が `cleanup()` を持ち、`cuechange` と必要な listener を解除する。 | cleanup 呼び出し責務が複数箇所に散ると、将来の修正で呼び忘れが起きやすい。 | cleanup 呼び出しを監視フェーズ側へ集約し、secondary monitor の start/replace/stop 経由でしか listener を触れない形にする。 | `modules/cue-track-binder.js` |
+| Secondary rebind 過多 | `syncSecondarySubtitleTrack()` が `shouldRebindBecauseUnreadable` を持ち、同一 track でも再 bind へ進みうる。 | リスナー積み増しよりも、unbind/bind の頻発による状態揺れ・cleanup 経路の複雑化が起きやすい。 | 再 bind 条件を identity 変化中心へ寄せ、同一 track の unreadable を即 rebind 理由にしない。 | `cue-controller.js` → `modules/subtitle-sync-controller.js` / `modules/cue-track-binder.js` |
+| Same track guard | `bindSecondarySubtitleTrack()` に `sameTrackRef && sameMode && secondaryTrackCleanup` の skip guard がある。 | guard が bind 時点にしかなく、そこへ来る前に不要な unbind が走る余地がある。 | replace 前判定を monitor 側へ移し、同一 identity の場合は bind 呼び出し自体を避ける。 | `modules/cue-track-binder.js` |
+| Destroy 時 cleanup | `destroy()` で `unbindSecondarySubtitleTrack({ restoreMode: true })` を呼んでいる。 | cleanup 経路が増えると destroy と通常停止の責務が曖昧になりやすい。 | secondary monitor に `destroy()` 相当を持たせ、controller 側は monitor destroy を呼ぶだけにする。 | `modules/cue-track-binder.js`, `cue-controller.js` |
+| Primary/Secondary cleanup の共通基盤 | binder module は listener attach/cleanup 専用として設計されている。 | cleanup 実装が controller 側へ戻ると、再び責務が分散する。 | cleanup ロジックは binder module に寄せたまま、controller は orchestration のみ持つ。 | `modules/cue-track-binder.js` |
+| Recovery 起点の強制再接続 | `evaluateSecondaryRecovery()` の結果で `syncSecondarySubtitleTrack()` が再実行される。 | 一時的な unreadable が recovery 側からも再 bind を誘発すると、cleanup 頻度が高まる。 | recovery を「継続失敗」中心へ寄せ、一時的空状態では force rebind を出さない。 | `modules/subtitle-recovery-manager.js`, `modules/secondary-track-recovery.js` |
+| content.js の責務肥大 | `content.js` が controller / binder / sync controller / recovery manager の生成と接続を持つ。 | 配線とロジックが混ざると、cleanup 経路や lifecycle が追いにくくなる。 | `content.js` は配線専用に保ち、cleanup や選択判定を持ち込まない。 | `content.js` |
+
+### 実装ステップ表
+
+| Step | 状態 | 目的 | 変更内容 | 主対象ファイル | 完了条件 |
+|---|---|---|---|---|---|
+| 1 | ✅ 完了 | secondary の選択フェーズを分離する | `syncSecondarySubtitleTrack()` の中から「track を決める処理」を切り出し、selection result を返す形へ整理する。readability は補助情報として残す。 | `modules/subtitle-sync-controller.js`, `cue-controller.js` | secondary の選択結果が track, sameTrackRef, requested language change, snapshot を持つ形で扱える。 |
+| 2 | ✅ 完了 | ユニークな値を主軸にする | `sameTrackRef` を primary な判定にし、`track.id` はログ補助に使う。language は補助情報に下げる。 | `modules/subtitle-sync-controller.js`, `cue-controller.js` | 再 bind 可否の判断が「同じ identity かどうか」で説明できる状態になる。 |
+| 3 | ✅ 完了 | secondary 監視フェーズを分離する | secondary monitor 相当の state 管理を binder 側へ寄せ、start / replace / stop を一本化する。 | `modules/cue-track-binder.js` | secondary listener の開始・差し替え・停止が binder module 経由で統一される。 |
+| 4 | ✅ 完了 | cleanup を一元化する | `createTrackListenerBinding()` の `cleanup()` を監視フェーズの唯一の解除経路として扱う。controller から個別 cleanup state を減らす。 | `modules/cue-track-binder.js`, `cue-controller.js` | secondary cleanup の責務が binder 側に集約され、controller 側の cleanup 保持が減る。 |
+| 5 | 🔍 確認完了・未適用 | unreadable 即 rebind をやめる | `shouldRebindBecauseUnreadable` を secondary の直接再 bind 条件から外し、一時的な空 cue は health 情報として保持する。 | `cue-controller.js` | 同一 track の一時 unreadable だけでは rebind されない。 |
+| 6 | ⬜ 未着手 | recovery を継続失敗中心へ寄せる | `evaluateSecondaryRecovery()` の条件を見直し、一時的な空状態では force rebind を返さないようにする。 | `modules/subtitle-recovery-manager.js`, `modules/secondary-track-recovery.js` | recovery が「本当に詰まった時だけ」発火する。 |
+| 7 | ⬜ 未着手 | `cue-controller.js` を薄くする | secondary の detailed 判定・再 bind 条件を減らし、selection result を受けて monitor / recovery / render をつなぐ orchestration に寄せる。 | `cue-controller.js` | `cue-controller.js` が secondary の本体ロジックではなく交通整理役になる。 |
+| 8 | ⬜ 未着手 | `content.js` を配線専用に寄せる | controller, binder, sync controller, recovery manager の生成と接続だけに留め、secondary 選択や cleanup 判定は持たせない。 | `content.js` | `content.js` に selection / recovery の判断ロジックが増えていない。 |
+| 9 | ⬜ 未着手 | dead code / debug を整理する | `if (false)` 系の観測や、`sameTrackUnreadable` 前提の補助ログを整理する。必要な debug は selection / binder / recovery 側へ分ける。 | `cue-controller.js`, `modules/subtitle-sync-controller.js`, `modules/cue-track-binder.js` | ログが役割別に分かれ、不要分岐が減っている。 |
+| 10 | ⬜ 未着手 | lifecycle を確認する | panel close / playback close / destroy / restart 時に secondary monitor cleanup が必ず走るか確認する。 | `cue-controller.js`, `modules/playback-session-cleanup.js`, `content.js` | secondary listener の開始・停止経路が追跡でき、終了時 cleanup が一本化されている。 |
+
+### 未使用退避名（削除確定まで保留）
+
+- `_resolveSecondarySubtitleTrack`
+- `_pickMostReadableTrack`
+- `_resolveSecondaryTrackModePolicy`（Step 5 確認で現行使用中を確認済み）
+
+***
+
 ## 次スレッド開始時の優先順位
 
-1. **F-5 継続**
-   - `createTrackListenerBinding()` 共通化後の挙動確認
-   - primary / secondary の `track.mode` 統一方針を確定
-   - native 字幕メニュー非干渉を守ったまま OFF 復元を成立させる
-2. **メモリ調査継続**
+1. **メモリリーク対策 Step 5 の実装適用**
+   - `cue-controller.js` の `shouldRebindBecauseUnreadable` / `sameTrackUnreadable` 系を除去
+   - `_resolveSecondaryTrackModePolicy()` の readability-promote 分岐を見直し
+   - `maybePromoteTrackReadability()` の sameTrackUnreadable 前提の無効化または削除
+2. **メモリリーク対策 Step 6 へ続行**
+   - `evaluateSecondaryRecovery()` の条件を「継続失敗」中心へ絞る
+   - 一時的な空状態で force rebind を返さないよう修正
+3. **F-5 継続**
+   - `track.mode` を secondary ベースの hidden-lock モデルへ統一する設計の確定
+   - OFF 時 restore と native menu 操作が両立するかの再検証
+4. **F-4 持ち越し**
+   - 初回のみ残る async response 警告の根治
+5. **メモリ調査継続**
    - listener / observer / timer のリーク候補の再点検
    - 長時間再生時の heap / listener 増加再観測
-3. **F-4 持ち越し**
-   - 初回のみ残る async response 警告の根治
 
 ***
 
 ## 次スレッドに必ず持ち込む要点
 
+- メモリリーク対策 Step 1〜4 は**完了済み**。Step 5 は確認完了・**未適用**。
+- Step 5 の修正主対象は `cue-controller.js` のみ（`shouldRebindBecauseUnreadable`・`sameTrackUnreadable` 系・`_resolveSecondaryTrackModePolicy` 内の readability-promote 分岐）。
+- `_resolveSecondaryTrackModePolicy` は**現行使用中**のため、退避名扱いのまま保留。削除判断は Step 5 適用後に行う。
 - F-5 は **未完了**。今は `track.mode` を触る前段の listener binding 共通化まで進んだ段階。
 - `overlay.css` の `video::cue` 非表示は **削除済み**。native 字幕メニュー非干渉が現在の設計方針。
 - `panel-ui.js` の `applyLayout(state.panelOpen)` 修正により、動画本体の 70/30 追従は **完了済み**。

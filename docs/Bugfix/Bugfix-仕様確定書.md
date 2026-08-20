@@ -1,7 +1,7 @@
 # Bugfix 仕様確定書
 
 **作成日:** 2026-08-14  
-**最終更新:** 2026-08-17  
+**最終更新:** 2026-08-21  
 **ブランチ:** `issue-32-content-core-split`  
 **位置づけ:** このセッションで固まった仕様の正本。マスタープランと合わせて参照すること。
 
@@ -19,13 +19,14 @@
 
 ---
 
-## 2. ネイティブ字幕の制御仕様（Bugfix-E に対応）
+## 2. ネイティブ字幕の制御仕様（Bugfix-E / F-5 確定・完了）
 
 ### 方針：「拡張機能とネイティブ UI の完全切り離し」
 
 拡張機能はネイティブ字幕の制御に**最小限だけ介入**し、OFF 時は**触った分だけ元に戻す**。  
 Apple TV+ 側の字幕メニュー操作には干渉しない。  
-ネイティブ字幕復元の主責務は `cue-controller.restoreNativeSubtitles()` に寄せる。
+ネイティブ字幕復元の主責務は `cue-controller.restoreNativeSubtitles()` に寄せる。  
+**F-5 はこの仕様に基づき 2026-08-21 時点で完了済み。**
 
 ### トグル OFF 時（拡張 → ネイティブへの引き渡し）
 
@@ -54,8 +55,7 @@ if (!extensionEnabled) {
 
 ### `cue-controller.js` の公開 API（確認済み）
 
-`restoreNativeSubtitles` はすでに公開済みのため、新規 API 追加は前提にしない。  
-必要なのは、現実装が「元に戻す」責務として十分かを F-5 で精査すること。
+`restoreNativeSubtitles` はすでに公開済み。
 
 ```js
 return {
@@ -67,12 +67,12 @@ return {
 };
 ```
 
-### F-5 着手時の仕様確認ポイント
+### F-5 完了確認済み事項
 
-- `restoreNativeSubtitles()` は **拡張が変更した分だけ**を戻す
-- native menu 状態と `TextTrack.mode` 復元の責務を混同しない
-- ON → OFF → ON を繰り返しても native / extension の責務が混線しない
-- 別エピソード遷移後でも同じルールで成立する
+- `restoreNativeSubtitles()` は **拡張が変更した分だけ**を戻す仕様で確定
+- native menu 状態と `TextTrack.mode` 復元の責務は混同していないことを確認済み
+- ON → OFF → ON を繰り返しても native / extension の責務が混線しないことを確認済み
+- 別エピソード遷移後でも同じルールで成立することを確認済み
 
 ---
 
@@ -200,7 +200,7 @@ if (!toolbar) {
 
 ---
 
-## 8. 設定反映メッセージの仕様（F-4 関連）
+## 8. 設定反映メッセージの仕様（F-4 関連・残件）
 
 ### 8-1. 基本方針
 
@@ -224,7 +224,7 @@ recoverable な場合は、content script 生存確認・再注入・再送を�
 - 失敗してもよい fire-and-forget として扱うか
 
 この点は F-4 残件として再整理する。  
-仕様上はまだ固定しない。
+仕様上はまだ固定しない。F-5 完了後も本項は未確定のまま持ち越し。
 
 ### 8-4. 確定していること
 
@@ -266,19 +266,62 @@ popup / options / background / content 間で個別の検証ロジックを持�
 
 ---
 
-## 11. 今後の優先仕様
+## 11. secondary listener リーク対策の仕様（進行中・Step 1〜5 確定分）
 
-2026-08-17 時点の優先順位は次の通り。
+**位置づけ:** F-5 完了後に着手した secondary track の listener / rebind / cleanup 整理。  
+本項は Step 1〜4 の完了分と、Step 5 で確定した仕様のみを正本として記載する。  
+Step 6 以降は未確定のため、実装計画側（Bugfix 将来作業計画.md）を参照する。
 
-1. F-5: `restoreNativeSubtitles()` を中心とした native 字幕復元の安定化
-2. F-4 残件: message channel closed 系エラーの再整理
-3. F-8: DevConsole の常設ログ削減
+### 11-1. 責務分離の確定仕様（Step 1〜2）
+
+- secondary track の選択処理は `modules/subtitle-sync-controller.js` 側で selection result として返す形に統一する
+- selection result は `track`、`sameTrackRef`、`requested language change`、`snapshot` を持つ
+- 再bind可否の判定は `sameTrackRef`（identity 比較）を主軸とし、`track.id` はログ補助・`language` は補助情報として扱う
+
+### 11-2. 監視・cleanup の一元化仕様（Step 3〜4）
+
+- secondary listener の start / replace / stop は `modules/cue-track-binder.js` の secondary monitor 経由でのみ行う
+- listener の cleanup は `createTrackListenerBinding()` の `cleanup()` を唯一の解除経路とする
+- `cue-controller.js` 側は個別の cleanup state を保持しない。監視フェーズの orchestration のみを担う
+- `destroy()` 相当の処理は secondary monitor 側に持たせ、`cue-controller.js` は monitor destroy を呼ぶだけにする
+
+### 11-3. unreadable 即 rebind 禁止の仕様（Step 5 確定）
+
+- 同一 track（`sameTrackRef === true`）の一時的な unreadable 状態だけでは secondary の再bindを発生させない
+- `shouldRebindBecauseUnreadable` は bind 判定条件から除外する
+- unreadable の情報自体は削除せず、health 情報（監視用の補助データ）として保持してよい
+- bind 理由は `selected-track-changed`（identity 変化）と `force-rebind`（明示的な強制再接続）を中心にする
+- `sameTrackUnreadable` を根拠とした `mode` の `readability-promote` 分岐（`_resolveSecondaryTrackModePolicy()` 内）は、同一 track の unreadable を rebind 理由にしないという方針と矛盾するため、削除または無効化する対象とする
+- `maybePromoteTrackReadability()` は `sameTrackUnreadable` 依存の補助処理であり、Step 5 の方針上は不要になる想定
+
+**主対象ファイル:** `cue-controller.js`
+
+### 11-4. 未使用退避名の扱い（確定）
+
+以下は削除確定ではなく、今後のステップで使う可能性がある前提で保持する。
+
+- `_resolveSecondarySubtitleTrack`
+- `_pickMostReadableTrack`
+- `_resolveSecondaryTrackModePolicy`（2026-08-21 時点で現行使用中と確認済み）
 
 ---
 
-## 12. 補足メモ
+## 12. 今後の優先仕様
+
+2026-08-21 時点の優先順位は次の通り。
+
+1. リーク対策 Step 5: `shouldRebindBecauseUnreadable` / `sameTrackUnreadable` 除去（`cue-controller.js`）の適用
+2. リーク対策 Step 6以降: recovery 側の force rebind 条件見直し、`content.js` 配線整理
+3. F-4 残件: message channel closed 系エラーの再整理
+4. F-8: DevConsole の常設ログ削減
+
+---
+
+## 13. 補足メモ
 
 - ON 復帰時に `#atv-toggle-btn` と overlay 字幕が出ない問題は、`waitForPlaybackReady()` 後の `state.video` / `state.dialogEl` 未反映が主因だった
 - そのため F-7 は独立 bugfix ではなく、現時点では F-4 修正に吸収された主症状として扱う
 - OFF 時に残す UI は `#atvb-native-toggle` のみ
 - ON 時にのみ存在すべき UI は `#atv-toggle-btn`、`#atv-panel-host`、`#atv-overlay-host`
+- F-5（Bugfix-E）は 2026-08-21 時点で完了済み
+- secondary listener リーク対策は Step 1〜4 完了、Step 5 は仕様確定済み・実装未適用
