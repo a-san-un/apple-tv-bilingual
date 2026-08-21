@@ -2,7 +2,8 @@
 // Apple TV+ Bilingual Subtitles - modules/subtitle-recovery-manager.js
 // 役割:
 // - subtitle health snapshot を受け取り、復旧アクションを決定する。
-// - Step 2 では both-missing recovery と cooldown のみを担当する。
+// - both-missing recovery の判定と cooldown を担当する。
+// - secondary recovery 判定は secondary-track-recovery.js へ委譲する。
 // - DOM / TextTrack を保持せず、軽量な内部状態だけを持つ。
 // =============================================================
 
@@ -15,6 +16,12 @@
    * @param {{
    *   logContent?: Function,
    *   cooldownMs?: number,
+   *   secondaryTrackRecovery?: {
+   *     evaluateSecondaryRecovery?: Function,
+   *     resetSecondaryRecoveryLane?: Function,
+   *     destroy?: Function,
+   *     laneStates?: Object,
+   *   } | null,
    * }} deps
    */
   function createSubtitleRecoveryManager(deps = {}) {
@@ -26,6 +33,10 @@
 
     let lastBothMissingRecoveryAttemptAt = 0;
 
+    /**
+     * manager 内部状態を初期化する。
+     * both-missing recovery の最後の試行時刻をクリアする。
+     */
     function reset(reason = "manual-reset") {
       const before = {
         lastBothMissingRecoveryAttemptAt,
@@ -42,6 +53,11 @@
       });
     }
 
+    /**
+     * manager の後始末を行う。
+     * both-missing 状態をリセットし、secondary recovery module 側の
+     * lane state もあわせて破棄する。
+     */
     function dispose() {
       reset("dispose");
       secondaryTrackRecovery?.resetSecondaryRecoveryLane?.(
@@ -50,16 +66,19 @@
       secondaryTrackRecovery?.destroy?.();
     }
 
+    /**
+     * primary / secondary の両方に live signal が見えないときだけ
+     * pipeline 再初期化を試みる。
+     * cooldown 中は noop を返す。
+     */
     function evaluateBothMissingRecovery({
       now,
       extensionEnabled = true,
       trackCount = 0,
       snapshot = null,
     } = {}) {
-      const hasPrimaryLiveSignal =
-        snapshot?.hasPrimaryLiveSignal === true;
-      const hasSecondarySignal =
-        snapshot?.hasSecondarySignal === true;
+      const hasPrimaryLiveSignal = snapshot?.hasPrimaryLiveSignal === true;
+      const hasSecondarySignal = snapshot?.hasSecondarySignal === true;
 
       const shouldAttemptRecovery =
         extensionEnabled &&
@@ -105,6 +124,10 @@
       };
     }
 
+    /**
+     * secondary recovery 判定は secondary-track-recovery.js へ委譲する。
+     * manager 側では derived の recovery フラグを boolean に正規化して渡すだけに留める。
+     */
     function evaluateSecondaryRecovery({
       now,
       runtime,
@@ -137,34 +160,53 @@
       });
     }
 
+    /**
+     * secondary lane の recovery 観測状態だけを明示的に初期化する。
+     * track 切替や pipeline 再作成後の cleanup で使う。
+     */
     function resetSecondaryRecovery(reason = "manual-reset") {
       return secondaryTrackRecovery?.resetSecondaryRecoveryLane?.(reason) ?? null;
     }
 
+    /**
+     * secondary-track-recovery.js が保持している laneStates を
+     * 外部参照しやすい軽量 snapshot に整形して返す。
+     *
+     * 現在の laneStates shape は
+     * { primary, secondary } であり、
+     * 各 lane は healthy / isMissing / missingSince / missingDurationMs /
+     * missCount / terminated / lastDecision / lastDecisionAt を持つ。
+     */
     function getLaneStates() {
       const laneStates = secondaryTrackRecovery?.laneStates;
       if (!laneStates) return null;
 
+      const toLaneSnapshot = (laneState) => {
+        if (!laneState) return null;
+
+        return {
+          lane: laneState.lane ?? "",
+          healthy: laneState.healthy === true,
+          isMissing: laneState.isMissing === true,
+          missingSince: laneState.missingSince ?? 0,
+          missingDurationMs: laneState.missingDurationMs ?? 0,
+          missCount: laneState.missCount ?? 0,
+          terminated: laneState.terminated === true,
+          lastDecision: laneState.lastDecision ?? "idle",
+          lastDecisionAt: laneState.lastDecisionAt ?? 0,
+        };
+      };
+
       return {
-        primaryLane: laneStates.primaryLane
-          ? {
-              missCount: laneStates.primaryLane.missCount ?? 0,
-              lastSeenAt: laneStates.primaryLane.lastSeenAt ?? 0,
-              lastRecoveryAt: laneStates.primaryLane.lastRecoveryAt ?? 0,
-              status: laneStates.primaryLane.status ?? "",
-            }
-          : null,
-        secondaryLane: laneStates.secondaryLane
-          ? {
-              missCount: laneStates.secondaryLane.missCount ?? 0,
-              lastSeenAt: laneStates.secondaryLane.lastSeenAt ?? 0,
-              lastRecoveryAt: laneStates.secondaryLane.lastRecoveryAt ?? 0,
-              status: laneStates.secondaryLane.status ?? "",
-            }
-          : null,
+        primary: toLaneSnapshot(laneStates.primary),
+        secondary: toLaneSnapshot(laneStates.secondary),
       };
     }
 
+    /**
+     * recovery 成功時に both-missing cooldown 状態を解除する。
+     * 次回の both-missing 判定を即時に再開できるようにする。
+     */
     function markRecoverySucceeded(reason = "recovery_succeeded") {
       lastBothMissingRecoveryAttemptAt = 0;
 

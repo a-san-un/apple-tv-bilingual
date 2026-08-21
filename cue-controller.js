@@ -321,24 +321,6 @@
       return subtitleRecoveryManager?.resetSecondaryRecovery?.(reason) ?? null;
     }
 
-    // secondary track の identity / readable 状態を Round 8 用に揃えて観測する。
-    function getSecondaryTrackObservation(track, prefix = "track") {
-      const currentTime = getCurrentTime();
-      const currentCue = getCurrentCue(track, currentTime);
-      const currentCueText = cleanCueText(currentCue);
-
-      return {
-        [`${prefix}Label`]: track?.label || "",
-        [`${prefix}Language`]: track?.language || "",
-        [`${prefix}Kind`]: track?.kind || "",
-        [`${prefix}Mode`]: track?.mode || "",
-        [`${prefix}CuesLength`]: getTrackCuesLength(track),
-        [`${prefix}ActiveCuesLength`]: getTrackActiveCuesLength(track),
-        [`${prefix}CurrentCueTextLength`]: currentCueText.length,
-        [`${prefix}HasCueOverlapAtCurrentTime`]: Boolean(currentCue),
-      };
-    }
-
 
     function evaluateSecondaryRecovery({
       now,
@@ -371,8 +353,13 @@
     }
 
     // 現在 bind 済みの secondary track を返す。
+    // secondary の所有状態は binder 側が正本なので、
+    // まず binder の monitor state を見に行き、
+    // binder 未初期化時のみローカル変数へフォールバックする。
     function getBoundSecondaryTrack() {
-      return secondaryTrackBound;
+      const binder = window.ATVB?.cueTrackBinder?.instance || null;
+      const monitorState = binder?.getSecondaryMonitorState?.() || null;
+      return monitorState?.track || secondaryTrackBound || null;
     }
 
     // primary track の listener を解除し、必要に応じて拡張が変更する前の mode に戻す。
@@ -452,15 +439,21 @@
 
     // ネイティブ字幕の CSS 抑制を解除し、
     // 拡張が変更した primary / secondary track の mode を元に戻して制御を手放す。
+    //
+    // secondary 側の停止・mode 復元は binder.stopSecondaryMonitor() に一本化する。
+    // fallbackTrack / fallbackOriginalMode は、binder の monitor state が
+    // 既に空でも controller 側の値で復元できるようにするための橋渡し。
     function restoreNativeSubtitles() {
       const primaryTrack = primaryTrackBound;
-      const secondaryTrack = secondaryTrackBound;
       const primaryOriginalMode = primaryTrackOriginalMode;
-      const secondaryOriginalMode = secondaryTrackOriginalMode;
 
       const binder = window.ATVB?.cueTrackBinder?.instance || null;
       const secondaryMonitorState =
         binder?.getSecondaryMonitorState?.() || null;
+      const secondaryTrack =
+        secondaryMonitorState?.track || secondaryTrackBound || null;
+      const secondaryOriginalMode =
+        secondaryMonitorState?.originalMode ?? secondaryTrackOriginalMode;
 
       dumpTextTrackSnapshot("restoreNativeSubtitles before", {
         primaryTrack: getUsableTrackDebugPayload(primaryTrack),
@@ -476,23 +469,21 @@
         primaryTrackCleanup = null;
       }
 
-      // Step 4: secondary の解除も binder の停止 API のみを使う。
-      // binder / secondaryMonitorState は関数冒頭で取得済みのものを再利用する。
       if (secondaryMonitorState?.active) {
         try {
-          binder.stopSecondaryMonitor();
+          binder.stopSecondaryMonitor({
+            restoreMode: true,
+            fallbackTrack: secondaryTrack,
+            fallbackOriginalMode: secondaryOriginalMode,
+          });
         } catch (_) {}
       }
 
+      // primary の mode 復元は controller 側にまだ責務があるため、
+      // ここで直接行う。secondary は binder 側で復元済み。
       if (primaryTrack && primaryOriginalMode != null) {
         try {
           primaryTrack.mode = primaryOriginalMode;
-        } catch (_) {}
-      }
-
-      if (secondaryTrack && secondaryOriginalMode != null) {
-        try {
-          secondaryTrack.mode = secondaryOriginalMode;
         } catch (_) {}
       }
 
@@ -512,42 +503,65 @@
       });
     }
 
-    // secondary track の listener を解除し、必要に応じて拡張が変更する前の mode に戻す。
-    // Step 4: 解除の実体は binder.stopSecondaryMonitor() のみを使う。
+    // secondary track の listener を解除する。
+    // mode の復元・同一track判定・listener cleanup の実体は
+    // すべて binder.stopSecondaryMonitor() 側が持つため、
+    // ここでは「呼ぶ前のログ」「呼び出し」「呼んだ後のログ」に絞る。
+    //
+    // fallbackTrack / fallbackOriginalMode は、binder 側の monitor state が
+    // 既に空でも、controller 側に残っている track / originalMode を
+    // 使って復元できるようにするための橋渡し。
     function unbindSecondarySubtitleTrack(options = {}) {
       const restoreMode = options.restoreMode !== false;
-      const track = secondaryTrackBound;
       const binder = window.ATVB?.cueTrackBinder?.instance || null;
       const monitorState = binder?.getSecondaryMonitorState?.() || null;
+      const track = monitorState?.track || secondaryTrackBound || null;
+      const hadActiveMonitor = Boolean(monitorState?.active);
+      const hadTrack = Boolean(track);
 
-      if (monitorState?.active) {
+      if (hadActiveMonitor) {
         logMemoryProbe(
           "track-listener-cleaned",
           buildExistingBindingMeta(monitorState.meta, {
             hadCleanup: true,
           }),
         );
-
-        try {
-          binder?.stopSecondaryMonitor?.();
-        } catch (_) {}
       }
 
-      logMemoryProbe(
-        "secondary-track-unbound",
-        buildExistingBindingMeta(monitorState?.meta, {
-          hadTrack: Boolean(track),
+      try {
+        binder?.stopSecondaryMonitor?.({
           restoreMode,
-          originalMode: secondaryTrackOriginalMode,
-        }),
-      );
+          fallbackTrack: track,
+          fallbackOriginalMode: secondaryTrackOriginalMode,
+        });
+      } catch (_) {}
 
-      if (restoreMode && track && secondaryTrackOriginalMode != null) {
-        try {
-          track.mode = secondaryTrackOriginalMode;
-        } catch (_) {}
+      if (hadActiveMonitor || hadTrack) {
+        logMemoryProbe(
+          "secondary-track-unbound",
+          buildExistingBindingMeta(monitorState?.meta, {
+            hadTrack,
+            hadCleanup: hadActiveMonitor,
+            restoreMode,
+            originalMode:
+              monitorState?.originalMode ?? secondaryTrackOriginalMode ?? null,
+          }),
+        );
+      } else {
+        logMemoryProbe(
+          "secondary-track-unbind-skipped",
+          buildExistingBindingMeta(monitorState?.meta, {
+            hadTrack: false,
+            hadCleanup: false,
+            restoreMode,
+            originalMode:
+              monitorState?.originalMode ?? secondaryTrackOriginalMode ?? null,
+          }),
+        );
       }
 
+      // ローカル state は destroy() / restoreNativeSubtitles() など
+      // 他の関数からの参照用に、念のためクリアだけしておく。
       secondaryTrackBound = null;
       secondaryTrackOriginalMode = null;
     }
@@ -670,187 +684,86 @@
       onPrimaryCueChange();
     }
 
-    // secondary track を bind して cuechange 監視を始める。
-    // mode の決定は呼び出し側で行い、listener の開始・差し替え・停止は
-    // cue-track-binder.js 側の secondary monitor API へ委譲する。
+    // secondary track を bind する。
+    // mode の適用・同一track判定・listener attach の実体は
+    // binder.startSecondaryMonitor() 側が持つため、
+    // ここでは「requestedMode / originalMode / bindingMeta を組み立てて渡す」
+    // 「bind 結果を見てログとローカル state を更新する」に絞る。
     function bindSecondarySubtitleTrack(track, modeDecision) {
-      if (!track) return;
+      if (!track) return false;
 
       const binder = window.ATVB?.cueTrackBinder?.instance || null;
-      const monitorState = binder?.getSecondaryMonitorState?.() || null;
+      if (!binder?.startSecondaryMonitor) return false;
 
-      const previousBoundTrack = secondaryTrackBound;
       const requestedMode = modeDecision?.requestedMode || "hidden";
-      const currentTrackMode = track?.mode || "";
-      const sameTrackRef = previousBoundTrack === track;
-      const sameMode =
-        String(currentTrackMode || "").toLowerCase() ===
-        String(requestedMode || "").toLowerCase();
-
-      // Step 4:
-      // skip 判定は controller 側の cleanup 保持ではなく、
-      // binder が実際に監視中かどうか（monitor state）で行う。
-      if (sameTrackRef && sameMode && monitorState?.active) {
-        return;
-      }
-
-
-      unbindSecondarySubtitleTrack();
-
       const previousMode = track?.mode || "";
 
-      // F-5:
-      // secondary は拡張の補助字幕レーンとして bind するため、
-      // restore 時に native 側へ showing を残さないよう、
-      // bind 前が showing でも復元先は hidden として扱う。
-      // primary の native 字幕状態は primaryTrackOriginalMode 側で復元する。
+      // 拡張が触る前の mode を保持する。showing のまま保持すると
+      // 復元時に再度 showing へ戻してしまうため、hidden 側へ寄せる。
       secondaryTrackOriginalMode =
         previousMode === "showing" ? "hidden" : previousMode;
 
-      const applyTrackMode = (nextMode, reason = "direct-apply") => {
-        try {
-          track.mode = nextMode;
-        } catch (error) {
-          logContent("secondary-sync mode-apply failed", {
-            trackLanguage: track?.language || "",
-            trackKind: track?.kind || "",
-            requestedMode: nextMode,
-            previousMode: track?.mode || previousMode,
+      // debug ログや cleanup ログで再利用する共通メタ情報。
+      const bindingMeta = createListenerBindingMeta("secondary", track, {
+        requestedMode,
+        policy: modeDecision?.policy || "",
+        rationale: modeDecision?.rationale || "",
+        reason: modeDecision?.reason || "",
+        unreadableSnapshot: modeDecision?.unreadableSnapshot || null,
+      });
+
+      // secondary の cuechange は track 本体を受け取って
+      // 既存の onCueChange(track) にそのまま流す。
+      const result = binder.startSecondaryMonitor(
+        track,
+        (boundTrack) => {
+          onCueChange(boundTrack || track);
+        },
+        {
+          requestedMode,
+          originalMode: secondaryTrackOriginalMode,
+          bindingMeta,
+          onModeApplyError: (error, nextMode, applyReason) => {
+            logContent("secondary-sync mode-apply failed", {
+              trackLanguage: track?.language || "",
+              trackKind: track?.kind || "",
+              requestedMode: nextMode,
+              previousMode: track?.mode || previousMode,
+              policy: modeDecision?.policy || "",
+              rationale: modeDecision?.rationale || "",
+              decisionReason: modeDecision?.reason || "",
+              applyReason,
+              message: String(error?.message || error || ""),
+            });
+          },
+        },
+      );
+
+      // listener の attach に失敗した場合は bind 失敗として呼び出し元へ返す。
+      if (!result || result.reason === "binding-failed") {
+        return false;
+      }
+
+      // binder 側の状態が正本だが、他の関数からの参照用に
+      // ローカル state も合わせて更新しておく。
+      secondaryTrackBound = result.track || track;
+
+      // 同一track・同一mode で skip された場合は
+      // 新規 bind とはみなさずログを出さない。
+      if (DEBUG_SECONDARY_SUBS && !result.skipped) {
+        logContent("secondary-track-bound", {
+          ...buildExistingBindingMeta(bindingMeta, {
+            trackMode: track?.mode || "",
             policy: modeDecision?.policy || "",
             rationale: modeDecision?.rationale || "",
-            decisionReason: modeDecision?.reason || "",
-            applyReason: reason,
-            message: String(error?.message || error || ""),
-          });
-        }
-      };
-
-      const maybePromoteTrackReadability = () => {};
-
-      applyTrackMode(requestedMode, "bind-initial");
-
-      if (false && DEBUG_SECONDARY_SUBS) {
-        logContent("secondary track bind", {
-          trackLanguage: track?.language || "",
-          trackKind: track?.kind || "",
-          trackMode: track?.mode || "",
-          policy: modeDecision?.policy || "",
-          rationale: modeDecision?.rationale || "",
-          decisionReason: modeDecision?.reason || "",
-          cuesLength: getTrackCuesLength(track),
-          activeCuesLength: getTrackActiveCuesLength(track),
-          sameAsPreviousBound: previousBoundTrack === track,
-          currentTime: getCurrentTime(),
+            reason: modeDecision?.reason || "",
+            requestedLang: getRequestedSecondaryLanguage?.() || "",
+            currentTime: getCurrentTime(),
+          }),
         });
       }
 
-      const handleSecondaryCueChange = () => {
-        if (false && DEBUG_SECONDARY_SUBS) {
-          logContent("secondary-sync cuechange-fired", {
-            reason: "secondaryTrackEvent",
-            currentTime: getCurrentTime(),
-            ...getSecondaryTrackObservation(track, "track"),
-          });
-
-          logContent("secondary cuechange raw", {
-            currentTime: getCurrentTime(),
-            trackLanguage: track?.language || "",
-            trackKind: track?.kind || "",
-            trackMode: track?.mode || "",
-            activeCuesLength: (() => {
-              try {
-                return track?.activeCues?.length ?? 0;
-              } catch (_) {
-                return -1;
-              }
-            })(),
-            cuesLength: (() => {
-              try {
-                return track?.cues?.length ?? 0;
-              } catch (_) {
-                return -1;
-              }
-            })(),
-            currentCueTextLength: getCurrentCueText(track)?.length ?? 0,
-          });
-        }
-
-        const currentTime = getCurrentTime();
-        const overlapCue = getCurrentCue(track, currentTime);
-        const overlapCueText = cleanCueText(overlapCue);
-        const currentCueText = getCurrentCueText(track, currentTime);
-
-        if (false && DEBUG_SECONDARY_SUBS) {
-          logContent("secondary-sync cue-readable-snapshot", {
-            reason: "secondaryTrackEvent",
-            currentTime,
-            trackLanguage: track?.language || "",
-            trackKind: track?.kind || "",
-            trackMode: track?.mode || "",
-            activeCuesLength: (() => {
-              try {
-                return track?.activeCues?.length ?? 0;
-              } catch (_) {
-                return -1;
-              }
-            })(),
-            cuesLength: (() => {
-              try {
-                return track?.cues?.length ?? 0;
-              } catch (_) {
-                return -1;
-              }
-            })(),
-            overlapCueExists: Boolean(overlapCue),
-            overlapCueTextLength: overlapCueText.length,
-            currentCueTextLength: currentCueText?.length ?? 0,
-          });
-        }
-
-        onCueChange(track);
-      };
-
-      // Step 4:
-      // binder は既に宣言済み（guard 判定で取得したものを再利用する）。
-      const monitorResult = binder?.replaceSecondaryMonitor?.(
-        track,
-        handleSecondaryCueChange,
-        { video: null },
-      );
-
-      if (!monitorResult || monitorResult.reason === "binding-failed") {
-        secondaryTrackBound = null;
-        return;
-      }
-
-      const bindingMeta = createListenerBindingMeta("secondary", track, {
-        usePlaybackSignals: false,
-      });
-
-      logMemoryProbe(
-        "track-listener-created",
-        buildExistingBindingMeta(bindingMeta, {
-          reason: modeDecision?.reason || "",
-          requestedLang: getRequestedSecondaryLanguage?.() || "",
-          currentTime: getCurrentTime(),
-        }),
-      );
-
-      // Step 4:
-      // cleanup の実体は controller 側で持たない。
-      // 「本当に監視中か」は binder.getSecondaryMonitorState() が唯一の正とする。
-      secondaryTrackBound = track;
-
-      logMemoryProbe(
-        "secondary-track-bound",
-        buildExistingBindingMeta(bindingMeta, {
-          reason: modeDecision?.reason || "",
-          requestedLang: getRequestedSecondaryLanguage?.() || "",
-          currentTime: getCurrentTime(),
-        }),
-      );
-
-      maybePromoteTrackReadability();
+      return true;
     }
 
     // secondary track の再解決と再同期を行い、必要なら nearby rebuild まで進める。
@@ -944,9 +857,14 @@
       }
     }
 
-    // runtime / current cue / sequence を 1 つにまとめ、
-    // controller が recovery 判定に使う merged subtitle health を組み立てる。
-    // truth source は SubtitleBlockSequence 側の sequenceHealth で、runtime は補助観測として扱う。
+    /**
+     * runtime / current cue / sequence の観測値を 1 つにまとめ、
+     * recovery 判定で参照する merged subtitle health を返す。
+     *
+     * current / previous current block 由来の secondary 欠落は
+     * health 情報として保持するが、
+     * ここでは recover / force-rebind の直接条件にはしない。
+     */
     function buildMergedSubtitleHealth({
       primaryTrack,
       secondaryTrack,
@@ -956,6 +874,7 @@
       sText,
       sequenceHealth,
     }) {
+      // cueRenderCoordinator 側に統合実装がある場合はそちらを優先する
       if (cueRenderCoordinator?.buildMergedSubtitleHealth) {
         return cueRenderCoordinator.buildMergedSubtitleHealth({
           primaryTrack,
@@ -968,6 +887,8 @@
         });
       }
 
+      // runtime の観測値。
+      // track の存在と active cue 数だけを保持する。
       const runtime = {
         primaryTrackFound: Boolean(primaryTrack),
         secondaryTrackFound: Boolean(secondaryTrack),
@@ -975,6 +896,8 @@
         secondaryActiveCues: getTrackActiveCuesLength(secondaryTrack),
       };
 
+      // 現在時刻の cue / text の観測値。
+      // 実際に primary / secondary の live signal が見えているかを保持する。
       const currentCue = {
         hasPrimaryCue: Boolean(pCue),
         hasSecondaryCue: Boolean(sCue),
@@ -985,6 +908,9 @@
         hasSecondaryText: Boolean(sText),
       };
 
+      // sequence の観測値。
+      // subtitle-blocks.js / cue-sequence-builder.js が返した
+      // current / previous current block 由来の欠落情報をそのまま保持する。
       const sequence = {
         hasCurrentBlock: Boolean(sequenceHealth?.hasCurrentBlock),
         hasCurrentPrimary: Boolean(sequenceHealth?.hasCurrentPrimary),
@@ -1001,25 +927,34 @@
         ),
       };
 
+      // primary の health。
+      // track があり、active cue / current text / current block の
+      // どれかが見えていれば healthy とみなす。
       const primaryHealthy =
         runtime.primaryTrackFound &&
         (runtime.primaryActiveCues > 0 ||
           currentCue.hasPrimaryText ||
           sequence.hasCurrentPrimary);
 
+      // secondary の health。
+      // primary と同様に、track があり何らかの live signal があれば healthy とみなす。
       const secondaryHealthy =
         runtime.secondaryTrackFound &&
         (runtime.secondaryActiveCues > 0 ||
           currentCue.hasSecondaryText ||
           sequence.hasCurrentSecondary);
 
+      // sequence 由来の gap 観測。
+      // seek・言語切替・nearby rebuild 直後などの一時的な欠落でも立ちうるため、
+      // ここでは health 情報としてだけ保持する。
       const sequenceSuggestsSecondaryGap = sequence.currentPairMissingSecondary;
+      const sequenceSuggestsConsecutiveSecondaryGap =
+        sequence.consecutiveCurrentMissingSecondary;
 
-      const shouldRecoverSecondary =
-        primaryHealthy && !secondaryHealthy && sequenceSuggestsSecondaryGap;
-
-      const shouldForceSecondaryRebind =
-        shouldRecoverSecondary && sequence.consecutiveCurrentMissingSecondary;
+      // recovery action は後段の recovery module 側で決める。
+      // ここでは一時的な gap を直接 recover / force-rebind に昇格しない。
+      const shouldRecoverSecondary = false;
+      const shouldForceSecondaryRebind = false;
 
       return {
         runtime,
@@ -1028,6 +963,8 @@
         derived: {
           primaryHealthy,
           secondaryHealthy,
+          sequenceSuggestsSecondaryGap,
+          sequenceSuggestsConsecutiveSecondaryGap,
           shouldRecoverSecondary,
           shouldForceSecondaryRebind,
         },

@@ -9,6 +9,7 @@
 // - 待機がtimeoutした場合も、track自体は見えていればfallbackでstartBilingualへ進む。
 // - SPA直後に初回 start が空振りした場合に備えて、1回だけ delayed retry を入れる。
 // - playback target の変化を監視し、content switch 時の cleanup と再起動を仲介する。
+// - playback target change が短時間に連発しても、同じ旧セッションへの cleanup は一度だけに絞る。
 // - startBilingual 本体の feature logic は持たず、起動前段の coordination に留める。
 // =============================================================
 (() => {
@@ -16,6 +17,8 @@
 
   const root = (window.ATVB = window.ATVB || {});
 
+  // 再生開始前後の attach / auto start / playback target 切替監視をまとめる。
+  // startBilingual 本体には踏み込まず、起動前段の coordination だけを担う。
   function createPlaybackStartupCoordinator({
     state,
     services = {},
@@ -42,6 +45,12 @@
     let targetChangeDebounceTimer = null;
     let delayedRetryTimer = null;
     let delayedRetryVideoSrcKey = "";
+
+    // 同じ旧 playback session に対して resetForContentSwitch() を
+    // 何度も打たないためのガード。
+    // SPA / hard seek 中の中間状態で target change が連発しても、
+    // 旧 videoSrcKey が同じなら cleanup は一度だけにする。
+    let lastCleanedUpVideoSrcKey = "";
 
     // -------------------------------------------------------
     // cleanup helpers
@@ -80,6 +89,17 @@
         targetChangeDebounceTimer = null;
       }
 
+      cleanupDelayedRetry();
+      cleanupStartupWatch();
+    }
+
+    /**
+     * startup watch / delayed retry の世代を進める。
+     * 旧 video にぶら下がる非同期経路をまとめて失効させたいときに使う。
+     */
+    function invalidateStartupAttempts() {
+      startupAttemptToken += 1;
+      cleanupStartupWatch();
       cleanupDelayedRetry();
     }
 
@@ -150,68 +170,70 @@
         state.requestedContentSettings?.secondaryLang || "";
 
       const subtitleLikeTracks = getSubtitleLikeTracks(video);
-      const hasRequestedPrimaryTrack = hasRequestedLanguageTrack(
-        video,
-        requestedPrimaryLang,
-      );
-      const hasRequestedSecondaryTrack = hasRequestedLanguageTrack(
-        video,
-        requestedSecondaryLang,
-      );
 
       return {
-        totalTrackCount: video?.textTracks?.length ?? 0,
         subtitleLikeTrackCount: subtitleLikeTracks.length,
+        subtitleLikeTrackLanguages: subtitleLikeTracks.map(
+          (track) => track?.language || "",
+        ),
         requestedPrimaryLang,
         requestedSecondaryLang,
-        hasRequestedPrimaryTrack,
-        hasRequestedSecondaryTrack,
+        hasRequestedPrimaryTrack: hasRequestedLanguageTrack(
+          video,
+          requestedPrimaryLang,
+        ),
+        hasRequestedSecondaryTrack: hasRequestedLanguageTrack(
+          video,
+          requestedSecondaryLang,
+        ),
       };
     }
 
-    /** textTrack 全体の状態を debug 用に記録する */
-    function logTrackSnapshot(video, reason) {
-      const tracks = Array.from(video?.textTracks || []).map((track, index) => ({
-        index,
-        kind: track?.kind || "",
-        label: track?.label || "",
-        language: track?.language || "",
-        mode: track?.mode || "",
-        cuesLength: track?.cues?.length ?? 0,
-        activeCuesLength: track?.activeCues?.length ?? 0,
-      }));
+    // -------------------------------------------------------
+    // startup logging helpers
+    // -------------------------------------------------------
+
+    /** 現在見えている subtitle-like track の状態をログへ残す */
+    function logTrackSnapshot(video, triggerReason = "unknown") {
+      const subtitleLikeTracks = getSubtitleLikeTracks(video);
 
       logContent?.("startup coordinator track snapshot", {
-        reason,
+        triggerReason,
         currentTime: Number.isFinite(video?.currentTime) ? video.currentTime : null,
         readyState: video?.readyState ?? null,
         paused: typeof video?.paused === "boolean" ? video.paused : null,
-        videoSrc: video?.currentSrc || video?.src || "",
         videoSrcKey: getCurrentVideoSrcKey?.(video) || "",
         stateVideoSrcKey: state.lastVideoSrcKey || "",
         requestedContentSettings: getRequestedContentSettingsSnapshot(),
-        ...getTrackReadinessSnapshot(video),
-        tracks,
+        tracks: subtitleLikeTracks.map((track, index) => ({
+          index,
+          kind: track?.kind || "",
+          label: track?.label || "",
+          language: track?.language || "",
+          mode: track?.mode || "",
+          cueCount:
+            Number.isFinite(track?.cues?.length) ? track.cues.length : null,
+        })),
       });
     }
 
-    /** attach 後の startup 状態を記録する */
-    function logStartupAttach(video, reason) {
+    /** attach 開始時点の playback 文脈をログへ残す */
+    function logStartupAttach(video, reason = "unknown") {
       logContent?.("startup coordinator attach", {
         reason,
-        hasVideo: Boolean(video),
-        trackCount: video?.textTracks?.length ?? 0,
-        canAutoStart: canAutoStartFromSavedSettings(),
         currentTime: Number.isFinite(video?.currentTime) ? video.currentTime : null,
         readyState: video?.readyState ?? null,
         paused: typeof video?.paused === "boolean" ? video.paused : null,
-        videoSrc: video?.currentSrc || video?.src || "",
         videoSrcKey: getCurrentVideoSrcKey?.(video) || "",
         stateVideoSrcKey: state.lastVideoSrcKey || "",
         contentKey: resolvePlaybackContentKey?.() || "",
         requestedContentSettings: getRequestedContentSettingsSnapshot(),
       });
     }
+
+    // -------------------------------------------------------
+    // startup attempt helpers
+    // -------------------------------------------------------
 
     /** watch 中の起動試行がまだ有効かどうかを判定する */
     function shouldAbortStartupAttempt(token, video) {
@@ -372,9 +394,8 @@
     }
 
     /**
-     * SPA直後に startBilingual ready までは進むが字幕ブロックが空のまま残るケース向けに、
-     * 同じ video へ 1 回だけ遅延再試行を入れる。
-     * タブ移動 / トグルONOFFで復帰する挙動を coordinator 側で自動化するための保険。
+     * SPA 直後に tracks ready 判定が空振りした場合に備えて、
+     * 1回だけ遅延 start を試す。
      */
     function scheduleDelayedStartRetry(video, startupReason, options = {}) {
       cleanupDelayedRetry();
@@ -430,6 +451,14 @@
 
       attachTracks?.(video);
       logStartupAttach(video, reason);
+
+      // 新しい video へ attach できたら、
+      // その video に対する将来の content switch cleanup は
+      // まだ未実行として扱えるようにガードを戻す。
+      const attachedVideoSrcKey = getCurrentVideoSrcKey?.(video) || "";
+      if (attachedVideoSrcKey && attachedVideoSrcKey !== lastCleanedUpVideoSrcKey) {
+        lastCleanedUpVideoSrcKey = "";
+      }
 
       if (!canAutoStartFromSavedSettings()) return;
 
@@ -492,8 +521,22 @@
     }
 
     /**
+     * 旧 playback target を cleanup 一度化の観点で識別するキーを返す。
+     * まずは旧 videoSrcKey を基準にし、空なら state.lastVideoSrcKey を使う。
+     */
+    function getSessionCleanupKey(snapshot) {
+      if (!snapshot) return "";
+      return snapshot.videoSrcKey || state.lastVideoSrcKey || "";
+    }
+
+    /**
      * playback target が切り替わったときの共通経路。
      * cleanup を実行し、新しい target があれば attach → start へ進める。
+     *
+     * 重要:
+     * - MutationObserver の burst や SPA 中間状態で target change が連発しても、
+     *   同じ旧 session に対する cleanup は一度だけにする。
+     * - cleanup 自体を skip しても、新しい target 探索と attach は継続する。
      */
     function handlePlaybackTargetChange(reason = "unknown") {
       const nextTarget = getPlaybackTargetSnapshot();
@@ -505,12 +548,19 @@
       const previousTarget = lastObservedPlaybackTarget;
       lastObservedPlaybackTarget = nextTarget;
 
+      const previousContentKey =
+        previousTarget?.contentKey || state.currentContentKey || "";
+      const previousVideoSrcKey =
+        previousTarget?.videoSrcKey || state.lastVideoSrcKey || "";
+      const cleanupKey = getSessionCleanupKey(previousTarget);
+      const alreadyCleanedUp =
+        Boolean(cleanupKey) && cleanupKey === lastCleanedUpVideoSrcKey;
+
       logContent?.("playback target changed", {
         reason,
-        previousContentKey: previousTarget?.contentKey || state.currentContentKey || "",
+        previousContentKey,
         nextContentKey: nextTarget.contentKey,
-        previousVideoSrcKey:
-          previousTarget?.videoSrcKey || state.lastVideoSrcKey || "",
+        previousVideoSrcKey,
         nextVideoSrcKey: nextTarget.videoSrcKey,
         previousPlaybackReady: previousTarget?.hasPlaybackReady ?? false,
         nextPlaybackReady: nextTarget.hasPlaybackReady,
@@ -518,28 +568,48 @@
         nextHasVideo: nextTarget.hasVideo,
         previousHasDialog: previousTarget?.hasDialog ?? false,
         nextHasDialog: nextTarget.hasDialog,
+        cleanupKey,
+        alreadyCleanedUp,
       });
 
+      // 古い delayed retry はここで止める。
+      // cleanup を skip する場合でも、旧 video 向け retry は残さない。
       cleanupDelayedRetry();
 
-      playbackSessionCleanup?.resetForContentSwitch?.(
-        "playback_target_changed",
-      );
+      if (!alreadyCleanedUp) {
+        playbackSessionCleanup?.resetForContentSwitch?.(
+          "playback_target_changed",
+        );
+
+        if (cleanupKey) {
+          lastCleanedUpVideoSrcKey = cleanupKey;
+        }
+
+        // 旧 session に紐づく readiness watch / poll / timeout fallback を
+        // この時点でまとめて失効させる。
+        invalidateStartupAttempts();
+      } else {
+        logContent?.("playback target changed cleanup skipped", {
+          reason,
+          cleanupKey,
+          previousContentKey,
+          previousVideoSrcKey,
+          nextContentKey: nextTarget.contentKey,
+          nextVideoSrcKey: nextTarget.videoSrcKey,
+        });
+      }
 
       const found = getVideoAndDialog?.();
 
       logContent?.("playback target reattach candidate", {
         reason,
         foundVideo: Boolean(found?.video),
-        foundDialog: Boolean(found?.dialogEl),
+        foundDialog: Boolean(found?.dialog || found?.dialogEl),
         currentTime: Number.isFinite(found?.video?.currentTime)
           ? found.video.currentTime
           : null,
-        readyState: found?.video?.readyState ?? null,
-        videoSrc: found?.video?.currentSrc || found?.video?.src || "",
-        videoSrcKey: getCurrentVideoSrcKey?.(found?.video) || "",
-        stateVideoSrcKey: state.lastVideoSrcKey || "",
-        requestedContentSettings: getRequestedContentSettingsSnapshot(),
+        nextContentKey: nextTarget.contentKey,
+        nextVideoSrcKey: nextTarget.videoSrcKey,
       });
 
       if (found?.video) {
@@ -591,7 +661,7 @@
     }
 
     // -------------------------------------------------------
-    // public api
+    // エクスポート
     // -------------------------------------------------------
 
     /**

@@ -7,6 +7,8 @@
 //   （primaryLang / secondaryLang / panelDefaultOpen / extensionEnabled など）は保持する。
 // - restart 用 cleanup と extensionEnabled=false 用 cleanup を分け、
 //   再起動時は再生成前提の撤収、OFF 時は再生画面の拡張 UI 完全破棄を担当する。
+// - content switch 時の resetForContentSwitch() は、同一タイミングで重複して呼ばれても
+//   teardown が壊れないよう最小限の再入ガードを持つ。
 //
 // clearInternalSubtitleState の preserveSecondaryDom 使い分け:
 //   true  -> restart 前提。パネルDOMのフラッシュを避けるため secondary DOM を残す。
@@ -39,6 +41,16 @@
       runtimeObservers,
     } = teardownDeps;
 
+    // resetForContentSwitch() の同期的な再入だけを防ぐフラグ。
+    // 同一旧セッションへの cleanup 一度化そのものは
+    // playback-startup-coordinator.js 側で行い、
+    // ここでは「呼ばれても壊れない」ための保険に留める。
+    let isResettingForContentSwitch = false;
+
+    // -------------------------------------------------------
+    // 小さな state cleanup
+    // -------------------------------------------------------
+
     // secondary track の参照と表示だけを消す。
     // 設定値や requested settings には触らない。
     function clearSecondaryTrackState() {
@@ -52,6 +64,10 @@
 
       renderSecondarySubtitle("", null);
     }
+
+    // -------------------------------------------------------
+    // teardown helpers
+    // -------------------------------------------------------
 
     // restart 前に、現在の playback session に紐づく UI / observer をいったん撤収する。
     // 直後に startBilingual() で再生成する前提なので、字幕制御はネイティブへ戻すが
@@ -94,6 +110,10 @@
       subtitleRecoveryManager?.dispose?.();
     }
 
+    // -------------------------------------------------------
+    // restart preparation
+    // -------------------------------------------------------
+
     // 再起動前に、再生セッション由来の一時 state だけを初期化する。
     // 保存済み設定は保持し、直後の startBilingual() で新しい字幕状態を積み直す前提で使う。
     function prepareForRestart() {
@@ -114,35 +134,57 @@
       state.subtitleCurrentIndex = -1;
     }
 
+    // -------------------------------------------------------
+    // session cleanup
+    // -------------------------------------------------------
+
     // SPA で別コンテンツへ切り替わるときの cleanup。
     // 設定は保持したまま、旧 playback session に紐づく UI / track / subtitle state を撤収する。
     // clearPlaybackSessionUiState よりは「次の再生へすぐ繋ぐ前提」の軽い cleanup として扱う。
+    //
+    // ここでは同期的な再入だけを防ぎ、
+    // 同一旧セッションへの cleanup 一度化そのものは coordinator 側に任せる。
     function resetForContentSwitch(reason = "content_switch") {
-      logContent?.(reason, {
-        previousVideoSrcKey: state.lastVideoSrcKey,
-        currentContentKey: state.currentContentKey,
-        preservedSettings: {
-          primaryLang: state.contentSettings?.primaryLang || "",
-          secondaryLang: state.contentSettings?.secondaryLang || "",
-          panelDefaultOpen: state.contentSettings?.panelDefaultOpen,
-          requestedSecondaryLang: state.requestedSecondaryLang || "",
-        },
-      });
+      if (isResettingForContentSwitch) {
+        logContent?.("resetForContentSwitch skipped (reentrant)", {
+          reason,
+          previousVideoSrcKey: state.lastVideoSrcKey,
+          currentContentKey: state.currentContentKey,
+        });
+        return;
+      }
 
-      teardownForRestart();
-      prepareForRestart();
+      isResettingForContentSwitch = true;
 
-      // prepareForRestart は secondary DOM を残すので、
-      // コンテンツ切替では旧エピソードの字幕残留を避けるため明示的に消す。
-      clearInternalSubtitleState?.({
-        preserveSecondaryDom: false,
-        reason: "resetForContentSwitch",
-      });
+      try {
+        logContent?.(reason, {
+          previousVideoSrcKey: state.lastVideoSrcKey,
+          currentContentKey: state.currentContentKey,
+          preservedSettings: {
+            primaryLang: state.contentSettings?.primaryLang || "",
+            secondaryLang: state.contentSettings?.secondaryLang || "",
+            panelDefaultOpen: state.contentSettings?.panelDefaultOpen,
+            requestedSecondaryLang: state.requestedSecondaryLang || "",
+          },
+        });
 
-      state.video = null;
-      state.dialogEl = null;
-      state.lastObservedVideoTime = null;
-      state.currentContentKey = "";
+        teardownForRestart();
+        prepareForRestart();
+
+        // prepareForRestart は secondary DOM を残すので、
+        // コンテンツ切替では旧エピソードの字幕残留を避けるため明示的に消す。
+        clearInternalSubtitleState?.({
+          preserveSecondaryDom: false,
+          reason: "resetForContentSwitch",
+        });
+
+        state.video = null;
+        state.dialogEl = null;
+        state.lastObservedVideoTime = null;
+        state.currentContentKey = "";
+      } finally {
+        isResettingForContentSwitch = false;
+      }
     }
 
     // 動画クローズや再生終了時に、playback session 由来の UI と一時 state をまとめて消す。
@@ -163,89 +205,66 @@
       prepareForRestart();
 
       // prepareForRestart は secondary DOM を残すので、
-      // 動画クローズ後はここで残留字幕を明示的に消す。
-      clearInternalSubtitleState?.({ preserveSecondaryDom: false });
+      // playback session 完全終了では panel / overlay の残留表示も含めて消す。
+      clearInternalSubtitleState?.({
+        preserveSecondaryDom: false,
+        reason: "clearPlaybackSessionUiState",
+      });
 
       state.video = null;
       state.dialogEl = null;
-      state.lastVideoSrcKey = "";
       state.lastObservedVideoTime = null;
       state.currentContentKey = "";
-
-      // 設定保持:
-      // - state.contentSettings は消さない
-      // - state.requestedContentSettings は消さない
-      // - chrome.storage.sync は触らない
+      state.lastVideoSrcKey = "";
     }
 
-    // playback target が一時的に見つからないときに、残っていた UI を外して layout を戻す。
-    // URL 遷移や dialog 差し替え直後の中間状態で使う。
+    // navigation 直後に新しい playback target がまだ見つからないときの後始末。
+    // UI はすでに resetForContentSwitch() 済みの想定なので、ここでは参照系を空に寄せる。
     function handleNavigationTargetMissing({
       reason = "navigation_target_missing",
-      url = "",
-      playbackContext = null,
+      playbackContext = {},
     } = {}) {
-      destroyUiHosts?.();
-      applyLayout?.(false);
-
-      logContent?.("navigation changed: playback target not ready yet", {
+      logContent?.("playback target missing after cleanup", {
         reason,
-        url,
-        ...(playbackContext || {}),
+        previousVideoSrcKey: state.lastVideoSrcKey,
+        currentContentKey: state.currentContentKey,
+        playbackContext,
+      });
+
+      state.video = null;
+      state.dialogEl = null;
+      state.lastObservedVideoTime = null;
+      state.currentContentKey = "";
+      state.lastVideoSrcKey = "";
+    }
+
+    // -------------------------------------------------------
+    // layout reset
+    // -------------------------------------------------------
+
+    // 再生 UI teardown 後に layout を標準状態へ戻す。
+    // 拡張 UI の残骸を避けるため、最後に一度だけ呼ぶ用途を想定する。
+    function restoreDefaultLayout() {
+      applyLayout?.({
+        panelOpen: false,
+        forceOverlayHidden: true,
       });
     }
 
-    // Apple TV の playback dialog 内の close button クリックかどうかだけを判定する。
-    // 他の button クリックでは cleanup しない。
-    function isPlaybackCloseButtonClick(event) {
-      const path =
-        typeof event?.composedPath === "function" ? event.composedPath() : [];
+    // -------------------------------------------------------
+    // エクスポート
+    // -------------------------------------------------------
 
-      const closeButton = path.find(
-        (el) =>
-          el instanceof Element &&
-          String(el.tagName || "").toUpperCase() === "BUTTON" &&
-          el.getAttribute("data-testid") === "close-button" &&
-          el.getAttribute("aria-label") === "閉じる",
-      );
-
-      const playbackDialog = path.find(
-        (el) =>
-          el instanceof Element &&
-          String(el.tagName || "").toUpperCase() === "DIALOG" &&
-          el.getAttribute("data-testid") === "playback-view",
-      );
-
-      return Boolean(closeButton && playbackDialog);
-    }
-
-    // close button 監視を 1 回だけ登録する。
-    // close 時は設定を残しつつ playback session 由来 state だけを消す。
-    function ensureCloseClickListener() {
-      if (state.playbackCloseClickHandler) return;
-
-      state.playbackCloseClickHandler = (event) => {
-        if (!isPlaybackCloseButtonClick(event)) return;
-        clearPlaybackSessionUiState("playback close button clicked");
-      };
-
-      document.addEventListener("click", state.playbackCloseClickHandler, true);
-    }
-
-    // settings-runtime や他モジュールから使う cleanup 関数群を返す。
     return {
-      clearSecondaryTrackState,
       teardownForRestart,
       detachForDisabled,
       prepareForRestart,
-      clearPlaybackSessionUiState,
       resetForContentSwitch,
+      clearPlaybackSessionUiState,
       handleNavigationTargetMissing,
-      isPlaybackCloseButtonClick,
-      ensureCloseClickListener,
+      restoreDefaultLayout,
     };
   }
 
-  // cleanup factory を ATVB 名前空間へ公開する。
   root.createPlaybackSessionCleanup = createPlaybackSessionCleanup;
 })();

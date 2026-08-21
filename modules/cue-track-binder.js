@@ -1,13 +1,28 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - modules/cue-track-binder.js
 //
-// 役割:
-// - cue-controller.js が持つ track bind / unbind / handoff 系 API を
-//   名前空間経由で参照しやすい形にまとめるバインダーモジュール。
-// - primary / secondary で共通の cuechange listener bind 処理を
-//   createTrackListenerBinding として提供し、mode 操作とは分離する。
-// - track.mode の決定・適用は引き続き cue-controller.js 側の責務とし、
-//   ここでは listener の attach / cleanup / 初回発火だけを担う。
+// 役割: cue-controller.js が持つ track bind / unbind / handoff 系 API を
+//       名前空間経由で参照しやすい形にまとめるバインダーモジュール
+//
+// 依存: cue-controller.js が生成する cueController インスタンス
+//       (bindPrimarySubtitleTrack / unbindPrimarySubtitleTrack /
+//        handoffPrimarySubtitleToNative / restoreNativeSubtitles /
+//        getBoundPrimaryTrack)
+//
+// 設計原則:
+//   - primary の bind / unbind / handoff / restore は
+//     引き続き cueController に委譲する（track.mode の決定は
+//     primary 側の文脈が複雑なため、責務を分割しない）。
+//   - secondary は listener の attach/cleanup に加えて、
+//     track.mode の決定・適用・復元・同一track判定まで
+//     このモジュールが一元的に持つ。
+//   - secondary monitor の状態（bind中のtrack・meta・
+//     適用中mode・復元用mode）は全てこのモジュール内の
+//     クロージャ変数で保持し、getSecondaryMonitorState() で
+//     読み取り専用として公開する。
+//   - createTrackListenerBinding() は primary/secondary 共通の
+//     cuechange listener attach/cleanup のみを担い、
+//     track.mode には触れない（mode操作は呼び出し側の責務）。
 // =============================================================
 (() => {
   "use strict";
@@ -16,13 +31,6 @@
 
   /**
    * cueController の公開 API を、呼び出し側で扱いやすい binder 形に束ねる。
-   * primary の bind / unbind は従来どおり cueController に委譲しつつ、
-   * secondary については monitor state を binder 側で保持する。
-   *
-   * Step 3:
-   * - secondary listener の開始・差し替え・停止を binder module 側へ寄せる。
-   * - cleanup の実体は createTrackListenerBinding().cleanup を使い、
-   *   新しい解除実装は増やさない。
    *
    * @param {{ cueController: object }} deps
    * @returns {{
@@ -46,46 +54,150 @@
     let secondaryMonitorTrack = null;
 
     // createTrackListenerBinding() から受け取る唯一の cleanup 経路。
-    // Step 4 ではこの保持をさらに binder 主体へ寄せていく前提。
     let secondaryMonitorCleanup = null;
 
-    // debug / state 観測用の軽量メタ情報。
-    // track 全体ではなく id / language のみ持つ。
+    // debug / state 観測用のメタ情報。
+    // bind 時に渡された bindingMeta をそのまま保持し、
+    // cleanup ログでも同じ内容を参照できるようにする。
     let secondaryMonitorMeta = null;
+
+    // 拡張が track.mode を書き換える前の値。
+    // stop 時に restoreMode !== false であればこの値へ戻す。
+    let secondaryMonitorOriginalMode = null;
+
+    // 直近で適用した requestedMode。
+    // same track re-bind 時の mode 変化判定に使う。
+    let secondaryMonitorRequestedMode = null;
+
+    /**
+     * secondary track の mode を安全に適用する。
+     * 失敗時は例外を握り、呼び出し元の onModeApplyError へ通知するだけに留める。
+     *
+     * @param {TextTrack} track
+     * @param {string} nextMode
+     * @param {{ onModeApplyError?: Function, applyReason?: string }} context
+     */
+    function applySecondaryTrackMode(
+      track,
+      nextMode,
+      { onModeApplyError, applyReason = "secondary-monitor" } = {},
+    ) {
+      if (!track || !nextMode) return;
+      if (track.mode === nextMode) return;
+
+      try {
+        track.mode = nextMode;
+      } catch (error) {
+        try {
+          onModeApplyError?.(error, nextMode, applyReason);
+        } catch (_) {}
+      }
+    }
 
     /**
      * 現在の secondary monitor を停止する。
-     * cleanup は createTrackListenerBinding() が返したものだけを使う。
+     * listener cleanup を必ず実行し、restoreMode !== false の場合は
+     * mode を bind 前の値へ戻す。
+     *
+     * fallbackTrack / fallbackOriginalMode は、呼び出し側
+     * (cue-controller.js) がまだローカルに track / originalMode を
+     * 保持しているケースの橋渡し用。monitor 側の状態が既に
+     * 空でも、渡された値を使って restore できるようにする。
+     *
+     * @param {{
+     *   restoreMode?: boolean,
+     *   fallbackTrack?: TextTrack | null,
+     *   fallbackOriginalMode?: string | null,
+     * }} options
      */
-    function stopSecondaryMonitor() {
+    function stopSecondaryMonitor(options = {}) {
+      const restoreMode = options.restoreMode !== false;
+      const fallbackTrack = options.fallbackTrack || null;
+      const fallbackOriginalMode =
+        options.fallbackOriginalMode != null
+          ? options.fallbackOriginalMode
+          : null;
+
+      const track = secondaryMonitorTrack || fallbackTrack || null;
+      const originalMode =
+        secondaryMonitorOriginalMode != null
+          ? secondaryMonitorOriginalMode
+          : fallbackOriginalMode;
+
       try {
         secondaryMonitorCleanup?.();
       } catch (_) {}
 
+      if (restoreMode && track && originalMode != null) {
+        try {
+          track.mode = originalMode;
+        } catch (_) {}
+      }
+
       secondaryMonitorTrack = null;
       secondaryMonitorCleanup = null;
       secondaryMonitorMeta = null;
+      secondaryMonitorOriginalMode = null;
+      secondaryMonitorRequestedMode = null;
     }
 
     /**
-     * secondary monitor を新規開始する。
-     * 既存 monitor があれば先に stop してから付け直す。
+     * secondary monitor を開始する。
+     * 同一 track かつ同一 requestedMode で既に監視中の場合は
+     * bind をスキップし、listener の再作成を避ける。
      *
      * @param {TextTrack} track
-     * @param {Function} onCueChange
+     * @param {Function} onCueChange - secondary の cuechange で呼ぶハンドラ
      * @param {{
      *   video?: HTMLVideoElement | null,
+     *   requestedMode?: string,
+     *   originalMode?: string | null,
+     *   bindingMeta?: object | null,
+     *   onModeApplyError?: Function,
      * }} options
      * @returns {{
-     *   track: TextTrack,
-     *   notifyInitial: Function,
-     *   cleanup: Function,
+     *   skipped: boolean,
+     *   reason: string,
+     *   track: TextTrack | null,
+     *   meta: object | null,
      * } | null}
      */
     function startSecondaryMonitor(track, onCueChange, options = {}) {
       if (!track || typeof onCueChange !== "function") return null;
 
+      const requestedMode = options.requestedMode || "hidden";
+      const originalMode =
+        options.originalMode != null ? options.originalMode : track?.mode || "";
+      const bindingMeta = options.bindingMeta || null;
+      const onModeApplyError =
+        typeof options.onModeApplyError === "function"
+          ? options.onModeApplyError
+          : null;
+
+      const sameTrackRef = Boolean(track && secondaryMonitorTrack === track);
+      const sameMode =
+        String(track?.mode || "").toLowerCase() ===
+        String(requestedMode || "").toLowerCase();
+
+      // 同じ track を同じ mode で維持できる場合は re-bind しない。
+      // listener を張り直すコストと、一瞬の cuechange 取りこぼしを避ける。
+      if (sameTrackRef && sameMode && secondaryMonitorCleanup) {
+        return {
+          skipped: true,
+          reason: "same-track-ref-same-mode",
+          track: secondaryMonitorTrack,
+          meta: secondaryMonitorMeta,
+        };
+      }
+
+      // 別 track への切り替え、または mode 変更が必要なので
+      // 現在の監視を一度止めてから新しく張り直す。
       stopSecondaryMonitor();
+
+      applySecondaryTrackMode(track, requestedMode, {
+        onModeApplyError,
+        applyReason: "bind-initial",
+      });
 
       const binding = createTrackListenerBinding({
         track,
@@ -95,60 +207,59 @@
         usePlaybackSignals: false,
       });
 
-      if (!binding) return null;
-
-      secondaryMonitorTrack = track;
-      secondaryMonitorCleanup = binding.cleanup;
-      secondaryMonitorMeta = {
-        trackId: track?.id || "",
-        language: track?.language || "",
-      };
-
-      // bind 直後に 1 回だけ同期させ、最初の cuechange 待ちで空表示になるのを防ぐ。
-      binding.notifyInitial?.();
-      return binding;
-    }
-
-    /**
-     * secondary monitor を差し替える。
-     * すでに同じ track を監視中なら bind 自体をスキップする。
-     *
-     * @param {TextTrack} track
-     * @param {Function} onCueChange
-     * @param {{
-     *   video?: HTMLVideoElement | null,
-     * }} options
-     * @returns {{
-     *   skipped: boolean,
-     *   reason: string,
-     *   track: TextTrack | null,
-     *   meta: { trackId: string, language: string } | null,
-     * }}
-     */
-    function replaceSecondaryMonitor(track, onCueChange, options = {}) {
-      const sameTrackRef = Boolean(track && secondaryMonitorTrack === track);
-
-      if (sameTrackRef && secondaryMonitorCleanup) {
+      if (!binding) {
         return {
-          skipped: true,
-          reason: "same-track-ref",
-          track: secondaryMonitorTrack,
-          meta: secondaryMonitorMeta,
+          skipped: false,
+          reason: "binding-failed",
+          track: null,
+          meta: null,
         };
       }
 
-      const binding = startSecondaryMonitor(track, onCueChange, options);
+      secondaryMonitorTrack = track;
+      secondaryMonitorCleanup = binding.cleanup;
+      secondaryMonitorOriginalMode = originalMode;
+      secondaryMonitorRequestedMode = requestedMode;
+      secondaryMonitorMeta = {
+        trackId: track?.id || "",
+        language: track?.language || "",
+        bindingId: bindingMeta?.bindingId || "",
+        lane: bindingMeta?.lane || "secondary",
+        trackKind: track?.kind || "",
+        trackLabel: track?.label || "",
+        trackLanguage: track?.language || "",
+        requestedMode,
+      };
+
+      // bind 直後に 1 回だけ同期させ、最初の cuechange 待ちで
+      // 空表示になるのを防ぐ。
+      binding.notifyInitial?.();
 
       return {
         skipped: false,
-        reason: binding ? "replaced" : "binding-failed",
-        track: binding?.track || null,
+        reason: "started",
+        track,
         meta: secondaryMonitorMeta,
       };
     }
 
+    /**
+     * secondary monitor を差し替える。
+     * 実体は startSecondaryMonitor() と同じ判定を使うため、
+     * ここでは単純に委譲する。
+     *
+     * @param {TextTrack} track
+     * @param {Function} onCueChange
+     * @param {object} options
+     * @returns {ReturnType<typeof startSecondaryMonitor>}
+     */
+    function replaceSecondaryMonitor(track, onCueChange, options = {}) {
+      return startSecondaryMonitor(track, onCueChange, options);
+    }
+
     return {
-      // primary bind は従来どおり cueController に委譲する。
+      // primary bind は cueController に委譲する。
+      // primary は OFF/handoff の絡みが多く、責務を割らない。
       bindPrimary: (track, onCueChange, options) =>
         cueController.bindPrimarySubtitleTrack(track, onCueChange, options),
 
@@ -164,42 +275,46 @@
       restoreNative: () =>
         cueController.restoreNativeSubtitles?.(),
 
-      // secondary の mode 決定や bind 自体はまだ cueController 側に委譲する。
-      bindSecondary: (track, modeDecision) =>
-        cueController.bindSecondarySubtitleTrack(track, modeDecision),
+      // secondary の bind 実体はこのモジュールが持つ。
+      // 呼び出し側 (cue-controller.js) は
+      // track / onCueChange / requestedMode / originalMode /
+      // bindingMeta / onModeApplyError を渡すだけでよい。
+      bindSecondary: (track, onCueChange, options) =>
+        startSecondaryMonitor(track, onCueChange, options),
 
-      // secondary unbind 前に monitor を必ず止める。
-      // listener cleanup を先に通してから controller 側 unbind へ進む。
-      unbindSecondary: (options) => {
-        stopSecondaryMonitor();
-        return cueController.unbindSecondarySubtitleTrack(options);
-      },
+      // secondary unbind もこのモジュールが持つ。
+      // options.restoreMode / fallbackTrack / fallbackOriginalMode を
+      // そのまま stopSecondaryMonitor() へ渡す。
+      unbindSecondary: (options) => stopSecondaryMonitor(options),
 
       // 現在 bind 済みの primary track を返す。
-      getBoundPrimary: () =>
-        cueController.getBoundPrimaryTrack(),
+      getBoundPrimary: () => cueController.getBoundPrimaryTrack(),
 
       // 現在 bind 済みの secondary track を返す。
-      getBoundSecondary: () =>
-        cueController.getBoundSecondaryTrack(),
+      // monitor が空の場合は null。
+      getBoundSecondary: () => secondaryMonitorTrack || null,
 
       // secondary monitor API。
+      // cue-controller.js からは主にこの3つを直接呼ぶ想定。
       startSecondaryMonitor,
       replaceSecondaryMonitor,
       stopSecondaryMonitor,
 
       // monitor state の観測用 API。
+      // track / meta に加えて、適用中の mode と復元用 mode も返す。
       getSecondaryMonitorState: () => ({
+        active: Boolean(secondaryMonitorCleanup),
         track: secondaryMonitorTrack,
         meta: secondaryMonitorMeta,
-        active: Boolean(secondaryMonitorCleanup),
+        originalMode: secondaryMonitorOriginalMode,
+        requestedMode: secondaryMonitorRequestedMode,
       }),
     };
   }
 
   /**
    * primary / secondary 共通の cuechange listener binding を作る。
-   * track.mode は一切変更せず、listener の attach / cleanup だけを担う。
+   * track.mode には触れず、listener の attach / cleanup / 初回発火だけを担う。
    *
    * @param {{
    *   track: TextTrack,
@@ -312,6 +427,9 @@
     };
   }
 
+  // window.ATVB.cueTrackBinder として公開する。
+  // cue-controller.js 側は createCueTrackBinder({ cueController }) を呼び、
+  // 返り値を window.ATVB.cueTrackBinder.instance として保持する想定。
   root.cueTrackBinder = root.cueTrackBinder || {};
   root.cueTrackBinder.createCueTrackBinder = createCueTrackBinder;
   root.cueTrackBinder.createTrackListenerBinding = createTrackListenerBinding;
