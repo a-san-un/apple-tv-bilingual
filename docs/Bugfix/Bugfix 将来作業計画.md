@@ -1,317 +1,288 @@
-# Bugfix 将来作業計画 2026-08-17（改訂版）
+# Bugfix 将来作業計画 2026-08-21（整理版）
 
 **ブランチ:** `issue-32-content-core-split`  
-**対応マスタープラン:** Bugfix マスタープラン 2026-08-17（改訂版）  
-**このシートの役割:** 将来作業の計画（残っている計画だけにする）  
+**対応マスタープラン:** Bugfix マスタープラン 2026-08-21（要約版）  
+**このシートの役割:** 現在の実装シートで扱わない残件・後続フェーズ・将来の改善候補を管理する。完了済みの詳細、今回の実装手順、実機ログは持たない。  
 **最終更新:** 2026-08-21
 
----
+***
 
-## 計画の全体像
+## 運用ルール
 
-マスタープランの依存ツリーに従い、完了した F-1 / F-2 / F-3 / F-6 を除いた  
-残件と将来作業だけをここで管理する。  
-2026-08-17 時点では、F-4 は UI 復旧まで進んだが async response エラーが残っているため残件化し、  
-F-5 は完了済み。リーク対策（Step 1〜5）は `cue-controller.js` を中心に進行中。
+- この文書には、**未着手・持ち越し・後続フェーズ**だけを残す
+- 今まさに実装する作業は `Bugfix 実装シート.md` に移す
+- Step の全体進捗は `Bugfix マスタープラン.md` を正本とする
+- 詳細な設計は専用設計資料を正本とする
+- 完了した項目はこの文書から削除し、必要なら Git 履歴または archive で参照する
+- 新しい作業テーマが主作業になった時点で、この文書から `Bugfix 実装シート.md` へ移す
+
+***
+
+## 将来作業の全体像
 
 ```text
-[F-1] panelOpen 誤連動の切り離し ← ✅ 完了
+現在の主作業:
+  [Step 7] secondary 条件統合の実装
       ↓
-[F-2] restart 後のネイティブトグル生成漏れ修正 ← ✅ 完了
+後続フェーズ:
+  [Step 8] content.js を配線専用に寄せる
       ↓
-[F-3] 言語設定変更のリアルタイム反映 ← ✅ 完了
+  [Step 9] dead code / debug を整理する
       ↓
-[F-6] デバッグパネル OFF 時不可 ← ✅ 完了
+  [Step 10] lifecycle / cleanup を全経路で検証する
       ↓
-[F-4] SETTINGS_CHANGED 非同期応答 / 再送 race 改善 ← 🟠 残件持ち越し
+並行残件:
+  [F-4] message channel closed 系エラーの整理
+  [M-1] 長時間再生時の Renderer メモリ増加の再計測・原因切り分け
+  [F-8] decision 導入後のログ体系整理
       ↓
-[F-5=Bugfix-E] ネイティブ字幕復元 ← ✅ 完了
-      ↓
-[リーク対策] secondary listener / rebind / cleanup 整理 ← 🔵 進行中（Step 5 まで確認済み）
-      ↓
-[F-5] を secondary ベースの hidden-lock モデルへ統一する設計の確定 ← 🔴 未着手
-      ↓     
-[F-8] DevConsole 大量ログ削減 ← 🔴 未着手
-      ↓
-[Bugfix-B / C] ← 🔴 未着手
+後続改善候補:
+  [Bugfix-B / C] 未整理の既存不具合・UI/字幕同期課題を再評価する
 ```
 
----
+***
 
-## F-4 残件：メッセージチャネルクローズエラー整理
+## 優先順位
 
-**位置づけ:** 次の主作業ではなく、並行で持ち越す残件
+| 優先度 | 作業 | 着手条件 | 目的 |
+|---|---|---|---|
+| P0 | Step 8 | Step 7 完了 | `content.js` を配線専用に寄せ、判断ロジックの流入を防ぐ |
+| P0 | Step 9 | Step 7 完了 | decision 導入後の dead code / debug / obsolete rationale を整理する |
+| P0 | Step 10 | Step 7〜9 完了 | lifecycle ごとの secondary listener cleanup を全経路で確認する |
+| P1 | F-4 | Step 7 の実機検証を阻害しない時点 | async response / message channel close の送信設計を整理する |
+| P1 | M-1 | Step 10 の検証基盤ができた時点 | 長時間再生時の Renderer メモリ増加を定量的に再計測する |
+| P1 | F-8 | Step 7〜9 完了 | decision / binder / recovery 単位のログ体系へ整理する |
+| P2 | Bugfix-B / C | 上記の安定化完了後 | 未整理の既存不具合を再評価し、必要なものだけを新規実装シートへ切り出す |
 
-### 背景
+***
 
-2026-08-17 の修正で、`background.js` と `settings-runtime.js` に手を入れ、  
-ON 復帰時に `#atv-toggle-btn` と overlay 字幕が出ない主症状は解消した。  
-一方で、次のエラーはまだ初回に残ることがある。
+## Step 8: content.js を配線専用に寄せる
+
+**位置づけ:** Step 7 完了後の最優先後続作業
+
+### 目的
+
+`content.js` を controller、binder、sync controller、recovery manager の生成と接続に限定する。  
+secondary selection、recovery 判断、cleanup 判断、track mode 判断を `content.js` に持ち込まない。
+
+### 対象ファイル
+
+- `content.js`
+- 必要に応じて factory / dependency injection を受ける周辺モジュール
+
+### 着手条件
+
+- Step 7 で `buildSecondarySyncDecision()` と action 実行の責務境界が安定している
+- `cue-controller.js` が secondary 条件の正本でなくなっている
+
+### 完了条件
+
+- [ ] `content.js` が依存性生成・注入・起動・停止配線だけを担う
+- [ ] secondary selection / recovery / cleanup 条件が `content.js` に存在しない
+- [ ] controller / binder / recovery manager の生成順と破棄順が追跡できる
+- [ ] 新規ロジック追加時に `content.js` へ条件分岐を追加しなくて済む
+
+***
+
+## Step 9: dead code / debug 整理
+
+**位置づけ:** Step 7〜8 で不要になった条件・ログを削る整理フェーズ
+
+### 目的
+
+secondary decision 導入前の補助分岐、obsolete rationale、不要な debug 出力を削除または役割別に移動する。
+
+### 対象ファイル
+
+- `cue-controller.js`
+- `modules/subtitle-sync-controller.js`
+- `modules/cue-track-binder.js`
+- `modules/secondary-track-recovery.js`
+- 必要に応じて `modules/subtitle-recovery-manager.js`
+
+### 整理候補
+
+- `if (false)` 系の一時観測コード
+- `sameTrackUnreadable` 前提の補助ログや rationale
+- controller 側に残る旧 `shouldRebind` 系のログ
+- decision 導入後に重複する selection / binder / recovery ログ
+- 通常再生時に意味を持たない probe ログ
+- 役割が不明確なログカテゴリ
+
+### 完了条件
+
+- [ ] 不要分岐と一時コードが削除されている
+- [ ] ログが `decision` / `binder` / `recovery` / `lifecycle` の責務単位で読める
+- [ ] 通常再生時にログが過剰出力されない
+- [ ] 問題発生時に bind・keep・clear・cleanup の理由を追跡できる
+
+***
+
+## Step 10: lifecycle / cleanup 全経路確認
+
+**位置づけ:** secondary listener と cleanup の安定性を確定する検証フェーズ
+
+### 目的
+
+secondary monitor の開始・停止・cleanup・mode restore が、すべての終了経路で 1 回だけ実行されることを確認する。
+
+### 対象ファイル
+
+- `cue-controller.js`
+- `modules/cue-track-binder.js`
+- `modules/playback-session-cleanup.js`
+- `modules/playback-startup-coordinator.js`
+- `content.js`
+
+### 確認対象の終了経路
+
+- panel close
+- playback close
+- extension OFF
+- extension ON 復帰
+- short seek
+- hard seek
+- SPA 遷移
+- destroy
+- restart
+- 別エピソード遷移
+- 別作品遷移
+
+### 完了条件
+
+- [ ] listener attach / cleanup の所有者が binder に一本化されている
+- [ ] cleanup 実体が同一 session に対して多重実行されない
+- [ ] `cleanup skipped` と実 cleanup がログで区別できる
+- [ ] old session の watch / retry / timer が新 session へ持ち越されない
+- [ ] OFF / restart / close 後に native subtitle mode が正しく復元される
+- [ ] 長時間再生と複数回遷移後も listener 数が増加し続けない
+
+***
+
+## F-4: message channel close の整理
+
+**位置づけ:** UI 復旧済みの持ち越し残件。Step 7〜10 を止めるブロッカーではない。
+
+### 現在の状態
+
+- `background.js` には recoverable error 判定と再送処理がある
+- `waitForPlaybackReady()` の結果を反映してから restart する流れは導入済み
+- 初回付近で次のエラーが残る場合がある
 
 ```text
-Uncaught (in promise) Error:
 A listener indicated an asynchronous response by returning true,
 but the message channel closed before a response was received
 ```
 
-### ここまでの修正内容
+### 再調査の方針
 
-**対象ファイル:** `background.js`、`settings-runtime.js`
+1. `APPLY_SETTINGS_TO_APPLE_TV` / `SETTINGS_CHANGED` ごとに、応答必須か fire-and-forget かを決める
+2. `onRuntimeMessage` で `return true` している全経路を確認する
+3. `sendResponse` が必ず呼ばれる経路と、応答不要な経路を分ける
+4. content script 再注入、SPA 遷移、tab activation と送信タイミングの race をログで確認する
+5. 再送・再注入の条件と上限を明確化する
 
-- `settings-runtime.js`
-  - `waitForPlaybackReady()` 成功後に `state.video` を反映
-  - `playbackRef.dialog` があれば `state.dialogEl` を反映
-  - その後に ON 側 restart へ進む構成へ変更
+### 対象ファイル候補
+
 - `background.js`
-  - `sendSettingsChangedWithRecovery()` に recoverable error 判定を追加
-  - `Receiving end does not exist`
-  - `message channel closed before a response was received`
-  - `A listener indicated an asynchronous response by returning true`  
-    を recoverable 扱いへ整理
-  - `ensureContentScriptReady()` を追加し、content script 生存確認と再注入を実施
-  - recoverable な失敗時は再送を試す構成へ変更
+- `settings-runtime.js`
+- `content.js`
+- message listener を持つ関連モジュール
 
-### 現時点の見立て
-
-- 単純な `sendResponse` 漏れだけではなく、content script 再注入・SPA 遷移・tab activation・message channel の寿命競合が残っている可能性が高い
-- UI 復旧は達成済みであり、リーク対策作業を止めるブロッカーではない
-- 再調査時は、background 側送信を
-  - 「応答必須の request-response」
-  - 「失敗してもよい fire-and-forget」  
-  のどちらにするか先に固定してから切り分ける
-
-### 将来の再調査ポイント
-
-1. `APPLY_SETTINGS_TO_APPLE_TV` / `SETTINGS_CHANGED` のどちらで応答必須かを明確化する
-2. `onRuntimeMessage` で `return true` している経路を再点検する
-3. background 側送信の再送条件とタイミングを整理する
-4. content script 再注入直後の送信 race をログで切り分ける
-
-### 残件の完了条件
+### 完了条件
 
 - [ ] 初回付近でも message channel closed 系エラーが出ない
-- [ ] 再送・再注入が不要な通常経路で安定する
-- [ ] 送信設計が request-response / fire-and-forget のどちらかに統一される
+- [ ] 通常経路で不要な再送・再注入が走らない
+- [ ] request-response と fire-and-forget の送信設計が明確に分かれている
+- [ ] page 遷移・再注入時にも未処理 Promise が残らない
 
----
+***
 
-## Bugfix-E（F-5）：OFF 時のネイティブ字幕復元 ✅ 完了
+## M-1: Renderer メモリ増加の再計測
 
-**着手条件:** なし（完了済み）
+**位置づけ:** cleanup 安定化後に定量評価する継続課題
 
-### 概要
+### 背景
 
-拡張機能を OFF にしたとき、Apple TV+ 本来の字幕機能を使える状態に戻す修正。  
-`cue-controller.restoreNativeSubtitles()` 周辺に主責務を集約し、OFF 時の UI 破棄と  
-native 字幕復元を責務分離した。
+Chrome Renderer プロセスで 6GB 級のメモリ消費を観測している。  
+secondary listener の cleanup、多重 bind、old session の watch / retry が原因候補だが、Step 6.5 までの修正後に再計測して判断する必要がある。
 
-### 完了条件（確認済み）
+### 着手条件
 
-- [x] OFF 後に Apple TV+ のネイティブ字幕が正常に表示される
-- [x] 字幕の二重表示や競合が発生しない
-- [x] ON → OFF → ON を繰り返しても native / extension の責務が混線しない
+- Step 10 で lifecycle cleanup の経路確認が完了している
+- debug ログを必要最小限に整理できている
+- 再現手順と観測時間を固定できている
 
----
+### 計測方針
 
-## リーク対策：secondary listener / rebind / cleanup 整理
-
-**位置づけ:** 進行中（Step 5 まで確認済み・未適用）  
-**主作業ブランチ:** `issue-32-content-core-split`
-
-### 概要
-
-`cue-controller.js` を中心に、secondary listener の積み増し・不要な rebind・cleanup 経路の  
-分散を解消するための段階的整理。`modules/cue-track-binder.js` への cleanup 集約と  
-`shouldRebindBecauseUnreadable` の除去を主軸とする。
-
-### 未使用退避名（削除確定まで保留）
-
-- `_resolveSecondarySubtitleTrack`
-- `_pickMostReadableTrack`
-- `_resolveSecondaryTrackModePolicy`（現行使用中であることを 2026-08-21 に確認）
-
-### 実装ステップ
-
-| Step | 目的 | 主対象ファイル | 状態 |
-|---|---|---|---|
-| 1 | secondary の選択フェーズを分離する | `modules/subtitle-sync-controller.js`, `cue-controller.js` | ✅ 完了 |
-| 2 | ユニークな値を主軸にする | `modules/subtitle-sync-controller.js`, `cue-controller.js` | ✅ 完了 |
-| 3 | secondary 監視フェーズを分離する | `modules/cue-track-binder.js` | ✅ 完了 |
-| 4 | cleanup を一元化する | `modules/cue-track-binder.js`, `cue-controller.js` | ✅ 完了 |
-| 5 | unreadable 即 rebind をやめる | `cue-controller.js` | 🔵 確認完了・未適用 |
-| 6 | recovery を継続失敗中心へ寄せる | `modules/subtitle-recovery-manager.js`, `modules/secondary-track-recovery.js` | 🔴 未着手 |
-| 7 | `cue-controller.js` を薄くする | `cue-controller.js` | 🔴 未着手 |
-| 8 | `content.js` を配線専用に寄せる | `content.js` | 🔴 未着手 |
-| 9 | dead code / debug を整理する | `cue-controller.js`, `modules/subtitle-sync-controller.js`, `modules/cue-track-binder.js` | 🔴 未着手 |
-| 10 | lifecycle を確認する | `cue-controller.js`, `modules/playback-session-cleanup.js`, `content.js` | 🔴 未着手 |
-
-### Step 5 確認内容（2026-08-21 時点）
-
-**修正対象ファイル:** `cue-controller.js`（主）
-
-現状コードに残っている除去候補の塊：
-
-1. `syncSecondaryTrackOrchestration(...)` 内の `shouldRebindBecauseUnreadable` 計算・debug ログ・`shouldBind` への加算・`rationale: "sameTrackUnreadable"` 分岐
-2. `_resolveSecondaryTrackModePolicy(...)` の unreadable 判定と `readability-promote` 返却分岐
-3. `bindSecondarySubtitleTrack(...)` 内の `maybePromoteTrackReadability()` と `sameTrackUnreadable` 依存処理
-
-**修正方針：**
-
-- `unreadableSnapshot` 自体は health 情報として保持してよい。bind 条件には使わない
-- `sameTrackUnreadable` という bind 理由を落とし、bind 理由を `selected-track-changed` / `force-rebind` 中心へ寄せる
-- `_resolveSecondaryTrackModePolicy(...)` の `readability-promote` 分岐は Step 5 で見直し対象
-- `maybePromoteTrackReadability()` は `sameTrackUnreadable` 前提の補助処理のため、削除または無効化候補
-
-**Step 5 完了条件:**
-
-- [ ] 同一 track の一時 unreadable だけでは rebind されない
-- [ ] `shouldRebindBecauseUnreadable` が bind 判定から除去される
-- [ ] `maybePromoteTrackReadability()` の `sameTrackUnreadable` 依存が解消される
-
-### Step 6 確認済み予備情報
-
-- `modules/subtitle-recovery-manager.js`：`evaluateSecondaryRecovery(...)` の委譲経路あり
-- `modules/secondary-track-recovery.js`：`forceRebindReason` / `shouldForceRebind` を含む recovery 判定の本体
-- 一時的な空状態でも `forceRebind` を返す条件が残っているため、Step 6 で絞り込む
-
----
-
-## F-8：DevConsole の大量ログ出力削減
-
-**着手条件:** リーク対策 Step 完了後
-
-### 背景と目的
-
-DevConsole の詳細表示時に大量ログが連続出力されており、  
-デバッグの妨げになっている。常設ログを削減することを最優先とする。
-
-### 現在見えている問題
-
-- `secondary-sync force-rebind skipped` が常設ログとして繰り返し出る
-- `DEBUG_SECONDARY_SUBS = true` 配下のつもりだったログが、実質常設化している可能性がある
-- `syncInterval` 系の毎サイクル出力が、通常利用時のノイズになっている
-- リーク対策 Step 9 と整合性を保ちながら整理する
-
-### 実装方針
-
-**対象ファイル:**
-- `cue-controller.js`
-- `settings-runtime.js`
-- 必要に応じて関連 sync 系モジュール
-
-- 常設ログをデバッグフラグ配下へ移動する
-- 毎サイクル出力は原則やめ、必要なら state change ベースのログへ置き換える
-- 「通常時に残すログ」と「切り分け時だけ出すログ」を分ける
-
-### 検証手順
-
-1. `tv-log.log` もしくは DevConsole 出力から、定常ノイズになっているログを列挙する
-2. 常設ログを debug flag 配下へ移動する
-3. 修正後、通常利用時にログが大幅に減ることを確認する
+1. 起動直後、30 分、60 分、90 分などの測定時点を固定する
+2. 通常再生、short seek 反復、hard seek 反復、SPA 遷移反復を別シナリオにする
+3. Renderer memory、EventListener、V8EventListener、RegisteredEventListener の推移を記録する
+4. session cleanup、secondary bind、secondary cleanup の回数を同じテストログで照合する
+5. 増加が継続する場合は listener、observer、timer、DOM node を分けて heap snapshot へ進む
 
 ### 完了条件
 
-- [ ] `secondary-sync force-rebind skipped` が常設出力されなくなる
-- [ ] 毎サイクル系ログが通常利用時に流れなくなる
-- [ ] DevConsole の通常使用時にノイズが著しく減少する
+- [ ] テストシナリオごとのメモリ推移が記録されている
+- [ ] listener / observer / timer / DOM のどれが増加源かを分類できている
+- [ ] 修正前後の差分を比較できる
+- [ ] 必要なら原因別の新しい実装シートを作成できる
 
----
+***
 
-## Bugfix-B：module 初期化順の修正
+## F-8: ログ体系の再整理
 
-**着手条件:** F-8 完了後
+**位置づけ:** Step 7〜9 完了後に行う観測品質改善
 
-### 背景と目的
+### 目的
 
-Console に `recovery_module_unavailable` のログが出ており、  
-依存先モジュールの初期化前に何かが呼ばれている可能性がある。  
-F-8 で主要挙動が安定した後に、初期化順の整理へ進む。
+secondary の action 決定、bind / cleanup、recovery、lifecycle を役割別に追跡可能にし、通常再生時のログ量を抑える。
 
-### 修正方針
+### ログカテゴリ案
 
-**対象ファイル:** `content.js`（モジュール初期化の呼び出し順）
-
-- 各モジュールの `init()` 呼び出し順序を依存関係に従って並び替える
-- 依存先が未初期化のときは、致命エラーではなく警告で扱うべき箇所を整理する
-- `settings-runtime` の apply が、依存モジュール初期化後に走ることを確認する
-
-### 初期化順の目安
-
-```text
-1. debug-logger
-2. state / storage
-3. vtt-normalizer
-4. subtitle-fetcher / resolver
-5. panel / overlay（UI 系）
-6. cue-controller
-7. settings-runtime（最後に apply）
-```
-
-### 検証手順
-
-1. Console に `recovery_module_unavailable` のログが出ないことを確認
-2. 各モジュールの init 順序をログまたはブレークポイントで確認
-3. 初期化順変更後も ON/OFF・字幕表示・panel/overlay が壊れないことを確認
+| カテゴリ | 出す内容 |
+|---|---|
+| `decision` | selection / readability / monitor / recovery 入力、action type、action reason |
+| `binder` | bind、keep、replace、cleanup、mode apply / restore |
+| `recovery` | missing 継続時間、debounce、missCount、force rebind 判定 |
+| `lifecycle` | startup、session switch、hard seek、SPA 遷移、destroy、restart |
+| `debug` | 一時観測専用。通常時は無効または抑制する |
 
 ### 完了条件
 
-- [ ] `recovery_module_unavailable` ログが Console に出ない
-- [ ] 全モジュールが依存順に初期化される
-- [ ] 初期化順変更後も主要機能が維持される
+- [ ] action type と reason が追跡できる
+- [ ] cleanup skip と実 cleanup を区別できる
+- [ ] 通常再生で probe ログが連続出力されない
+- [ ] 1 セッションの lifecycle を時系列で追える
+- [ ] 一時調査ログを恒久ログへ混在させない
 
----
+***
 
-## Bugfix-C：recovery module の責務整理
+## Bugfix-B / C 再評価
 
-**着手条件:** Bugfix-B 完了後
+**位置づけ:** secondary lifecycle の安定化後に再評価する未整理課題
 
-### 背景と目的
+### 再評価方針
 
-Bugfix-B で初期化順を修正した後も recovery module 自体に問題が残る場合の対応。  
-recovery module の存在意義を再評価し、不要なら削除、必要なら正しい責務へ整理する。  
-なお、リーク対策 Step 6 での `evaluateSecondaryRecovery()` 条件見直しと連動する。
+- 現在の動作に再現する問題だけを対象にする
+- 現行 architecture に照らして原因を再分類する
+- 修正対象が独立している場合のみ、新しい `Bugfix 実装シート` を作る
+- 再現しない過去ログ・既に解消した仮説は持ち込まない
 
-### 修正方針
+### 着手条件
 
-**対象ファイル:** recovery module 関連ファイル（要特定）
+- Step 10 の lifecycle 検証が完了している
+- M-1 の一次再計測が完了している
+- 既存の F-4 / F-8 と重複しないことを確認している
 
-- recovery module が何をしているかをコードベースで確認する
-- リーク対策 Step 6 後に不要になった処理があれば削除する
-- 必要なフォールバック処理は残し、正しいタイミングで呼ばれるよう修正する
+***
 
-### 検証手順
+## 参照資料
 
-1. recovery module の呼び出し箇所と役割を洗い出す
-2. 想定通りのフォールバックとして機能しているか確認する
-3. 不要な再初期化や副作用がないことを確認する
+- `docs/Bugfix/Bugfix マスタープラン.md`
+- `docs/Bugfix/Bugfix 実装シート.md`
+- `docs/Bugfix/Secondary 条件統合メモ.md`
+- `docs/Bugfix/Secondary 統合後の責務再定義一覧.md`
+- `docs/Bugfix/コードベース現状スナップショット.md`
 
-### 完了条件
-
-- [ ] recovery module が正しく動作する、または不要と判断して削除される
-- [ ] `recovery_module_unavailable` 関連ログが完全に解消される
-
----
-
-## 将来作業の優先順位テーブル
-
-| 順序 | Bugfix | やること | 着手条件 | 状態 |
-|---|---|---|---|---|
-| ① | リーク対策 Step 5 | `shouldRebindBecauseUnreadable` / `sameTrackUnreadable` 除去（`cue-controller.js`） | なし | 🔵 確認完了・未適用 |
-| ② | リーク対策 Step 6 | `evaluateSecondaryRecovery()` 条件を継続失敗中心へ絞る | Step 5 後 | 🔴 未着手 |
-| ③ | リーク対策 Step 7〜10 | `cue-controller.js` 薄化・配線整理・lifecycle 確認 | Step 6 後 | 🔴 未着手 |
-| ④ | F-4 残件 | message channel closed 系エラーの race を切り分ける | リーク対策と並行可 | 🟠 持ち越し |
-| ⑤ | F-5 | secondary ベースの hidden-lock モデルへ統一する設計の確定 | リーク対策 Step 完了後 | 🔴 未着手 |
-| ⑥ | F-8 | DevConsole の常設ログを整理する（リーク対策 Step 9 と連動） | リーク対策 Step 完了後 | 🔴 未着手 |
-| ⑦ | Bugfix-B | module 初期化順の修正 | F-8 後 | 🔴 未着手 |
-| ⑧ | Bugfix-C | recovery module の責務整理（リーク対策 Step 6 と連動） | Bugfix-B 後 | 🔴 未着手 |
-
----
-
-## 補足メモ
-
-- このシートには完了済み作業の詳細は残さず、残件と将来タスクだけを置く
-- F-7 は 2026-08-17 の `state.video` / `state.dialogEl` 反映修正で主症状が解消したため、将来作業から外す
-- F-4 は「未着手」ではなく、UI 復旧まで進んだ上で async response エラーだけが残っている状態
-- F-5（Bugfix-E）は 2026-08-21 時点で完了済み、trakmode の hidden-lock モデルへの統一設計は未着手
-- リーク対策 Step 1〜4 は完了。Step 5 は `cue-controller.js` の修正内容を確認済みで適用前の段階
-- `_resolveSecondaryTrackModePolicy` は現行使用中のため、退避名リストに保持したまま Step 5 で扱う
+情報源
