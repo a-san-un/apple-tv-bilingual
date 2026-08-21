@@ -812,6 +812,28 @@
         currentCueTextLength: selection.snapshot?.currentCueTextLength ?? 0,
       };
 
+      const binder = window.ATVB?.cueTrackBinder?.instance || null;
+      const monitorState = binder?.getSecondaryMonitorState?.() || null;
+      const monitorTrack = monitorState?.track || null;
+      const monitorActive = monitorState?.active === true;
+      const monitorHasCleanup = monitorState?.hasCleanup === true;
+
+      // sameTrackRef だけでは stale monitor を見抜けない。
+      // listener cleanup が消えている、monitor が inactive、
+      // monitor の track が選択結果とズレている場合は再bind が必要。
+      const staleMonitor =
+        !monitorActive ||
+        !monitorHasCleanup ||
+        (track && monitorTrack && monitorTrack !== track);
+
+      // requested language を切り替えた直後や force-rebind 時は
+      // same track っぽく見えても張り直す。
+      const shouldRebind =
+        forceRebind ||
+        requestedLanguageChanged ||
+        !sameTrackRef ||
+        staleMonitor;
+
       if (!track) {
         unbindSecondarySubtitleTrack();
         if (!suppressRender) {
@@ -820,13 +842,17 @@
         return;
       }
 
-      if (!sameTrackRef || forceRebind) {
+      if (shouldRebind) {
         bindSecondarySubtitleTrack(track, {
           requestedMode: "hidden",
           policy: "secondary-sync",
           rationale: forceRebind
             ? "force-rebind"
-            : "selected-track-changed",
+            : requestedLanguageChanged
+              ? "requested-language-changed"
+              : staleMonitor
+                ? "stale-monitor"
+                : "selected-track-changed",
           unreadableSnapshot,
         });
       }
@@ -852,6 +878,10 @@
           sameTrackRef,
           forceRebind,
           requestedLanguageChanged,
+          monitorActive,
+          monitorHasCleanup,
+          staleMonitor,
+          shouldRebind,
           hasCurrentBlock: Boolean(rebuildResult?.currentBlock),
         });
       }
@@ -1260,6 +1290,13 @@
         derived: mergedHealth?.derived || null,
       });
 
+      // primary は見えているのに secondary track が見つからない場合は、
+      // recovery module の判定結果に加えて secondary-only の再探索を許可する。
+      // Apple TV+ 側で track 差し替えが遅れて見えるケースの保険。
+      const shouldRecoverMissingSecondary =
+        mergedHealth?.runtime?.primaryTrackFound === true &&
+        mergedHealth?.runtime?.secondaryTrackFound !== true;
+
       if (false && DEBUG_SECONDARY_SUBS) {
         logContent("secondary recovery evaluation", {
           reason: "onPrimaryCueChange",
@@ -1268,6 +1305,7 @@
           reasonCode: recoveryDecision?.reason || "",
           primaryLane: recoveryDecision?.primaryLane || null,
           secondaryLane: recoveryDecision?.secondaryLane || null,
+          shouldRecoverMissingSecondary,
         });
       }
 
@@ -1295,6 +1333,18 @@
           },
         );
         return;
+      }
+
+      if (shouldRecoverMissingSecondary) {
+        syncSecondaryTrackOrchestration(
+          getVideoElement(),
+          getRequestedSecondaryLanguage(),
+          null,
+          {
+            suppressRender: false,
+            forceRebind: false,
+          },
+        );
       }
     }
 

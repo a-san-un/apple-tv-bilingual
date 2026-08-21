@@ -146,6 +146,9 @@
      * 同一 track かつ同一 requestedMode で既に監視中の場合は
      * bind をスキップし、listener の再作成を避ける。
      *
+     * ただし、monitor state が stale な場合は
+     * same track でも skip せず張り直す。
+     *
      * @param {TextTrack} track
      * @param {Function} onCueChange - secondary の cuechange で呼ぶハンドラ
      * @param {{
@@ -179,9 +182,20 @@
         String(track?.mode || "").toLowerCase() ===
         String(requestedMode || "").toLowerCase();
 
-      // 同じ track を同じ mode で維持できる場合は re-bind しない。
-      // listener を張り直すコストと、一瞬の cuechange 取りこぼしを避ける。
-      if (sameTrackRef && sameMode && secondaryMonitorCleanup) {
+      // active / cleanup / requestedMode / track が揃っているときだけ
+      // 「同じ monitor をそのまま使える」とみなす。
+      const monitorHealthy = Boolean(
+        secondaryMonitorTrack &&
+          secondaryMonitorCleanup &&
+          secondaryMonitorTrack === track &&
+          String(secondaryMonitorRequestedMode || "").toLowerCase() ===
+            String(requestedMode || "").toLowerCase(),
+      );
+
+      // 同じ track を同じ mode で、かつ monitor が健全に維持できる場合は
+      // re-bind しない。listener の張り直しコストと、
+      // 一瞬の cuechange 取りこぼしを避ける。
+      if (sameTrackRef && sameMode && monitorHealthy) {
         return {
           skipped: true,
           reason: "same-track-ref-same-mode",
@@ -190,8 +204,8 @@
         };
       }
 
-      // 別 track への切り替え、または mode 変更が必要なので
-      // 現在の監視を一度止めてから新しく張り直す。
+      // same track に見えても monitor が stale な場合は、
+      // 一度止めてから必ず張り直す。
       stopSecondaryMonitor();
 
       applySecondaryTrackMode(track, requestedMode, {
@@ -304,6 +318,7 @@
       // track / meta に加えて、適用中の mode と復元用 mode も返す。
       getSecondaryMonitorState: () => ({
         active: Boolean(secondaryMonitorCleanup),
+        hasCleanup: Boolean(secondaryMonitorCleanup),
         track: secondaryMonitorTrack,
         meta: secondaryMonitorMeta,
         originalMode: secondaryMonitorOriginalMode,
