@@ -2080,8 +2080,10 @@ function forwardContentLog(...args) {
   cueController = createCueController({
     state,
     ...cueServices,
-    selectSecondarySubtitleTrack:
-      subtitleSyncController.selectSecondarySubtitleTrack,
+    buildSecondarySyncDecision:
+      subtitleSyncController.buildSecondarySyncDecision,
+    resolveSecondaryWaitOutcome:
+      subtitleSyncController.resolveSecondaryWaitOutcome,
   });
 
   const cueTrackBinder = createCueTrackBinder
@@ -2375,19 +2377,22 @@ let syncIntervalOrchestrator = null;
     secondaryLang,
     reason = "unknown",
   ) {
-    // [attach: secondary] secondary は showing warmup / native fallback を含むため非同期。
-    // ここで await して bind 完了後の実トラックを state に反映する。
+    // [attach: secondary] secondary は selection / readability / recovery を
+    // subtitle-sync-controller 側 decision に集約し、
+    // cue-controller 側 orchestration で action を実行する。
+    // ここでは完了を待って、最終的に bind された track を state に反映する。
     if (secondaryLang) {
-      await subtitleSyncController.syncSecondaryTrackBinding(
+      await cueController.syncSecondaryTrackOrchestration(
         video,
         secondaryLang,
+        renderSecondarySubtitle,
         {
-          primaryLang,
-          renderSecondarySubtitle,
+          suppressRender: false,
+          forceRebind: false,
         },
       );
 
-      // sync helper が最終的に bind したトラックをここで確定値として読む。
+      // orchestration 完了後の binder/cue-controller 側の最終結果を確定値として読む。
       state.secondaryTrack = cueController.getBoundSecondaryTrack();
       requestSnapshotRefresh("secondary_sync_completed");
     } else {

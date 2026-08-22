@@ -17,7 +17,8 @@
     DEBUG_SECONDARY_SUBS,
     DEBUG_MEMORY_PROBE,
     getSecondaryTrackDebugPayload,
-    selectSecondarySubtitleTrack,
+    buildSecondarySyncDecision,
+    resolveSecondaryWaitOutcome,
     getCurrentCueText,
     getTrackCuesLength,
     getTrackActiveCuesLength,
@@ -767,7 +768,7 @@
     }
 
     // secondary track の再解決と再同期を行い、必要なら nearby rebuild まで進める。
-    function syncSecondaryTrackOrchestration(
+    async function syncSecondaryTrackOrchestration(
       video,
       requestedLang,
       renderSecondarySubtitleOverride,
@@ -791,73 +792,133 @@
         reason: "secondary-sync",
       });
 
-      const selection = selectSecondarySubtitleTrack(
+      const binder = window.ATVB?.cueTrackBinder?.instance || null;
+      const monitorState = binder?.getSecondaryMonitorState?.() || null;
+      const recoveryState = {
+        requested: forceRebind,
+        forceRebind,
+        reason: forceRebind ? "force-rebind" : "",
+      };
+
+      let decision = buildSecondarySyncDecision({
         video,
         requestedLang,
         previousBoundTrack,
-      );
+        monitorState,
+        recoveryState,
+        requestedMode: "hidden",
+      });
 
-      const currentTime = selection.currentTime;
-      const track = selection.track;
-      const sameTrackRef = selection.sameTrackRef;
-      const requestedLanguageChanged = Boolean(
-        selection.requestedLanguageChanged,
-      );
-      const unreadableSnapshot = {
-        cuesLength: selection.snapshot?.cuesLength ?? 0,
-        activeCuesLength: selection.snapshot?.activeCuesLength ?? 0,
-        hasCueOverlapAtCurrentTime: Boolean(
-          selection.snapshot?.hasCueOverlapAtCurrentTime,
-        ),
-        currentCueTextLength: selection.snapshot?.currentCueTextLength ?? 0,
-      };
+      let activeTrack = decision.track || null;
+      let currentTime = decision.currentTime;
+      let activeSnapshot = decision.snapshot || null;
+      let waitResult = null;
 
-      const binder = window.ATVB?.cueTrackBinder?.instance || null;
-      const monitorState = binder?.getSecondaryMonitorState?.() || null;
-      const monitorTrack = monitorState?.track || null;
-      const monitorActive = monitorState?.active === true;
-      const monitorHasCleanup = monitorState?.hasCleanup === true;
+      async function applySecondaryDecision(currentDecision, applyOptions = {}) {
+        const activeAction = currentDecision?.action?.type || "";
 
-      // sameTrackRef だけでは stale monitor を見抜けない。
-      // listener cleanup が消えている、monitor が inactive、
-      // monitor の track が選択結果とズレている場合は再bind が必要。
-      const staleMonitor =
-        !monitorActive ||
-        !monitorHasCleanup ||
-        (track && monitorTrack && monitorTrack !== track);
+        switch (activeAction) {
+          case "clear": {
+            unbindSecondarySubtitleTrack();
 
-      // requested language を切り替えた直後や force-rebind 時は
-      // same track っぽく見えても張り直す。
-      const shouldRebind =
-        forceRebind ||
-        requestedLanguageChanged ||
-        !sameTrackRef ||
-        staleMonitor;
+            if (!suppressRender) {
+              (renderSecondarySubtitleOverride || renderSecondarySubtitle)(
+                "",
+                null,
+              );
+            }
 
-      if (!track) {
-        unbindSecondarySubtitleTrack();
-        if (!suppressRender) {
-          (renderSecondarySubtitleOverride || renderSecondarySubtitle)("", null);
+            if (DEBUG_MEMORY_PROBE) {
+              logContent("secondary-sync memory-probe", {
+                requestedLang: requestedLang || "",
+                actionType: currentDecision.action?.type || "",
+                actionReason: currentDecision.action?.reason || "",
+                phase: applyOptions.phase || "clear",
+                hasCurrentBlock: false,
+              });
+            }
+
+            return {
+              terminated: true,
+              rebuildResult: null,
+            };
+          }
+
+          case "keep": {
+            return {
+              terminated: false,
+              rebuildResult: null,
+            };
+          }
+
+          case "bind": {
+            activeTrack = currentDecision.track || activeTrack;
+            currentTime = currentDecision.currentTime ?? currentTime;
+            activeSnapshot = currentDecision.snapshot || activeSnapshot;
+
+            bindSecondarySubtitleTrack(activeTrack, {
+              requestedMode: currentDecision.action?.requestedMode || "hidden",
+              policy: "secondary-sync",
+              rationale:
+                currentDecision.action?.reason || "selected-track-changed",
+              unreadableSnapshot: {
+                cuesLength: activeSnapshot?.cuesLength ?? 0,
+                activeCuesLength: activeSnapshot?.activeCuesLength ?? 0,
+                hasCueOverlapAtCurrentTime: Boolean(
+                  activeSnapshot?.hasCueOverlapAtCurrentTime,
+                ),
+                currentCueTextLength:
+                  activeSnapshot?.currentCueTextLength ?? 0,
+              },
+            });
+
+            return {
+              terminated: false,
+              rebuildResult: null,
+            };
+          }
+
+          default: {
+            return {
+              terminated: false,
+              rebuildResult: null,
+            };
+          }
         }
+      }
+
+      if (decision.action?.type === "wait-and-bind") {
+        waitResult = await resolveSecondaryWaitOutcome({
+          video,
+          requestedLang,
+          previousBoundTrack,
+          monitorState,
+          recoveryState,
+          requestedMode: decision.action?.requestedMode || "hidden",
+          waitOptions: {
+            timeoutMs: 350,
+            intervalMs: 50,
+          },
+        });
+
+        decision = waitResult?.decision || decision;
+        activeTrack = decision.track || activeTrack;
+        currentTime = decision.currentTime ?? currentTime;
+        activeSnapshot = decision.snapshot || activeSnapshot;
+      }
+
+      const applyResult = await applySecondaryDecision(decision, {
+        phase:
+          waitResult?.waited === true
+            ? "post-wait-decision"
+            : "initial-decision",
+      });
+
+      if (applyResult?.terminated) {
         return;
       }
 
-      if (shouldRebind) {
-        bindSecondarySubtitleTrack(track, {
-          requestedMode: "hidden",
-          policy: "secondary-sync",
-          rationale: forceRebind
-            ? "force-rebind"
-            : requestedLanguageChanged
-              ? "requested-language-changed"
-              : staleMonitor
-                ? "stale-monitor"
-                : "selected-track-changed",
-          unreadableSnapshot,
-        });
-      }
-
-      const currentCue = getCurrentCue(track, currentTime);
+      const currentCue = getCurrentCue(activeTrack, currentTime);
       const currentCueText = cleanCueText(currentCue);
 
       if (!suppressRender) {
@@ -875,13 +936,17 @@
       if (DEBUG_MEMORY_PROBE) {
         logContent("secondary-sync memory-probe", {
           requestedLang: requestedLang || "",
-          sameTrackRef,
-          forceRebind,
-          requestedLanguageChanged,
-          monitorActive,
-          monitorHasCleanup,
-          staleMonitor,
-          shouldRebind,
+          actionType: decision.action?.type || "",
+          actionReason: decision.action?.reason || "",
+          sameTrackRef: decision.selection?.sameTrackRef === true,
+          requestedLanguageChanged:
+            decision.selection?.requestedLanguageChanged === true,
+          monitorHealthy: decision.monitor?.healthy === true,
+          monitorStale: decision.monitor?.stale === true,
+          recoveryRequested: decision.recovery?.requested === true,
+          forceRebind: decision.recovery?.forceRebind === true,
+          waitAttempted: waitResult?.waited === true,
+          waitSucceeded: waitResult?.waitSucceeded === true,
           hasCurrentBlock: Boolean(rebuildResult?.currentBlock),
         });
       }

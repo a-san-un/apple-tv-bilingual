@@ -1,7 +1,8 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - modules/subtitle-sync-controller.js
 //
-// 役割: secondary 字幕の selection / direct bind / native fallback を集約する (Step 1)
+// 役割: secondary 字幕の selection / readability / decision /
+//       wait-and-bind 後の再評価 / direct bind / native fallback を集約する
 //
 // 依存:
 //   - resolver:
@@ -17,10 +18,14 @@
 //   - createSyncIntervalOrchestrator
 //
 // 設計原則:
-//   - selectSecondarySubtitleTrack() は「どの track を使うか」を返すだけにする。
-//   - syncSecondaryTrackBinding() は direct bind と native fallback のみ担当する。
-//   - readability は bind 可否の補助情報として保持するが、selection と分離する。
-//   - Step 1 では cleanup / monitor 責務はまだ持ち込まない。
+//   - selectSecondarySubtitleTrack() は「どの track を使うか」を返す。
+//   - buildSecondarySyncDecision() は selection / readability /
+//     monitor / recovery を統合し、最終 action を返す。
+//   - waitForReadableTrack() は readable 化待ちだけを担当する。
+//   - resolveSecondaryWaitOutcome() は wait-and-bind 停滞時に
+//     最新 state で selection / decision を再評価する。
+//   - cue-controller.js は decision の action 実行中心に寄せる。
+//   - bind / cleanup / mode restore の実行責務は持ち込まない。
 // =============================================================
 
 (() => {
@@ -28,7 +33,12 @@
 
   const root = (window.ATVB = window.ATVB || {});
 
-  function createSubtitleSyncController({ state, services = {} }) {
+  /**
+   * secondary sync 用の controller API 群を生成する。
+   * selection / readability / decision / wait outcome / direct bind / fallback を束ね、
+   * cue-controller.js から利用しやすい形で返す。
+   */
+  function createSubtitleSyncController({ services = {} }) {
     const {
       logContent,
       resolver,
@@ -126,7 +136,7 @@
 
     /**
      * secondary track の selection result を返す。
-     * Step 1/2: bind や cleanup は行わず、track identity を主軸にした
+     * bind や cleanup は行わず、track identity を主軸にした
      * selection result と readability snapshot を返す。
      */
     function selectSecondarySubtitleTrack(
@@ -152,104 +162,433 @@
       const resolvedTrack =
         resolver?.resolveSecondarySubtitleTrack?.(video, requestedLang) || null;
 
-      const secondaryCandidates = Array.from(video?.textTracks || []).filter(
-        (candidateTrack) => {
-          if (!candidateTrack) return false;
+      const allTracks = Array.from(video?.textTracks || []);
+      const requestedCandidates = allTracks.filter((track) => {
+        if (!track) return false;
+        const language = String(track.language || "");
+        const label = String(track.label || "");
+        const kind = String(track.kind || "");
 
-          const kind = String(candidateTrack.kind || "").toLowerCase();
-          if (kind !== "subtitles" && kind !== "captions") return false;
-          if (resolver?.isForcedLikeTrack?.(candidateTrack)) return false;
+        return Boolean(
+          resolver?.matchesRequestedLanguage?.(
+            language,
+            label,
+            requestedLang,
+            kind,
+          ),
+        );
+      });
 
-          return Boolean(
-            resolver?.matchesRequestedLanguage?.(candidateTrack, requestedLang),
-          );
-        },
+      const preferredTrack =
+        requestedCandidates.find((track) => track === previousBoundTrack) || null;
+
+      const rankedCandidates = requestedCandidates
+        .map((track) => ({
+          track,
+          ...scoreCandidateTrack(track, currentTime, preferredTrack),
+        }))
+        .sort((a, b) => b.score - a.score);
+
+      const selectedCandidate = rankedCandidates[0] || null;
+      const selectedTrack =
+        selectedCandidate?.track || resolvedTrack || previousBoundTrack || null;
+
+      const sameTrackRef = Boolean(
+        selectedTrack && previousBoundTrack === selectedTrack,
       );
 
-      let pickedTrack = null;
-      let pickedScore = -1;
-      let pickedSnapshot = null;
+      const selectedTrackId =
+        selectedTrack?.id ||
+        `${selectedTrack?.language || ""}:${selectedTrack?.label || ""}:${
+          selectedTrack?.kind || ""
+        }`;
 
-      for (const candidateTrack of secondaryCandidates) {
-        const { score, readability } = scoreCandidateTrack(
-          candidateTrack,
-          currentTime,
-          resolvedTrack || previousBoundTrack || null,
-        );
+      const previousTrackId =
+        previousBoundTrack?.id ||
+        `${previousBoundTrack?.language || ""}:${
+          previousBoundTrack?.label || ""
+        }:${previousBoundTrack?.kind || ""}`;
 
-        if (score > pickedScore) {
-          pickedTrack = candidateTrack;
-          pickedScore = score;
-          pickedSnapshot = readability;
-        }
-      }
-
-      const track = pickedTrack || resolvedTrack || null;
-      const sameTrackRef = Boolean(track && previousBoundTrack === track);
-
-      const normalizedRequestedLang = String(requestedLang || "")
-        .trim()
-        .toLowerCase();
-      const previousRequestedSecondaryLang = String(
-        previousBoundTrack?.language || "",
-      )
-        .trim()
-        .toLowerCase();
+      const requestedLanguageChanged = Boolean(
+        requestedLang &&
+          previousBoundTrack &&
+          !resolver?.matchesRequestedLanguage?.(
+            previousBoundTrack.language || "",
+            previousBoundTrack.label || "",
+            requestedLang,
+            previousBoundTrack.kind || "",
+          ),
+      );
 
       return {
-        track,
+        track: selectedTrack,
         resolvedTrack,
         sameTrackRef,
-        selectedTrackId: track?.id || "",
-        previousTrackId: previousBoundTrack?.id || "",
-        requestedLanguageChanged:
-          normalizedRequestedLang !== previousRequestedSecondaryLang,
+        selectedTrackId,
+        previousTrackId,
+        requestedLanguageChanged,
         currentTime,
-        snapshot: pickedSnapshot || getTrackReadability(track, currentTime),
+        snapshot: getTrackReadability(selectedTrack, currentTime),
       };
     }
 
     // -------------------------------------------------------
-    // Warmup
+    // Monitor / Recovery normalization
+    // -------------------------------------------------------
+
+    /** monitor 入力を decision 用に正規化する */
+    function normalizeSecondaryMonitorState(monitorState, selectedTrack = null) {
+      const active = Boolean(monitorState?.active);
+      const hasCleanup = typeof monitorState?.cleanup === "function";
+      const track = monitorState?.track || null;
+      const sameTrack = Boolean(selectedTrack && track && selectedTrack === track);
+      const sameMode = String(monitorState?.mode || "") === "hidden";
+      const healthy = Boolean(active && hasCleanup && sameTrack && sameMode);
+      const stale = Boolean(
+        !active || !hasCleanup || (selectedTrack && track && !sameTrack),
+      );
+
+      return {
+        active,
+        hasCleanup,
+        track,
+        sameTrack,
+        sameMode,
+        healthy,
+        stale,
+      };
+    }
+
+    /** recovery 入力を decision 用に正規化する */
+    function normalizeSecondaryRecoveryState(recoveryState) {
+      const requested = Boolean(
+        recoveryState?.requested ||
+          recoveryState?.shouldRecover ||
+          recoveryState?.action === "recover" ||
+          recoveryState?.action === "force-rebind" ||
+          recoveryState?.recover === true,
+      );
+
+      const forceRebind = Boolean(
+        recoveryState?.forceRebind ||
+          recoveryState?.action === "force-rebind",
+      );
+
+      return {
+        requested,
+        forceRebind,
+        reason: String(recoveryState?.reason || recoveryState?.action || ""),
+      };
+    }
+
+    /** readable 待ちが必要かを判定する */
+    function shouldWaitForReadableTrack({
+      track,
+      snapshot,
+      sameTrackRef,
+      monitor,
+      recovery,
+      requestedLanguageChanged,
+    }) {
+      if (!track) return false;
+      if (snapshot?.readable) return false;
+
+      // 同一 track かつ monitor 健全で、recovery 要求もない場合は
+      // unreadable 単独で即 rebind しない。
+      if (
+        sameTrackRef &&
+        monitor?.healthy &&
+        !recovery?.requested &&
+        !requestedLanguageChanged
+      ) {
+        return false;
+      }
+
+      return true;
+    }
+
+    // -------------------------------------------------------
+    // Decision
     // -------------------------------------------------------
 
     /**
-     * direct bind 前に短時間だけ readable 化を待つ。
-     * ここでは selection は変えず、同じ track の readability だけ再評価する。
+     * secondary sync の最終 decision を返す。
+     * selection / readability / monitor / recovery / 前回との差分を
+     * 一箇所で統合し、controller が action 実行だけに専念できる形へ寄せる。
+     */
+    function buildSecondarySyncDecision({
+      video,
+      requestedLang,
+      previousBoundTrack = null,
+      monitorState = null,
+      recoveryState = null,
+      requestedMode = "hidden",
+    } = {}) {
+      const selection = selectSecondarySubtitleTrack(
+        video,
+        requestedLang,
+        previousBoundTrack,
+      );
+
+      const track = selection.track || null;
+      const snapshot = selection.snapshot || getTrackReadability(null);
+      const monitor = normalizeSecondaryMonitorState(monitorState, track);
+      const recovery = normalizeSecondaryRecoveryState(recoveryState);
+
+      const trackFound = Boolean(track);
+      const readable = Boolean(snapshot?.readable);
+      const requestedLanguageChanged = Boolean(
+        selection.requestedLanguageChanged,
+      );
+      const sameTrackRef = Boolean(selection.sameTrackRef);
+
+      const shouldClear = !trackFound;
+      const needsReadableWait = shouldWaitForReadableTrack({
+        track,
+        snapshot,
+        sameTrackRef,
+        monitor,
+        recovery,
+        requestedLanguageChanged,
+      });
+
+      const needsRebind = Boolean(
+        trackFound &&
+          !needsReadableWait &&
+          (
+            recovery.forceRebind ||
+            requestedLanguageChanged ||
+            !sameTrackRef ||
+            monitor.stale
+          ),
+      );
+
+      const canKeepCurrentBinding = Boolean(
+        trackFound &&
+          sameTrackRef &&
+          monitor.healthy &&
+          !recovery.requested &&
+          !requestedLanguageChanged,
+      );
+
+      let actionType = "keep";
+      let actionReason = "same-track-healthy";
+
+      if (shouldClear) {
+        actionType = "clear";
+        actionReason = "track-missing";
+      } else if (needsReadableWait) {
+        actionType = "wait-and-bind";
+        actionReason = "track-unreadable";
+      } else if (recovery.forceRebind) {
+        actionType = "bind";
+        actionReason = "force-rebind";
+      } else if (requestedLanguageChanged) {
+        actionType = "bind";
+        actionReason = "requested-language-changed";
+      } else if (!sameTrackRef) {
+        actionType = "bind";
+        actionReason = "selected-track-changed";
+      } else if (monitor.stale) {
+        actionType = "bind";
+        actionReason = "stale-monitor";
+      } else if (canKeepCurrentBinding) {
+        actionType = "keep";
+        actionReason = "same-track-healthy";
+      }
+
+      const decision = {
+        track,
+        currentTime: selection.currentTime,
+        snapshot,
+
+        previous: {
+          boundTrack: previousBoundTrack || null,
+          boundTrackId: previousBoundTrack?.id || "",
+          requestedLang: String(previousBoundTrack?.language || ""),
+        },
+
+        selection: {
+          resolvedTrack: selection.resolvedTrack || null,
+          selectedTrackId: selection.selectedTrackId || "",
+          sameTrackRef,
+          requestedLanguageChanged,
+        },
+
+        monitor,
+
+        recovery,
+
+        derived: {
+          trackFound,
+          readable,
+          shouldClear,
+          needsReadableWait,
+          needsRebind,
+          canKeepCurrentBinding,
+        },
+
+        action: {
+          type: actionType,
+          reason: actionReason,
+          requestedMode,
+        },
+      };
+
+      logContent?.("subtitleSyncController.buildSecondarySyncDecision", {
+        requestedLang: String(requestedLang || ""),
+        selectedTrackId: decision.selection.selectedTrackId,
+        sameTrackRef: decision.selection.sameTrackRef,
+        requestedLanguageChanged: decision.selection.requestedLanguageChanged,
+        readable: decision.derived.readable,
+        monitorHealthy: decision.monitor.healthy,
+        monitorStale: decision.monitor.stale,
+        recoveryRequested: decision.recovery.requested,
+        forceRebind: decision.recovery.forceRebind,
+        actionType: decision.action.type,
+        actionReason: decision.action.reason,
+      });
+
+      return decision;
+    }
+
+    // -------------------------------------------------------
+    // Wait
+    // -------------------------------------------------------
+
+    /**
+     * 指定 track が readable になるまで一定時間待つ。
+     * readable 判定そのものだけを担当し、最終 action 決定は buildSecondarySyncDecision()
+     * または resolveSecondaryWaitOutcome() 側へ委ねる。
      */
     async function waitForReadableTrack(track, options = {}) {
-      const {
-        currentTime = NaN,
-        maxWaitMs = 350,
-        intervalMs = 50,
-      } = options;
-
       if (!track) return null;
 
+      const timeoutMs = Number.isFinite(options.timeoutMs)
+        ? options.timeoutMs
+        : 1200;
+      const intervalMs = Number.isFinite(options.intervalMs)
+        ? options.intervalMs
+        : 100;
+      const currentTime = Number(options.currentTime ?? NaN);
       const startedAt = Date.now();
-      let lastReadability = getTrackReadability(track, currentTime);
 
-      if (lastReadability.readable) {
-        return { track, readability: lastReadability, waitedMs: 0 };
-      }
-
-      while (Date.now() - startedAt < maxWaitMs) {
-        await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
-        lastReadability = getTrackReadability(track, currentTime);
-
-        if (lastReadability.readable) {
-          return {
-            track,
-            readability: lastReadability,
-            waitedMs: Date.now() - startedAt,
-          };
+      while (Date.now() - startedAt < timeoutMs) {
+        const snapshot = getTrackReadability(track, currentTime);
+        if (snapshot.readable) {
+          logContent?.("subtitleSyncController.waitForReadableTrack", {
+            readable: true,
+            language: track?.language || "",
+            label: track?.label || "",
+            kind: track?.kind || "",
+            timeoutMs,
+            intervalMs,
+          });
+          return track;
         }
+
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
       }
+
+      logContent?.("subtitleSyncController.waitForReadableTrack", {
+        readable: false,
+        language: track?.language || "",
+        label: track?.label || "",
+        kind: track?.kind || "",
+        timeoutMs,
+        intervalMs,
+      });
+
+      return null;
+    }
+
+    /**
+     * wait-and-bind の結果を最新 state で再評価する。
+     *
+     * 目的:
+     * - waitForReadableTrack() が失敗したあとも、古い unreadable track 前提で
+     *   停滞し続けないようにする。
+     * - 言語切替時と拡張 OFF→ON 復帰時の両方で、
+     *   最新 track 状態から再 selection・decision 再評価へ進める。
+     *
+     * 注意:
+     * - bind / cleanup / mode restore はここで実行しない。
+     * - wait 失敗だけで即 force rebind にはしない。
+     * - 最終 action は常に buildSecondarySyncDecision() の結果へ戻す。
+     */
+    async function resolveSecondaryWaitOutcome({
+      video,
+      requestedLang,
+      previousBoundTrack = null,
+      monitorState = null,
+      recoveryState = null,
+      requestedMode = "hidden",
+      waitOptions = {},
+    } = {}) {
+      const initialDecision = buildSecondarySyncDecision({
+        video,
+        requestedLang,
+        previousBoundTrack,
+        monitorState,
+        recoveryState,
+        requestedMode,
+      });
+
+      if (initialDecision.action?.type !== "wait-and-bind") {
+        return {
+          waited: false,
+          waitSucceeded: false,
+          waitedTrack: null,
+          initialDecision,
+          decision: initialDecision,
+        };
+      }
+
+      const initialTrack = initialDecision.track || null;
+
+      const readableTrack = await waitForReadableTrack(initialTrack, {
+        timeoutMs: Number.isFinite(waitOptions?.timeoutMs)
+          ? waitOptions.timeoutMs
+          : 1200,
+        intervalMs: Number.isFinite(waitOptions?.intervalMs)
+          ? waitOptions.intervalMs
+          : 100,
+        currentTime: Number(video?.currentTime ?? NaN),
+      });
+
+      const waitSucceeded = Boolean(readableTrack);
+
+      // wait 成否にかかわらず、最新 track 状態で decision を再構築する。
+      // これにより、native UI 変更や requested language 変更後に
+      // 新しい候補 track が見えるようになったケースを拾える。
+      const latestDecision = buildSecondarySyncDecision({
+        video,
+        requestedLang,
+        previousBoundTrack,
+        monitorState,
+        recoveryState,
+        requestedMode,
+      });
+
+      logContent?.("subtitleSyncController.resolveSecondaryWaitOutcome", {
+        requestedLang: String(requestedLang || ""),
+        waitSucceeded,
+        waitedTrackLanguage: readableTrack?.language || "",
+        waitedTrackLabel: readableTrack?.label || "",
+        initialActionType: initialDecision.action?.type || "",
+        initialActionReason: initialDecision.action?.reason || "",
+        latestActionType: latestDecision.action?.type || "",
+        latestActionReason: latestDecision.action?.reason || "",
+        latestSelectedTrackId: latestDecision.selection?.selectedTrackId || "",
+        latestReadable: Boolean(latestDecision.snapshot?.readable),
+      });
 
       return {
-        track,
-        readability: lastReadability,
-        waitedMs: Date.now() - startedAt,
+        waited: true,
+        waitSucceeded,
+        waitedTrack: readableTrack || null,
+        initialDecision,
+        decision: latestDecision,
       };
     }
 
@@ -258,71 +597,97 @@
     // -------------------------------------------------------
 
     /**
-     * resolver が選んだ secondary track を direct bind する。
-     * direct bind 不成立時のみ native subtitle selection へフォールバックする。
+     * secondary track を resolver ベースで直接 bind する。
+     * Step 7 の主経路は buildSecondarySyncDecision() + cue-controller.js orchestration
+     * だが、一部の起動直後や fallback 経路では直接 bind が必要なため残している。
      */
-    async function syncSecondaryTrackBinding(
+    async function syncSecondaryTrackDirectly(video, requestedLang, options = {}) {
+      if (!video || !requestedLang) return null;
+      if (typeof bindSecondaryTrack !== "function") return null;
+
+      const selection = selectSecondarySubtitleTrack(video, requestedLang, null);
+      const selectedTrack = selection.track || null;
+
+      if (!selectedTrack) {
+        logContent?.("subtitleSyncController.syncSecondaryTrackDirectly", {
+          requestedLang,
+          bound: false,
+          reason: "track-missing",
+        });
+        return null;
+      }
+
+      const readableTrack =
+        selection.snapshot?.readable
+          ? selectedTrack
+          : await waitForReadableTrack(selectedTrack, {
+              timeoutMs: options.timeoutMs,
+              intervalMs: options.intervalMs,
+              currentTime: selection.currentTime,
+            });
+
+      if (!readableTrack) {
+        logContent?.("subtitleSyncController.syncSecondaryTrackDirectly", {
+          requestedLang,
+          bound: false,
+          reason: "track-unreadable",
+          selectedTrackId: selection.selectedTrackId || "",
+        });
+        return null;
+      }
+
+      const binding = await bindSecondaryTrack(readableTrack, {
+        requestedMode: options.requestedMode || "hidden",
+        reason: options.reason || "subtitle-sync-controller-direct-bind",
+      });
+
+      logContent?.("subtitleSyncController.syncSecondaryTrackDirectly", {
+        requestedLang,
+        bound: Boolean(binding),
+        selectedTrackId: selection.selectedTrackId || "",
+        readable: true,
+      });
+
+      return binding || null;
+    }
+
+    /**
+     * native 字幕選択への fallback を実行する。
+     * direct bind でも selection できない場合の最後の補助経路として使う。
+     */
+    async function syncNativeSubtitleSelectionFallback(
       video,
       requestedLang,
       options = {},
     ) {
-      if (!video || !requestedLang) return null;
+      if (!video || !requestedLang) return false;
+      if (typeof syncNativeSubtitleSelection !== "function") return false;
 
-      const currentTime = Number(video.currentTime ?? NaN);
-      const selection = selectSecondarySubtitleTrack(video, requestedLang, null);
-      const selectedTrack = selection.track || null;
+      const result = await syncNativeSubtitleSelection(video, requestedLang, {
+        reason: options.reason || "subtitle-sync-controller-native-fallback",
+      });
 
-      if (selectedTrack) {
-        await waitForReadableTrack(selectedTrack, {
-          currentTime,
-          maxWaitMs: 350,
-          intervalMs: 50,
-        });
-
-        bindSecondaryTrack?.(selectedTrack, {
-          ...options,
-          requestedLang,
-          reason: "secondary-sync-direct-bind",
-        });
-
-        state.secondaryTrack = selectedTrack || null;
-
-
-        return selectedTrack;
-      }
-
-      logContent?.("subtitle sync direct fallback to native", {
+      logContent?.("subtitleSyncController.syncNativeSubtitleSelectionFallback", {
         requestedLang,
-        currentTime,
+        applied: Boolean(result),
       });
 
-      await syncNativeSubtitleSelection?.({
-        primaryLang: options?.primaryLang ?? "",
-        secondaryLang: requestedLang,
-        preferredSource: requestedLang,
-      });
-
-      const fallbackTrack =
-        resolver?.resolveSecondarySubtitleTrack?.(video, requestedLang) || null;
-
-      if (fallbackTrack) {
-        bindSecondaryTrack?.(fallbackTrack, {
-          ...options,
-          requestedLang,
-          reason: "secondary-sync-native-fallback",
-        });
-      }
-
-      state.secondaryTrack = fallbackTrack || null;
-
-      return fallbackTrack;
+      return Boolean(result);
     }
 
     return {
-      getTrackReadability,
-      selectSecondarySubtitleTrack,
-      syncSecondaryTrackBinding,
       ensureSyncIntervalOrchestrator,
+      getTrackReadability,
+      scoreCandidateTrack,
+      selectSecondarySubtitleTrack,
+      normalizeSecondaryMonitorState,
+      normalizeSecondaryRecoveryState,
+      shouldWaitForReadableTrack,
+      buildSecondarySyncDecision,
+      waitForReadableTrack,
+      resolveSecondaryWaitOutcome,
+      syncSecondaryTrackDirectly,
+      syncNativeSubtitleSelectionFallback,
     };
   }
 
