@@ -512,8 +512,19 @@
     // fallbackTrack / fallbackOriginalMode は、binder 側の monitor state が
     // 既に空でも、controller 側に残っている track / originalMode を
     // 使って復元できるようにするための橋渡し。
+    // reason / toggleOpId は binder 側の構造化ログへそのまま渡し、
+    // OFF→ON トグルや restart cleanup と unbind ログを相関できるようにする。
     function unbindSecondarySubtitleTrack(options = {}) {
       const restoreMode = options.restoreMode !== false;
+      const reason =
+        typeof options.reason === "string" && options.reason
+          ? options.reason
+          : "unbindSecondarySubtitleTrack";
+      const toggleOpId =
+        typeof options.toggleOpId === "string" && options.toggleOpId
+          ? options.toggleOpId
+          : null;
+
       const binder = window.ATVB?.cueTrackBinder?.instance || null;
       const monitorState = binder?.getSecondaryMonitorState?.() || null;
       const track = monitorState?.track || secondaryTrackBound || null;
@@ -525,6 +536,8 @@
           "track-listener-cleaned",
           buildExistingBindingMeta(monitorState.meta, {
             hadCleanup: true,
+            reason,
+            toggleOpId,
           }),
         );
       }
@@ -534,6 +547,8 @@
           restoreMode,
           fallbackTrack: track,
           fallbackOriginalMode: secondaryTrackOriginalMode,
+          reason,
+          toggleOpId,
         });
       } catch (_) {}
 
@@ -544,6 +559,8 @@
             hadTrack,
             hadCleanup: hadActiveMonitor,
             restoreMode,
+            reason,
+            toggleOpId,
             originalMode:
               monitorState?.originalMode ?? secondaryTrackOriginalMode ?? null,
           }),
@@ -555,6 +572,8 @@
             hadTrack: false,
             hadCleanup: false,
             restoreMode,
+            reason,
+            toggleOpId,
             originalMode:
               monitorState?.originalMode ?? secondaryTrackOriginalMode ?? null,
           }),
@@ -1413,14 +1432,6 @@
       }
     }
 
-    // インスタンスが不要になったとき内部リソースを解放する。
-    // unbind → 内部依存モジュールの destroy の順で呼ぶ。
-    function destroy() {
-      unbindPrimarySubtitleTrack();
-      unbindSecondarySubtitleTrack({ restoreMode: true });
-      restoreTemporarilyActivatedTrackModes();
-      cueRenderCoordinator?.destroy?.();
-    }
 
     return {
       ensureSubtitleTracksUsable,
@@ -1439,7 +1450,6 @@
       getLaneStates: () => subtitleRecoveryManager?.getLaneStates?.() || null,
       resetSecondaryRecoveryLane,
       evaluateSecondaryRecovery,
-      destroy,                          // ← 追加
     };
   }
 

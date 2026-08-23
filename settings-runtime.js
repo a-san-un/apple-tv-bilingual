@@ -2,24 +2,31 @@
 // Apple TV+ Bilingual Subtitles - settings-runtime.js
 //
 // 役割:
-// - content 側の settings load / merge / restart orchestration を担当する。
-// - requested settings と effective settings を分けて保持し、
-//   未設定状態と言語選択完了後の通常起動を切り替える。
-// - runtime message 経由の SETTINGS_CHANGED / GET_LANGUAGES を処理する。
-// - F-4 対応として、SETTINGS_CHANGED の非同期 sendResponse を
-//   1 回だけ安全に返す責務をここで担保する。
+// - content 側の設定読み込み・設定反映・再起動開始の流れをまとめて扱う。
+// - 保存済み設定から requested settings と effective settings を組み立て、
+//   どの設定がユーザー入力そのままの値で、どの設定が補完後の実行値かを分けて保持する。
+// - runtime message 経由の SETTINGS_CHANGED / GET_LANGUAGES を受け取り、
+//   再生中の設定変更を content 側へ安全に反映する。
+// - 拡張 OFF 時は、native 字幕へ制御を戻しつつ、
+//   settings-runtime.js が直接持つ playback 参照を明示的に手放す。
+// - 拡張 ON 時は、現在の playback 参照を取り直してから
+//   bilingual 再起動へつなぎ、古い video / track 参照を再利用しないようにする。
+// - トグル操作ごとの相関ログを出し、OFF 側の処理完了と
+//   ON 側の再起動完了を同じ操作単位で追跡できるようにする。
 //
 // このファイルのメンテナンス方針:
-// - storage / settingsBridge から読んだ「requested」と、
-//   fallback 適用後の「effective」を明確に分けて扱う。
-// - secondaryLang の補完は applySecondaryLangFallback() に集約し、
-//   空値補完の条件を他関数へ分散させない。
-// - 問題切り分け時は requestedSecondaryLang と contentSettings.secondaryLang を
-//   同時にログへ出し、設定起因か resolver 起因かを見分けやすくする。
-// - runtime message 応答は分岐ごとに直接 sendResponse せず、
-//   できるだけ 1 箇所へ寄せて漏れと二重送信を防ぐ。
+// - storage から読んだ設定値と、実際に動作へ使う設定値を混同しない。
+// - secondaryLang の補完条件は 1 箇所に集約し、他の分岐へ散らさない。
+// - 設定変更時は requestedSecondaryLang と contentSettings.secondaryLang を
+//   併記して、設定値の問題か補完後の反映問題かを切り分けやすくする。
+// - runtime message の sendResponse は 1 回だけ返す前提を守り、
+//   分岐ごとの多重応答や応答漏れを防ぐ。
+// - ON/OFF 切り替え時は「既存参照を片付けてから取り直す」順序を崩さず、
+//   古い playback state を次の起動へ持ち越さない。
 // =============================================================
 (function (root) {
+  // settings 関連の runtime 処理一式を生成するファクトリ。
+  // content 側 state と各種依存関数を受け取り、設定反映と再起動の入口をまとめて返す。
   function createSettingsRuntime(deps) {
     const {
       state,
@@ -41,12 +48,41 @@
     let initialAutoStartCleanup = null;
     let initialAutoStartToken = 0;
 
-    // -------------------------------------------------------------
-    // 初回 auto-start 用ヘルパー
-    // -------------------------------------------------------------
+    // -------------------------------------------------------
+    // トグル操作ログ相関
+    // -------------------------------------------------------
+    let toggleOpSeq = 0;
+    let pendingToggleOffOpId = null;
 
-    // 初回自動起動のために張った addtrack / poll / timeout 監視を解除する。
-    // 再起動や video 差し替え時に古い監視が残らないようにする。
+    // OFF 側トグル操作の相関 ID を発番して保持する。
+    // 次に来る ON 側ログと対にするため、最新の OFF 操作 ID を返す。
+    function beginToggleOffOp() {
+      toggleOpSeq += 1;
+      const toggleOpId = `toggle-off-${Date.now()}-${toggleOpSeq}`;
+      pendingToggleOffOpId = toggleOpId;
+      return toggleOpId;
+    }
+
+    // ON 側で使う相関 ID を確定する。
+    // 直前の OFF 操作 ID が残っていればそれを再利用し、無ければ単独 ON 用に新規発番する。
+    function resolveToggleOnOp() {
+      if (pendingToggleOffOpId) {
+        const toggleOpId = pendingToggleOffOpId;
+        pendingToggleOffOpId = null;
+        return { toggleOpId, pairedWithOff: true };
+      }
+
+      toggleOpSeq += 1;
+      const toggleOpId = `toggle-on-${Date.now()}-${toggleOpSeq}`;
+      return { toggleOpId, pairedWithOff: false };
+    }
+
+    // -------------------------------------------------------
+    // 初回 auto-start 用ヘルパー
+    // -------------------------------------------------------
+
+    // 初回 auto-start のために張った監視を解除する。
+    // addtrack / polling / timeout の残留を防ぎ、古い video 監視を次回へ持ち越さない。
     function cleanupInitialAutoStartWatch() {
       if (typeof initialAutoStartCleanup === "function") {
         try {
@@ -57,8 +93,8 @@
       initialAutoStartCleanup = null;
     }
 
-    // textTracks から「字幕として使えそうな track」だけを抽出する。
-    // metadata / id3 を除外し、subtitles / captions / language 付き track を候補にする。
+    // textTracks から字幕候補になりうる track だけを抽出する。
+    // metadata や id3 を除外し、subtitles / captions / language 付き track を返す。
     function getSubtitleLikeTracks(video) {
       const tracks = Array.from(video?.textTracks || []);
       return tracks.filter((track) => {
@@ -77,14 +113,14 @@
       });
     }
 
-    // bilingual 起動に使える字幕系 track が1本以上あるかを返す。
-    // 初回起動を遅延させる判定の共通入口として使う。
+    // 起動に使える字幕系 track が存在するかだけを返す。
+    // 初回起動や再取得待ちの readiness 判定を 1 箇所で揃えるための小さな helper。
     function _hasUsableSubtitleTracks(video) {
       return getSubtitleLikeTracks(video).length > 0;
     }
 
-    // 初回 settings load 後の auto-start を、字幕 track が揃うまで待って実行する。
-    // metadata / id3 しか無い早すぎる時点で startBilingual しないための待機入口。
+    // 字幕 track が揃うまで待ってから startBilingual する。
+    // 初回読み込み直後の「track はまだ無いが video はある」状態で早すぎる起動を避ける。
     function startBilingualWhenTracksReady(reason = "unknown") {
       cleanupInitialAutoStartWatch();
       initialAutoStartToken += 1;
@@ -124,7 +160,6 @@
 
         startBilingual({
           reason: `settings_runtime:${reason}:${triggerReason}`,
-          // ランタイムUI状態をそのまま引き継ぐ（設定値 panelDefaultOpen ではない）。
           keepPanelOpen: state.panelOpen,
         });
 
@@ -173,12 +208,12 @@
       };
     }
 
-    // -------------------------------------------------------------
+    // -------------------------------------------------------
     // secondary fallback / settings load
-    // -------------------------------------------------------------
+    // -------------------------------------------------------
 
-    // secondaryLang 未設定時の補完ロジックを 1 箇所へ寄せる。
-    // requested と effective の差分を追えるように、戻り値は文字列だけにする。
+    // secondaryLang 未設定時の補完値を決める。
+    // requested settings をそのまま書き換えず、実行時に使う effective 値だけを返す。
     function applySecondaryLangFallback(settings) {
       const primaryLang = String(settings?.primaryLang || "").trim();
       const secondaryLang = String(settings?.secondaryLang || "").trim();
@@ -189,6 +224,8 @@
       return "";
     }
 
+    // SETTINGS_CHANGED で使う次回設定を組み立てる。
+    // default / 現在 state / incoming の順に merge し、反映前の基準値を揃える。
     function resolveSettingsChangeNextSettings(incoming = {}) {
       return {
         ...DEFAULT_SETTINGS,
@@ -197,6 +234,8 @@
       };
     }
 
+    // storage から設定スナップショットを読み込み、
+    // requested settings と effective settings の両方を state に反映して返す。
     async function loadSettingsSnapshot() {
       const result = await chrome.storage.sync.get(DEFAULT_SETTINGS);
 
@@ -224,6 +263,8 @@
       };
     }
 
+    // 保存済み設定を読み込んで、現在の playback へ反映を始める。
+    // extensionEnabled / language selection readiness を見て、起動するか待機するかを決める。
     async function loadSettingsFromSync() {
       const { requestedSettings, effectiveSettings } = await loadSettingsSnapshot();
 
@@ -237,7 +278,9 @@
 
       if (!effectiveSettings.extensionEnabled) {
         state.panelOpen = false;
-        detachForDisabled();
+        detachForDisabled({
+          reason: "load_settings_from_sync:disabled",
+        });
         panelUi?.watchForPlayerTabs?.();
         return;
       }
@@ -250,10 +293,12 @@
       startBilingualWhenTracksReady("load_settings_from_sync");
     }
 
-    // -------------------------------------------------------------
+    // -------------------------------------------------------
     // restart orchestration
-    // -------------------------------------------------------------
+    // -------------------------------------------------------
 
+    // restart 前に state 上の設定値を更新する。
+    // requested / effective / panelOpen を揃え、次の startBilingual が参照する値を整える。
     function applyRestartSettings(settings, options = {}) {
       const { keepPanelOpen = state.panelOpen } = options;
 
@@ -270,7 +315,6 @@
       state.requestedSecondaryLang =
         state.requestedContentSettings.secondaryLang || "";
 
-      // panelOpen は「今の UI 状態」が正本なので、設定値で上書きしない。
       state.panelOpen = Boolean(keepPanelOpen);
 
       logContentSettings("applyRestartSettings", {
@@ -282,30 +326,74 @@
       });
     }
 
+    // 設定反映後に bilingual の再起動を始める。
+    // 再起動前 cleanup と startBilingual 呼び出しをつなぐ orchestrator として使う。
+    // toggleOpId は cleanup ログとトグル ON 操作を相関するため、
+    // prepareForRestart() へ透過的に引き渡す。
     function restartBilingual(settings, reason = "unknown", options = {}) {
+      const toggleOpId =
+        typeof options.toggleOpId === "string" && options.toggleOpId
+          ? options.toggleOpId
+          : null;
+
       applyRestartSettings(settings, options);
 
       if (!state.contentSettings.extensionEnabled) {
         logContent?.("restartBilingual skipped because extension is disabled", {
           reason,
+          toggleOpId,
         });
         return;
       }
 
       prepareForRestart?.({
         reason,
+        toggleOpId,
       });
 
       startBilingual({
         reason,
+        toggleOpId,
         keepPanelOpen: state.panelOpen,
       });
     }
 
-    // -------------------------------------------------------------
-    // runtime message
-    // -------------------------------------------------------------
 
+    // -------------------------------------------------------
+    // トグル完全リセット
+    // -------------------------------------------------------
+
+    // settings-runtime.js が直接持っている playback 参照を明示的に切る。
+    // OFF 後の再取得で古い video / dialog / track を再利用しないための top-level cleanup。
+    function resetTopLevelPlaybackRefsForToggleOff(toggleOpId) {
+      const before = {
+        toggleOpId,
+        hadVideo: Boolean(state.video),
+        hadDialogEl: Boolean(state.dialogEl),
+        hadPrimaryTrack: Boolean(state.primaryTrack),
+        hadSecondaryTrack: Boolean(state.secondaryTrack),
+      };
+
+      state.video = null;
+      state.dialogEl = null;
+      state.primaryTrack = null;
+      state.secondaryTrack = null;
+
+      logContentSettings("トグル完全リセット: top-level playback 参照を解放", {
+        ...before,
+        hasVideoAfter: Boolean(state.video),
+        hasDialogElAfter: Boolean(state.dialogEl),
+        hasPrimaryTrackAfter: Boolean(state.primaryTrack),
+        hasSecondaryTrackAfter: Boolean(state.secondaryTrack),
+      });
+    }
+
+    // -------------------------------------------------------
+    // runtime message
+    // -------------------------------------------------------
+
+    // Apple TV+ 側の secondary 字幕選択を現在設定へ同期する。
+    // settings 変更後の再起動前に、native 側の字幕状態を拡張設定と揃えるために使う。
     async function syncAppleTvNativeSubtitleToSecondaryLang(
       secondaryLang,
       triggerReason
@@ -324,6 +412,8 @@
       }
     }
 
+    // runtime message を受け取り、設定変更や言語一覧要求を処理する。
+    // SETTINGS_CHANGED は非同期で処理し、sendResponse は必ず 1 回だけ返す。
     const onRuntimeMessage = (message, sender, sendResponse) => {
       if (!message || typeof message !== "object") return false;
 
@@ -347,6 +437,8 @@
           };
         })();
 
+        // playback page と video 参照が揃うまで待つ。
+        // SETTINGS_CHANGED が早すぎるタイミングで来ても、再生準備完了まで短時間だけ待機する。
         const waitForPlaybackReady = async ({
           timeoutMs = 4000,
           intervalMs = 200,
@@ -367,6 +459,8 @@
           return null;
         };
 
+        // SETTINGS_CHANGED を実際に state と playback へ反映する本体処理。
+        // ON/OFF 分岐、native への引き渡し、参照リセット、再起動開始までをここでまとめて行う。
         const applySettingsAsync = async () => {
           state.requestedContentSettings = {
             ...state.requestedContentSettings,
@@ -408,6 +502,8 @@
               secondaryLang: state.contentSettings.secondaryLang,
             });
           } else if (!state.contentSettings.extensionEnabled) {
+            const toggleOpId = beginToggleOffOp();
+
             state.requestedContentSettings = {
               ...state.requestedContentSettings,
               extensionEnabled: false,
@@ -419,6 +515,7 @@
             state.panelOpen = false;
 
             logContentSettings("SETTINGS_CHANGED disable-branch", {
+              toggleOpId,
               triggerReason,
               incoming,
               contentExtensionEnabled: state.contentSettings.extensionEnabled,
@@ -427,35 +524,40 @@
             });
 
             logContentSettings("ネイティブトグル OFF apply start", {
+              toggleOpId,
               triggerReason,
               panelOpen: state.panelOpen,
               extensionEnabled: state.contentSettings.extensionEnabled,
             });
 
-            logContentSettings("ネイティブトグル OFF restore call before", {
-              triggerReason,
-              hasCueController: Boolean(cueController),
-              hasRestoreNativeSubtitles:
-                typeof cueController?.restoreNativeSubtitles === "function",
-            });
-
             syncIntervalOrchestrator?.stop?.();
             cleanupInitialAutoStartWatch();
 
-            cueController?.restoreNativeSubtitles?.();
-
-            logContentSettings("ネイティブトグル OFF restore call after", {
+            logContentSettings("ネイティブトグル OFF cleanup delegated", {
+              toggleOpId,
               triggerReason,
               hasCueController: Boolean(cueController),
-              hasRestoreNativeSubtitles:
-                typeof cueController?.restoreNativeSubtitles === "function",
+              cleanupApi: "detachForDisabled",
+              primaryHandoffApi:
+                typeof cueController?.handoffPrimarySubtitleToNative ===
+                "function",
+              secondaryUnbindApi:
+                typeof cueController?.unbindSecondarySubtitleTrack ===
+                "function",
             });
 
             panelUi?.destroyUiHosts?.();
             panelUi?.watchForPlayerTabs?.();
-            detachForDisabled();
+
+            detachForDisabled({
+              reason: `settings_changed:${triggerReason}:toggle_off`,
+              toggleOpId,
+            });
+
+            resetTopLevelPlaybackRefsForToggleOff(toggleOpId);
 
             logContentSettings("ネイティブトグル OFF apply done", {
+              toggleOpId,
               triggerReason,
               panelOpen: state.panelOpen,
               extensionEnabled: state.contentSettings.extensionEnabled,
@@ -463,7 +565,7 @@
 
             state.booted = false;
 
-            return { ok: true, reason: "disabled" };
+            return { ok: true, reason: "disabled", toggleOpId };
           }
 
           const playbackRef = await waitForPlaybackReady();
@@ -487,7 +589,11 @@
             triggerReason
           );
 
+          const { toggleOpId, pairedWithOff } = resolveToggleOnOp();
+
           logContentSettings("ネイティブトグル ON restart begin", {
+            toggleOpId,
+            pairedWithOff,
             triggerReason,
             panelOpen: state.panelOpen,
             extensionEnabled: state.contentSettings.extensionEnabled,
@@ -501,10 +607,13 @@
             "SETTINGS_CHANGED",
             {
               keepPanelOpen: state.panelOpen,
+              toggleOpId,
             }
           );
 
-          logContentSettings("content applied settings to tracks", {
+          logContentSettings("ネイティブトグル ON restart done", {
+            toggleOpId,
+            pairedWithOff,
             triggerReason,
             hasVideo: !!state.video,
             primaryLang: state.contentSettings.primaryLang,
@@ -515,7 +624,19 @@
             secondaryTrackFound: !!state.secondaryTrack,
           });
 
-          return { ok: true };
+          logContentSettings("content applied settings to tracks", {
+            toggleOpId,
+            triggerReason,
+            hasVideo: !!state.video,
+            primaryLang: state.contentSettings.primaryLang,
+            secondaryLang: state.contentSettings.secondaryLang,
+            requestedSecondaryLang: state.requestedSecondaryLang,
+            selectedSecondaryTrackLanguage: state.secondaryTrack?.language || "",
+            primaryTrackFound: !!state.primaryTrack,
+            secondaryTrackFound: !!state.secondaryTrack,
+          });
+
+          return { ok: true, toggleOpId, pairedWithOff };
         };
 
         applySettingsAsync()
@@ -565,6 +686,9 @@
       }
     }
 
+    // -------------------------------------------------------
+    // エクスポート
+    // -------------------------------------------------------
     return {
       applySecondaryLangFallback,
       resolveSettingsChangeNextSettings,

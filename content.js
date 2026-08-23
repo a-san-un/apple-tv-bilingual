@@ -2038,6 +2038,26 @@ function forwardContentLog(...args) {
     createTrackListenerBinding,
   };
 
+  // =============================================================
+  // subtitleSyncServices
+  //
+  // 役割: subtitle-sync-controller.js へ渡す DI object を組み立てる。
+  //       primary / secondary の track 解決・bind・native fallback を
+  //       roles.primary / roles.secondary の adapter として分離し、
+  //       content.js 側は bind 実装の分岐を持たない DI 層に留める。
+  //
+  // 依存:
+  //   - resolverDeps.resolveRequestedSubtitleTrack (primary 選択)
+  //   - resolverDeps.resolveSecondarySubtitleTrack (secondary 選択)
+  //   - resolverDeps.syncNativeSubtitleSelectionViaMenu (native fallback)
+  //   - cueController.bindPrimarySubtitleTrack / bindSecondarySubtitleTrack
+  //
+  // 設計原則:
+  //   - resolveTrack / bindTrack / syncNativeSelection の3点だけを
+  //     role ごとに満たせば controller 側が動く。
+  //   - bind の実 mode / policy はここでは決めず、
+  //     controller から渡された options をそのまま使う。
+  // =============================================================
   const subtitleSyncServices = {
     logContent,
     createSyncIntervalOrchestrator:
@@ -2045,33 +2065,90 @@ function forwardContentLog(...args) {
     createSubtitleHealthSnapshot:
       window.ATVB?.createSubtitleHealthSnapshot,
     resolver: resolverDeps,
-    bindSecondaryTrack: (track, options = {}) => {
-      const modeDecision = {
-        requestedMode: options?.requestedMode || "showing",
-        policy: options?.policy || "subtitle-sync-controller",
-        rationale: options?.reason || "subtitle_sync_controller_bind",
-        reason: options?.reason || "subtitle-sync-controller",
-        unreadableSnapshot: options?.unreadableSnapshot || null,
-      };
 
-      cueController?.bindSecondarySubtitleTrack(track, modeDecision);
+    // -------------------------------------------------------
+    // role adapters
+    // -------------------------------------------------------
+    // primary / secondary それぞれの resolve / bind / native fallback を
+    // subtitle-sync-controller 側の role-aware API に合わせて注入する。
+    // content.js はここで adapter を渡すだけに留め、bind の実装分岐は持たない。
+    roles: {
+      primary: {
+        // primary track を現在時刻基準で解決する。cue を持つ候補を優先する。
+        resolveTrack: (video, requestedLang) =>
+          resolverDeps.resolveRequestedSubtitleTrack?.(
+            video?.textTracks || [],
+            requestedLang,
+            Number(video?.currentTime ?? NaN),
+          ) || null,
+
+        // primary track を cue-controller 経由で bind し、onCueChange を接続する。
+        bindTrack: async (track, options = {}) => {
+          return cueController?.bindPrimarySubtitleTrack?.(
+            track,
+            onCueChange,
+            {
+              video: state.video || null,
+              requestedLang: options?.requestedLang || "",
+              reason: options?.reason || "subtitle-sync-controller-primary",
+            },
+          );
+        },
+
+        // native 字幕メニュー経由で primary 言語選択を同期する fallback。
+        syncNativeSelection: async ({ requestedLang, reason = "" } = {}) => {
+          return await resolverDeps.syncNativeSubtitleSelectionViaMenu?.({
+            primaryLang: requestedLang || "",
+            secondaryLang: "",
+            preferredSource: "",
+            reason,
+          });
+        },
+      },
+
+      secondary: {
+        // secondary track を専用 resolver で解決する。
+        resolveTrack: (video, requestedLang) =>
+          resolverDeps.resolveSecondarySubtitleTrack?.(
+            video,
+            requestedLang,
+          ) || null,
+
+        // secondary track を cue-controller 経由で bind する。mode は hidden を基本とする。
+        bindTrack: async (track, options = {}) => {
+          const modeDecision = {
+            requestedMode: options?.requestedMode || "hidden",
+            policy: options?.policy || "subtitle-sync-controller",
+            rationale: options?.reason || "subtitle-sync-controller-bind",
+            reason: options?.reason || "subtitle-sync-controller",
+            unreadableSnapshot: options?.unreadableSnapshot || null,
+          };
+
+          return cueController?.bindSecondarySubtitleTrack?.(
+            track,
+            modeDecision,
+          );
+        },
+
+        // native 字幕メニュー経由で secondary 言語選択を同期する fallback。
+        syncNativeSelection: async ({ requestedLang, reason = "" } = {}) => {
+          return await resolverDeps.syncNativeSubtitleSelectionViaMenu?.({
+            primaryLang: "",
+            secondaryLang: requestedLang || "",
+            preferredSource: "",
+            reason,
+          });
+        },
+      },
     },
-    syncNativeSubtitleSelection: async ({
-      primaryLang = "",
-      secondaryLang = "",
-      preferredSource = "",
-    } = {}) => {
-      return await resolverDeps.syncNativeSubtitleSelectionViaMenu?.({
-        primaryLang,
-        secondaryLang,
-        preferredSource,
-      });
-    },
+
     pollIntervalMs: 100,
     activationHoldMs: 500,
     activationTimeoutMs: 1500,
   };
 
+  // subtitleSyncServices（role adapters込み）から controller を生成する。
+  // content.js はここで DI するだけで、bind/fallback の実装は controller 側に閉じる。
   const subtitleSyncController = createSubtitleSyncController({
     state,
     services: subtitleSyncServices,
@@ -2332,9 +2409,21 @@ let syncIntervalOrchestrator = null;
     clearInitialCueRecoveryCleanup();
   }
 
+  // primary/secondary の既存 bind を解除し、pending な同期タスクも停止してから
+  // 新しい track 選択に入るための初期化処理。
   function resetSubtitleTrackBindings() {
+    // -------------------------------------------------------
+    // bind / pending task reset
+    // -------------------------------------------------------
+
     // [attach: primary/secondary reset] 既存 bind を一度解除してから今回の track 選択に入る。
-    // 前回の再生状態を残したまま再初期化しないよう、state と listener を先に空にする。
+    // 前回の再生状態を残したまま再初期化しないよう、
+    // まず subtitle-sync-controller 側の pending wait / fallback task を停止し、
+    // その後 listener bind と state を空にする。
+    subtitleSyncController?.cancelAllPendingSyncTasks?.(
+      "reset-subtitle-track-bindings",
+    );
+
     cueController.unbindPrimarySubtitleTrack();
     cueController.unbindSecondarySubtitleTrack();
     state.primaryTrack = null;
@@ -2512,9 +2601,16 @@ let syncIntervalOrchestrator = null;
   // options オブジェクト形式で呼び出し可能。
   // 後方互換のため reason 文字列も受け付けるが、
   // 新規呼び出しは { preserveSecondaryDom: bool } 形式を使うこと。
+  //
+  // completeReset=true の場合は、トグル OFF / セッション完全撤収向けの
+  // 完全リセット経路へ切り替える。
+  // subtitle-state-reset.js 側の resetSubtitleStateForToggle() を使い、
+  // 古い字幕 block / snapshot / text 参照を次回 session へ持ち越さない。
   function clearInternalSubtitleState(reasonOrOptions = {}) {
     let preserveSecondaryDom = false;
     let resetReason = "clear-internal-subtitle-state";
+    let completeReset = false;
+    let toggleOpId = null;
 
     if (typeof reasonOrOptions === "string") {
       preserveSecondaryDom =
@@ -2530,10 +2626,28 @@ let syncIntervalOrchestrator = null;
         typeof reasonOrOptions.reason === "string" && reasonOrOptions.reason
           ? reasonOrOptions.reason
           : resetReason;
+      completeReset = reasonOrOptions.completeReset === true;
+      toggleOpId =
+        typeof reasonOrOptions.toggleOpId === "string" &&
+        reasonOrOptions.toggleOpId
+          ? reasonOrOptions.toggleOpId
+          : null;
     }
 
     subtitleRecoveryManager?.reset?.(resetReason);
-    subtitleStateReset.clearSubtitleState({ preserveSecondaryDom });
+
+    if (completeReset) {
+      subtitleStateReset.resetSubtitleStateForToggle({
+        preserveSecondaryDom,
+        reason: resetReason,
+        toggleOpId,
+      });
+      return;
+    }
+
+    subtitleStateReset.clearSubtitleState({
+      preserveSecondaryDom,
+    });
   }
 
 

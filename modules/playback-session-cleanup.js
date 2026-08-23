@@ -9,6 +9,8 @@
 //   再起動時は再生成前提の撤収、OFF 時は再生画面の拡張 UI 完全破棄を担当する。
 // - content switch 時の resetForContentSwitch() は、同一タイミングで重複して呼ばれても
 //   teardown が壊れないよう最小限の再入ガードを持つ。
+// - cleanup 前後で、どの参照 / timer / observer / track binding を保持していたかを
+//   構造化ログで記録し、トグル OFF や restart 時の解放状況を追跡できるようにする。
 //
 // clearInternalSubtitleState の preserveSecondaryDom 使い分け:
 //   true  -> restart 前提。パネルDOMのフラッシュを避けるため secondary DOM を残す。
@@ -66,48 +68,208 @@
     }
 
     // -------------------------------------------------------
+    // cleanup snapshot
+    // -------------------------------------------------------
+
+    // cleanup 前後ログ用に、現在の playback session 周辺 state を
+    // 軽量スナップショット化する。
+    // 生の DOM / track をそのまま出さず、保持有無と件数を中心に返す。
+    function buildCleanupSnapshot() {
+      const secondaryMonitorState =
+        cueController?.getSecondaryMonitorState?.() || null;
+
+      return {
+        hasVideo: Boolean(state.video),
+        hasDialogEl: Boolean(state.dialogEl),
+        hasPrimaryTrack: Boolean(state.primaryTrack),
+        hasSecondaryTrack: Boolean(state.secondaryTrack),
+        hasCurrentSubtitleBlock: Boolean(state.currentSubtitleBlock),
+        hasSubtitleBlockMeta: Boolean(state.subtitleBlockMeta),
+        hasLastPanelRenderSnapshot: Boolean(state.lastPanelRenderSnapshot),
+        hasLastSecondarySyncContext: Boolean(state.lastSecondarySyncContext),
+        subtitleHistoryCount: Array.isArray(state.subtitleHistory)
+          ? state.subtitleHistory.length
+          : 0,
+        panelPastBlocksCount: Array.isArray(state.panelPastBlocks)
+          ? state.panelPastBlocks.length
+          : 0,
+        subtitleBlocksCount: Array.isArray(state.subtitleBlocks)
+          ? state.subtitleBlocks.length
+          : 0,
+        subtitleCurrentIndex: Number.isFinite(state.subtitleCurrentIndex)
+          ? state.subtitleCurrentIndex
+          : -1,
+        hasSecondaryHideTimer: Boolean(state.secondaryHideTimer),
+        playbackControlsRafId: state.playbackControlsRafId || 0,
+        playbackControlsRetryTimersCount: Array.isArray(
+          state.playbackControlsRetryTimers,
+        )
+          ? state.playbackControlsRetryTimers.length
+          : 0,
+        trackResolveRetryTimersCount: Array.isArray(state.trackResolveRetryTimers)
+          ? state.trackResolveRetryTimers.length
+          : 0,
+        controlSettlingTimersCount: Array.isArray(state.controlSettlingTimers)
+          ? state.controlSettlingTimers.length
+          : 0,
+        initialCueRecoveryTimersCount: Array.isArray(
+          state.initialCueRecoveryTimers,
+        )
+          ? state.initialCueRecoveryTimers.length
+          : 0,
+        initialCueRecoveryCleanupCount: Array.isArray(
+          state.initialCueRecoveryCleanup,
+        )
+          ? state.initialCueRecoveryCleanup.length
+          : 0,
+        hasOverlayRoot: Boolean(state.overlayRoot),
+        hasPanelShadowRoot: Boolean(state.panelShadowRoot),
+        hasPopupShadowRoot: Boolean(state.popupShadowRoot),
+        hasDebugPanelRoot: Boolean(state.debugPanelRoot),
+        hasPopupDocClickHandler: Boolean(state.popupDocClickHandler),
+        hasPlaybackCloseClickHandler: Boolean(state.playbackCloseClickHandler),
+        hasPopupResizeObserver: Boolean(state.popupResizeObserver),
+        hasToggleButtonResizeHandler: Boolean(state.toggleButtonResizeHandler),
+        hasPopupLastContext: Boolean(state.popupLastContext),
+        messageListenerAttached: Boolean(state.messageListenerAttached),
+        currentContentKey: state.currentContentKey || "",
+        lastVideoSrcKey: state.lastVideoSrcKey || "",
+        secondaryMonitor: secondaryMonitorState
+          ? {
+              active: Boolean(secondaryMonitorState.active),
+              hasCleanup: Boolean(secondaryMonitorState.hasCleanup),
+              hasTrack: Boolean(secondaryMonitorState.track),
+              originalMode:
+                secondaryMonitorState.originalMode != null
+                  ? secondaryMonitorState.originalMode
+                  : null,
+              requestedMode:
+                secondaryMonitorState.requestedMode != null
+                  ? secondaryMonitorState.requestedMode
+                  : null,
+              meta: secondaryMonitorState.meta || null,
+            }
+          : null,
+      };
+    }
+
+    // cleanup 開始 / 終了ログを揃った形式で出す。
+    // toggleOpId がある場合は OFF 側相関ログとしてそのまま流せるようにする。
+    function logCleanupPhase(phase, payload = {}) {
+      logContent?.(`playback session cleanup ${phase}`, payload);
+    }
+
+    // teardown 共通本体。
+    // restart / disabled で共通な撤収処理をまとめ、mode restore や
+    // complete reset の有無だけをオプションで切り替える。
+    function runSessionTeardown({
+      phase = "unknown",
+      restoreSecondaryMode = false,
+      completeSubtitleStateReset = false,
+      preserveSecondaryDom = false,
+      toggleOpId = null,
+      reason = phase,
+    } = {}) {
+      const before = buildCleanupSnapshot();
+
+      logCleanupPhase("begin", {
+        phase,
+        reason,
+        toggleOpId,
+        restoreSecondaryMode,
+        completeSubtitleStateReset,
+        preserveSecondaryDom,
+        before,
+      });
+
+      stopPlaybackControlLayoutObservers?.();
+      layoutController?.teardownPlaybackControlsUi?.();
+
+      clearInitialCueRecovery?.();
+      clearSecondaryTrackState();
+      overlayController?.clearOverlayState?.();
+      destroyOverlay?.();
+      destroyUiHosts?.();
+
+      runtimeObservers?.stopAll?.();
+
+      cueController?.handoffPrimarySubtitleToNative?.();
+      cueController?.unbindSecondarySubtitleTrack?.({
+        restoreMode: restoreSecondaryMode,
+        reason,
+        toggleOpId,
+      });
+      subtitleRecoveryManager?.dispose?.();
+
+      if (completeSubtitleStateReset) {
+        clearInternalSubtitleState?.({
+          preserveSecondaryDom,
+          reason,
+          toggleOpId,
+          completeReset: true,
+        });
+      }
+
+      const after = buildCleanupSnapshot();
+
+      logCleanupPhase("done", {
+        phase,
+        reason,
+        toggleOpId,
+        restoreSecondaryMode,
+        completeSubtitleStateReset,
+        preserveSecondaryDom,
+        after,
+      });
+    }
+
+    // -------------------------------------------------------
     // teardown helpers
     // -------------------------------------------------------
 
     // restart 前に、現在の playback session に紐づく UI / observer をいったん撤収する。
     // 直後に startBilingual() で再生成する前提なので、字幕制御はネイティブへ戻すが
     // secondary track の mode 復元までは行わない。
-    function teardownForRestart() {
-      stopPlaybackControlLayoutObservers?.();
-      layoutController?.teardownPlaybackControlsUi?.();
+    function teardownForRestart(options = {}) {
+      const toggleOpId =
+        typeof options.toggleOpId === "string" && options.toggleOpId
+          ? options.toggleOpId
+          : null;
+      const reason =
+        typeof options.reason === "string" && options.reason
+          ? options.reason
+          : "teardownForRestart";
 
-      clearInitialCueRecovery?.();
-      clearSecondaryTrackState();
-      overlayController?.clearOverlayState?.();
-      destroyOverlay?.();
-      destroyUiHosts?.();
-
-      runtimeObservers?.stopAll?.();
-
-      cueController?.handoffPrimarySubtitleToNative?.();
-      cueController?.unbindSecondarySubtitleTrack?.({ restoreMode: false });
-      cueController?.destroy?.();
-      subtitleRecoveryManager?.dispose?.();
+      runSessionTeardown({
+        phase: "restart",
+        restoreSecondaryMode: false,
+        completeSubtitleStateReset: false,
+        preserveSecondaryDom: true,
+        toggleOpId,
+        reason,
+      });
     }
 
     // extensionEnabled=false 用の cleanup。
     // 再生画面に出していた拡張 UI を完全に外し、secondary subtitle の mode も元へ戻す。
-    function detachForDisabled() {
-      stopPlaybackControlLayoutObservers?.();
-      layoutController?.teardownPlaybackControlsUi?.();
+    function detachForDisabled(options = {}) {
+      const toggleOpId =
+        typeof options.toggleOpId === "string" && options.toggleOpId
+          ? options.toggleOpId
+          : null;
+      const reason =
+        typeof options.reason === "string" && options.reason
+          ? options.reason
+          : "detachForDisabled";
 
-      clearInitialCueRecovery?.();
-      clearSecondaryTrackState();
-      overlayController?.clearOverlayState?.();
-      destroyOverlay?.();
-      destroyUiHosts?.();
-
-      runtimeObservers?.stopAll?.();
-
-      cueController?.handoffPrimarySubtitleToNative?.();
-      cueController?.unbindSecondarySubtitleTrack?.({ restoreMode: true });
-      cueController?.destroy?.();
-      subtitleRecoveryManager?.dispose?.();
+      runSessionTeardown({
+        phase: "disabled",
+        restoreSecondaryMode: true,
+        completeSubtitleStateReset: true,
+        preserveSecondaryDom: false,
+        toggleOpId,
+        reason,
+      });
     }
 
     // -------------------------------------------------------
@@ -116,10 +278,22 @@
 
     // 再起動前に、再生セッション由来の一時 state だけを初期化する。
     // 保存済み設定は保持し、直後の startBilingual() で新しい字幕状態を積み直す前提で使う。
-    function prepareForRestart() {
+    function prepareForRestart(options = {}) {
+      const toggleOpId =
+        typeof options.toggleOpId === "string" && options.toggleOpId
+          ? options.toggleOpId
+          : null;
+      const reason =
+        typeof options.reason === "string" && options.reason
+          ? options.reason
+          : "prepareForRestart";
+
+      const before = buildCleanupSnapshot();
+
       clearInternalSubtitleState?.({
         preserveSecondaryDom: true,
-        reason: "prepareForRestart",
+        reason,
+        toggleOpId,
       });
 
       state.primaryTrack = null;
@@ -132,6 +306,15 @@
       state.panelPastBlocks = [];
       state.subtitleBlocks = [];
       state.subtitleCurrentIndex = -1;
+
+      const after = buildCleanupSnapshot();
+
+      logContent?.("playback session prepare restart", {
+        reason,
+        toggleOpId,
+        before,
+        after,
+      });
     }
 
     // -------------------------------------------------------
@@ -146,76 +329,105 @@
     // 同一旧セッションへの cleanup 一度化そのものは coordinator 側に任せる。
     function resetForContentSwitch(reason = "content_switch") {
       if (isResettingForContentSwitch) {
-        logContent?.("resetForContentSwitch skipped (reentrant)", {
+        logContent?.("resetForContentSwitch reentry skipped", {
           reason,
-          previousVideoSrcKey: state.lastVideoSrcKey,
           currentContentKey: state.currentContentKey,
+          lastVideoSrcKey: state.lastVideoSrcKey,
         });
         return;
       }
 
       isResettingForContentSwitch = true;
 
+      const before = buildCleanupSnapshot();
+
       try {
-        logContent?.(reason, {
-          previousVideoSrcKey: state.lastVideoSrcKey,
-          currentContentKey: state.currentContentKey,
-          preservedSettings: {
-            primaryLang: state.contentSettings?.primaryLang || "",
-            secondaryLang: state.contentSettings?.secondaryLang || "",
-            panelDefaultOpen: state.contentSettings?.panelDefaultOpen,
-            requestedSecondaryLang: state.requestedSecondaryLang || "",
-          },
+        stopPlaybackControlLayoutObservers?.();
+        layoutController?.teardownPlaybackControlsUi?.();
+
+        clearInitialCueRecovery?.();
+        clearSecondaryTrackState();
+
+        cueController?.handoffPrimarySubtitleToNative?.();
+        cueController?.unbindSecondarySubtitleTrack?.({
+          restoreMode: true,
+          reason: "content_switch",
         });
+        subtitleRecoveryManager?.dispose?.();
 
-        teardownForRestart();
-        prepareForRestart();
+        overlayController?.clearOverlayState?.();
+        destroyOverlay?.();
+        destroyUiHosts?.();
 
-        // prepareForRestart は secondary DOM を残すので、
-        // コンテンツ切替では旧エピソードの字幕残留を避けるため明示的に消す。
+        runtimeObservers?.stopAll?.();
+
         clearInternalSubtitleState?.({
           preserveSecondaryDom: false,
-          reason: "resetForContentSwitch",
+          reason: "content_switch",
         });
 
+        state.primaryTrack = null;
         state.video = null;
         state.dialogEl = null;
         state.lastObservedVideoTime = null;
-        state.currentContentKey = "";
       } finally {
         isResettingForContentSwitch = false;
       }
-    }
 
-    // 動画クローズや再生終了時に、playback session 由来の UI と一時 state をまとめて消す。
-    // 設定値は保持したまま、次の playback 開始時にクリーンな状態から再初期化できるようにする。
-    function clearPlaybackSessionUiState(reason = "playback_session_cleared") {
-      logContent?.(reason, {
+      const after = buildCleanupSnapshot();
+
+      logContent?.("playback session reset for content switch", {
+        reason,
         previousVideoSrcKey: state.lastVideoSrcKey,
         currentContentKey: state.currentContentKey,
-        preservedSettings: {
-          primaryLang: state.contentSettings?.primaryLang || "",
-          secondaryLang: state.contentSettings?.secondaryLang || "",
-          panelDefaultOpen: state.contentSettings?.panelDefaultOpen,
-          requestedSecondaryLang: state.requestedSecondaryLang || "",
-        },
+        before,
+        after,
       });
+    }
 
-      teardownForRestart();
-      prepareForRestart();
+    // 再生 UI と字幕 state を完全に外す。
+    // close / navigation / hard reset など「今の playback session を完全終了する」用途。
+    function clearPlaybackSessionUiState(reason = "clear_playback_session_ui_state") {
+      const before = buildCleanupSnapshot();
 
-      // prepareForRestart は secondary DOM を残すので、
-      // playback session 完全終了では panel / overlay の残留表示も含めて消す。
+      stopPlaybackControlLayoutObservers?.();
+      layoutController?.teardownPlaybackControlsUi?.();
+
+      clearInitialCueRecovery?.();
+      clearSecondaryTrackState();
+
+      cueController?.handoffPrimarySubtitleToNative?.();
+      cueController?.unbindSecondarySubtitleTrack?.({
+        restoreMode: true,
+        reason,
+      });
+      subtitleRecoveryManager?.dispose?.();
+
+      overlayController?.clearOverlayState?.();
+      destroyOverlay?.();
+      destroyUiHosts?.();
+
+      runtimeObservers?.stopAll?.();
+
       clearInternalSubtitleState?.({
         preserveSecondaryDom: false,
-        reason: "clearPlaybackSessionUiState",
+        reason,
       });
 
+      state.primaryTrack = null;
       state.video = null;
       state.dialogEl = null;
       state.lastObservedVideoTime = null;
       state.currentContentKey = "";
       state.lastVideoSrcKey = "";
+
+      const after = buildCleanupSnapshot();
+
+      logContent?.("playback session ui state cleared", {
+        reason,
+        before,
+        after,
+      });
     }
 
     // navigation 直後に新しい playback target がまだ見つからないときの後始末。
@@ -266,5 +478,8 @@
     };
   }
 
+  // -------------------------------------------------------
+  // エクスポート
+  // -------------------------------------------------------
   root.createPlaybackSessionCleanup = createPlaybackSessionCleanup;
 })();
