@@ -79,10 +79,10 @@
 
 ### 今回の主対象
 
-- `tests/subtitle-sync-controller.test.js`。
-- `modules/secondary-track-recovery.js`。
-- `content.js`。
-- `cue-controller.js`。
+- `tests/subtitle-sync-controller.test.js`
+- `modules/secondary-track-recovery.js`
+- `content.js`
+- `cue-controller.js`
 
 ### 次の修正で触る対象
 
@@ -103,9 +103,9 @@
 
 ### 必要に応じて触る
 
-- `modules/subtitle-sync-controller.js`。
-- `modules/subtitle-recovery-manager.js`。
-- `manifest.json`。
+- `modules/subtitle-sync-controller.js`
+- `modules/subtitle-recovery-manager.js`
+- `manifest.json`
 
 ***
 
