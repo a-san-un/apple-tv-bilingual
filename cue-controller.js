@@ -1,16 +1,34 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - cue-controller.js
-// version: 2.6.3
-// 役割: cue change を起点に current subtitle / subtitle blocks / overlay / panel 更新を統括する。
-// Phase J: secondary missing の runtime 監視、recovery 判定、nearby rebuild の 1 回保護を担当する。
+// version: 2.6.4
+// 役割:
+// - cue change を起点に secondary sync / scene rebuild / overlay / panel 更新を統括する。
+// - subtitle block sequence の構築詳細は cue-sequence-builder.js 正本へ委譲する。
+// - merged subtitle health を組み立て、secondary recovery 判定へ渡す。
+// - listener / track bind の実体は binder 側に委譲し、controller は orchestration に留まる。
+// Phase J:
+// - secondary missing の runtime 監視、recovery 判定、nearby rebuild の 1 回保護を担当する。
+// - current subtitle / panel / recovery の接続点を保ちつつ、sequence build の二重実装を持たない。
 // =============================================================
 
 (() => {
   // ATVB 名前空間を取得し、cue controller を公開する先を固定する。
   const root = (window.ATVB = window.ATVB || {});
 
-  // cue-controller 全体の依存を受け取り、
-  // cue change・subtitle blocks・overlay / panel 更新をまとめて扱う中核を作る。
+  /**
+   * cue-controller 全体の依存を受け取り、
+   * cue change を起点に current subtitle / overlay / panel / recovery 更新を統括する。
+   *
+   * Step 16-B 以降は sequence build 詳細を cue-sequence-builder.js 正本へ戻すため、
+   * controller 側では cue 配列抽出・previousBlocks 引き継ぎ・
+   * subtitle block sequence 構築・currentBlock 決定の詳細を持たない。
+   *
+   * ここで受け取る依存は、
+   * - track / cue の現在状態を観測するためのもの
+   * - secondary sync / recovery を判断するためのもの
+   * - builder / renderer / panel へ結果を流すためのもの
+   * に限定する。
+   */
   function createCueController({
     state,
     logContent,
@@ -29,14 +47,10 @@
     cleanCueText,
     getCurrentTime,
     getVideoElement,
-    getPrimaryTrackCues,
-    getSecondaryTrackCues,
-    getPreviousSubtitleBlocks,
-    buildSubtitleBlockSequence,
-    setSubtitleBlocks,
+    // Step 16-B 以降は builder 正本へ移行済み。
+    // ここでは current subtitle / hold view の互換参照が残るため一時的に受け取る。
     getSubtitleBlockSequence,
     getCurrentSubtitleBlockFromSequence: _getCurrentSubtitleBlockFromSequence,
-    setCurrentSubtitleBlock,
     DEBUG_PANEL_PROBE: _DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     renderCurrentSnapshot,
@@ -681,22 +695,6 @@
       if (track) {
         const currentTime = getCurrentTime();
         const cueText = getCurrentCueText(track, currentTime);
-        const overlapCue = getCurrentCue(track, currentTime);
-
-        if (false && DEBUG_SECONDARY_SUBS) {
-          logContent("secondary-sync render-entry", {
-            reason: "onCueChange",
-            currentTime,
-            trackLanguage: track?.language || "",
-            trackKind: track?.kind || "",
-            trackMode: track?.mode || "",
-            cueTextLength: cueText?.length ?? 0,
-            overlapCueExists: Boolean(overlapCue),
-            overlapCueStartTime: overlapCue?.startTime ?? null,
-            overlapCueEndTime: overlapCue?.endTime ?? null,
-            willRenderEmpty: !cueText,
-          });
-        }
 
         renderSecondarySubtitle(cueText, track);
       }
@@ -798,13 +796,6 @@
       const suppressRender = options.suppressRender === true;
       const forceRebind = options.forceRebind === true;
       const previousBoundTrack = secondaryTrackBound;
-
-      if (false && DEBUG_SECONDARY_SUBS) {
-        logContent(
-          "secondary sync",
-          getSecondaryTrackDebugPayload(requestedLang, secondaryTrackBound),
-        );
-      }
 
       ensureSubtitleTracksUsable(video, requestedLang, {
         finalMode: "hidden",
@@ -947,10 +938,11 @@
         );
       }
 
+      // sequence / currentBlock の正本更新は
+      // rebuildCurrentSceneSubtitleBlocks() → cue-sequence-builder 側に寄せる。
+      // controller では戻り値を観測用に受けるだけにして、
+      // currentBlock の二重セットを行わない。
       const rebuildResult = rebuildCurrentSceneSubtitleBlocks();
-      if (rebuildResult?.currentBlock) {
-        setCurrentSubtitleBlock(rebuildResult.currentBlock);
-      }
 
       if (DEBUG_MEMORY_PROBE) {
         logContent("secondary-sync memory-probe", {
@@ -975,9 +967,16 @@
      * runtime / current cue / sequence の観測値を 1 つにまとめ、
      * recovery 判定で参照する merged subtitle health を返す。
      *
+     * この関数は cue-controller.js に残る「health 集約の接続点」であり、
+     * recovery manager が参照しやすい runtime / currentCue / sequence / derived を
+     * 1 つの shape に正規化する。
+     *
+     * 実装の正本は将来的に cueRenderCoordinator 側へ集約する想定で、
+     * ここでは fallback として最低限の health 導出だけを持つ。
+     *
      * current / previous current block 由来の secondary 欠落は
      * health 情報として保持するが、
-     * ここでは recover / force-rebind の直接条件にはしない。
+     * 一時的な gap をここで recover / force-rebind の直接条件には昇格しない。
      */
     function buildMergedSubtitleHealth({
       primaryTrack,
@@ -988,7 +987,8 @@
       sText,
       sequenceHealth,
     }) {
-      // cueRenderCoordinator 側に統合実装がある場合はそちらを優先する
+      // cueRenderCoordinator 側に統合実装がある場合はそちらを優先する。
+      // controller 側は fallback 実装だけを持ち、health 導出の二重実装を増やさない。
       if (cueRenderCoordinator?.buildMergedSubtitleHealth) {
         return cueRenderCoordinator.buildMergedSubtitleHealth({
           primaryTrack,
@@ -1086,14 +1086,16 @@
     }
 
     // nearby rebuild の 1 回保護状態と hold view をまとめて解除する。
-    // eslint-disable-next-line no-unused-vars 
+    // 将来の guard cleanup 経路で再利用するため保持している。
+    // eslint-disable-next-line no-unused-vars
     function clearNearbyRebuildGuard() {
       nearbyRebuildGuard = null;
       state.nearbyRebuildHoldView = null;
     }
 
     // 次の primary cue change で消費する予定だった guard だけを取り下げる。
-    // eslint-disable-next-line no-unused-vars 
+    // 将来の guard 制御整理までは controller 内 helper として残しておく。
+    // eslint-disable-next-line no-unused-vars
     function consumeNearbyRebuildGuard() {
       nearbyRebuildGuard = null;
     }
@@ -1135,152 +1137,78 @@
       return isWithinNearbyRebuildSeekWindow();
     }
 
-    // 現在時刻近傍の cue だけで subtitle blocks を組み直し、current view / current block を更新する。
+    /**
+     * 現在バインド中の primary / secondary track を入力に、
+     * cue sequence builder 正本から scene rebuild 結果を取得する。
+     *
+     * この関数の役割は「rebuild を開始する orchestration」に限定し、
+     * cue 抽出・時間窓フィルタ・previousBlocks 引き継ぎ・
+     * currentBlock 決定の詳細は builder 側へ戻す。
+     *
+     * 戻り値は controller / recovery 側の既存 call site が使いやすいよう、
+     * builder の result に primaryTrack / secondaryTrack と
+     * 互換アクセス用の sequenceHealth / currentBlock を添えて返す。
+     *
+     * builder 未注入時も call site 側の shape を壊さないため、
+     * null / empty string を含む互換返り値を返す。
+     */
     function rebuildCurrentSceneSubtitleBlocks() {
       const primaryTrack = getBoundPrimaryTrack();
       const secondaryTrack = getBoundSecondaryTrack();
 
-      if (cueSequenceBuilder?.rebuildSequence) {
-        const result = cueSequenceBuilder.rebuildSequence({
-          primaryTrack,
-          secondaryTrack,
-          rebuildReason: "rebuildCurrentSceneSubtitleBlocks",
-        });
+      // Step 16-B では cue-sequence-builder.js を
+      // sequence / scene / snapshot の正本として使う。
+      // controller 側に fallback 実装を残すと、
+      // sequence build 詳細が再び二重化するため持たない。
+      if (!cueSequenceBuilder?.rebuildSequence) {
+        if (DEBUG_SECONDARY_SUBS) {
+          logContent("cue sequence builder missing", {
+            reason: "rebuildCurrentSceneSubtitleBlocks",
+            primaryTrackFound: Boolean(primaryTrack),
+            secondaryTrackFound: Boolean(secondaryTrack),
+          });
+        }
 
         return {
-          ...result,
+          sequence: null,
+          scene: null,
+          snapshot: null,
+          currentBlock: null,
+          sequenceHealth: null,
+          primaryCue: null,
+          secondaryCue: null,
+          primaryText: "",
+          secondaryText: "",
           primaryTrack,
           secondaryTrack,
         };
       }
 
-      const currentTime = getCurrentTime();
-
-      const primaryCue = getCurrentCue(primaryTrack, currentTime);
-      const secondaryCue = getCurrentCue(secondaryTrack, currentTime);
-
-      const primaryText = cleanCueText(primaryCue);
-      const secondaryText = cleanCueText(secondaryCue);
-
-      const primaryCueWindowBeforeSeconds = 180;
-      const primaryCueWindowAfterSeconds = 30;
-      const secondaryCueWindowBeforeSeconds = 300;
-      const secondaryCueWindowAfterSeconds = 60;
-
-      function toCueArray(cuesLike) {
-        return Array.from(cuesLike || []);
-      }
-
-      function filterCuesByTimeWindow(
-        cuesLike,
-        now,
-        beforeSeconds,
-        afterSeconds,
-      ) {
-        return toCueArray(cuesLike).filter((cue) => {
-          const startTime = Number(cue?.startTime ?? Number.NaN);
-          const endTime = Number(cue?.endTime ?? Number.NaN);
-          if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
-            return false;
-          }
-          return (
-            endTime >= now - beforeSeconds &&
-            startTime <= now + afterSeconds
-          );
-        });
-      }
-
-      const primaryCues = filterCuesByTimeWindow(
-        getPrimaryTrackCues(),
-        currentTime,
-        primaryCueWindowBeforeSeconds,
-        primaryCueWindowAfterSeconds,
-      );
-      const secondaryCues = filterCuesByTimeWindow(
-        getSecondaryTrackCues(),
-        currentTime,
-        secondaryCueWindowBeforeSeconds,
-        secondaryCueWindowAfterSeconds,
-      );
-
-      const previousSequence = getPreviousSubtitleBlocks();
-      const previousBlocks = Array.isArray(previousSequence?.blocks)
-        ? previousSequence.blocks
-        : Array.isArray(previousSequence)
-          ? previousSequence
-          : [];
-
-      const sequence = buildSubtitleBlockSequence({
-        primaryCues,
-        secondaryCues,
-        now: currentTime,
-        previousBlocks,
-        cleanCueText,
+      const result = cueSequenceBuilder.rebuildSequence({
+        primaryTrack,
+        secondaryTrack,
         rebuildReason: "rebuildCurrentSceneSubtitleBlocks",
       });
 
-      const blocks = Array.isArray(sequence?.blocks) ? sequence.blocks : [];
-      setSubtitleBlocks(sequence, {
-        sourceTag: "cue-controller",
-        reason: "cue_controller_rebuild",
-      });
+      const scene = result?.scene || null;
+      const snapshot = result?.snapshot || null;
+      const currentBlock = scene?.currentBlock || result?.currentBlock || null;
+      const sequenceHealth =
+        scene?.sequenceHealth || snapshot?.sequenceHealth || null;
 
-      const currentIndex = Number.isInteger(sequence?.currentIndex)
-        ? sequence.currentIndex
-        : -1;
-
-      const currentBlock =
-        currentIndex >= 0 && currentIndex < blocks.length
-          ? blocks[currentIndex] || null
-          : null;
-
-      setCurrentSubtitleBlock(currentBlock, sequence?.meta || null);
-
-      const sequenceHealth = sequence?.meta?.sequenceHealth || null;
-
-      if (false && DEBUG_SECONDARY_SUBS) {
-        logContent("subtitle-blocks rebuild", {
-          reason: "rebuildCurrentSceneSubtitleBlocks",
-          currentTime,
-          primaryTrackFound: Boolean(primaryTrack),
-          secondaryTrackFound: Boolean(secondaryTrack),
-          primaryTextLength: primaryText.length,
-          secondaryTextLength: secondaryText.length,
-          hasPrimaryCue: Boolean(primaryCue),
-          hasSecondaryCue: Boolean(secondaryCue),
-          hasCurrentBlock: Boolean(currentBlock),
-          hasCurrentPrimary: Boolean(currentBlock?.primaryText),
-          hasCurrentSecondary: Boolean(currentBlock?.secondaryText),
-          currentPairAligned: Boolean(sequenceHealth?.currentPairAligned),
-          currentPairMissingSecondary: Boolean(
-            sequenceHealth?.currentPairMissingSecondary,
-          ),
-          previousPairMissingSecondary: Boolean(
-            sequenceHealth?.previousPairMissingSecondary,
-          ),
-          consecutiveCurrentMissingSecondary: Boolean(
-            sequenceHealth?.consecutiveCurrentMissingSecondary,
-          ),
-          totalBlockCount: blocks.length,
-          currentIndex,
-          sequenceMeta: sequence?.meta || null,
-        });
-      }
-
+      // 恒久的に無効化されていた debug ログブロックは削除済み。
+      // builder 正本の結果整形のみを返す。
       return {
-        sequence,
+        ...result,
         currentBlock,
         sequenceHealth,
-        primaryCue,
-        secondaryCue,
-        primaryText,
-        secondaryText,
         primaryTrack,
         secondaryTrack,
       };
     }
 
-    // primary cue change を基準に full rebuild を行い、必要なら 1 回だけ nearby current / hold view を優先する。
+    // primary cue change を基準に full rebuild orchestration を行い、
+    // 必要な場合だけ 1 回限り nearby current / hold view を適用する接続点。
     function onPrimaryCueChange() {
       // ★ extensionEnabled チェック
       if (state?.contentSettings?.extensionEnabled === false) return;
@@ -1294,7 +1222,8 @@
 
       const primaryText = cleanCueText(primaryCue);
       const secondaryText = cleanCueText(secondaryCue);
-
+      // sequence の正本は rebuildCurrentSceneSubtitleBlocks() -> cueSequenceBuilder 側。
+      // ここでの sequenceApi 参照は nearby hold view / 互換処理のためだけに残している。
       const sequenceApi =
         (typeof getSubtitleBlockSequence === "function" && getSubtitleBlockSequence()) ||
         null;
@@ -1303,36 +1232,6 @@
 
       renderCurrentSnapshot?.();
       renderPanel?.();
-
-      if (false && DEBUG_SECONDARY_SUBS) {
-        logContent("primary cuechange rebuild result", {
-          reason: "onPrimaryCueChange",
-          currentTime,
-          rebuildResult: rebuildResult
-            ? {
-                hasSequence: Boolean(rebuildResult.sequence),
-                blockCount:
-                  Array.isArray(rebuildResult.sequence?.blocks)
-                    ? rebuildResult.sequence.blocks.length
-                    : null,
-                currentIndex: Number.isInteger(rebuildResult.sequence?.currentIndex)
-                  ? rebuildResult.sequence.currentIndex
-                  : null,
-                currentBlock: rebuildResult.currentBlock
-                  ? {
-                      key: rebuildResult.currentBlock.key || "",
-                      startTime: Number(rebuildResult.currentBlock.startTime ?? 0),
-                      endTime: Number(rebuildResult.currentBlock.endTime ?? 0),
-                      state: rebuildResult.currentBlock.state || "",
-                      primaryText: String(rebuildResult.currentBlock.primaryText || ""),
-                      secondaryText: String(rebuildResult.currentBlock.secondaryText || ""),
-                    }
-                  : null,
-                sequenceMeta: rebuildResult.sequence?.meta || null,
-              }
-            : null,
-        });
-      }
 
       const sequenceHealth =
         rebuildResult?.sequenceHealth ||
@@ -1349,23 +1248,6 @@
         sequenceHealth,
       });
 
-      if (false && DEBUG_SECONDARY_SUBS) {
-        logContent("primary cuechange merged-health", {
-          reason: "onPrimaryCueChange",
-          currentTime,
-          runtime: mergedHealth?.runtime || null,
-          currentCue: mergedHealth?.currentCue || null,
-          sequence: mergedHealth?.sequence || null,
-          derived: mergedHealth?.derived || null,
-          hasCurrentBlock: Boolean(rebuildResult?.currentBlock),
-          currentPrimaryTextLength:
-            rebuildResult?.currentBlock?.primaryText?.length ?? 0,
-          currentSecondaryTextLength:
-            rebuildResult?.currentBlock?.secondaryText?.length ?? 0,
-          sequenceApiFound: Boolean(sequenceApi),
-        });
-      }
-
       const recoveryDecision = evaluateSecondaryRecovery({
         now: Date.now(),
         runtime: mergedHealth?.runtime || null,
@@ -1380,18 +1262,6 @@
       const shouldRecoverMissingSecondary =
         mergedHealth?.runtime?.primaryTrackFound === true &&
         mergedHealth?.runtime?.secondaryTrackFound !== true;
-
-      if (false && DEBUG_SECONDARY_SUBS) {
-        logContent("secondary recovery evaluation", {
-          reason: "onPrimaryCueChange",
-          currentTime,
-          action: recoveryDecision?.action || "idle",
-          reasonCode: recoveryDecision?.reason || "",
-          primaryLane: recoveryDecision?.primaryLane || null,
-          secondaryLane: recoveryDecision?.secondaryLane || null,
-          shouldRecoverMissingSecondary,
-        });
-      }
 
       if (recoveryDecision?.action === "recover") {
         syncSecondaryTrackOrchestration(
