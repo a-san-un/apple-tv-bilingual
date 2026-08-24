@@ -122,152 +122,117 @@
 
 ### 現在の構成
 
-secondary の selection、readability、monitor health、recovery 要求、前回 bind 状態との差分は、`subtitle-sync-controller.js` の decision builder へ集約した。`cue-controller.js` はその結果を見て、bind / keep / clear / wait-and-bind を実行する構成へ寄せている。
+- `subtitle-sync-controller.js` は secondary decision と wait 復帰経路の正本であり、selection 共通化・decision shape・pending sync task cancel まで完了済みである。
+- `cue-controller.js` は orchestration を担当するが、現時点では `rebuildCurrentSceneSubtitleBlocks()` に sequence / block 構築詳細が残っている。
+- `content.js` は DI / 起動配線へ寄せつつあるが、term inspector、subtitle panel、subtitle blocks の state / shell / render 管理がまだ残っている。
+- panel 関連は `panel-ui.js`、`panel-renderer.js`、`subtitle-blocks.js`、`subtitle-block-resolver.js` に分散して root 直下にある。
+- recovery state 名称は `lane-recovery-state` を正本とする。
+- bind / cleanup / mode restore の責務は controller 側へ戻さず binder / cleanup 側に維持する。
 
-一方で、次フェーズでは secondary 固有の整理に留めず、`cue-controller.js` に残っている sequence build 詳細、`content.js` に残っている term inspector / panel / blocks の UI 実装詳細、root 直下に分散している panel 系既存ファイルを再配置して、責務境界と cleanup owner を明確にする。
+### 今回の責務再配置方針
 
-### 判断基準
+#### S-1: cue sequence build の builder 完全移譲
 
-- **メモリーリーク対策として妥当か** を最優先にする。
-- `content.js` は配線専用、`cue-controller.js` は orchestration 専用を維持する。
-- cue sequence 構築詳細は `modules/cue-sequence-builder.js` 側へ寄せる。
-- panel / blocks の実処理は、root 直下の既存 panel 系ファイルを `modules/` へ統合した上で、その側へ寄せる。
-- term inspector の実処理は `modules/term-inspector.js` 側へ寄せる。
-- **新規モジュール追加は最後の手段** とし、まず既存ファイルへの統合・改名で解決できるかを確認する。
-- listener attach / cleanup、track mode apply / restore の責務を controller 側へ戻さない。
-- sameTrackUnreadable を再び bind 理由へ戻さない。
+- `cue-controller.js` は action orchestration にとどめる。
+- `rebuildCurrentSceneSubtitleBlocks()` に残っている cue 配列走査、scene block 再構築、current / previous block 選定、snapshot 生成などの詳細は `modules/cue-sequence-builder.js` に寄せる。
+- `cue-controller.js` には「いつ再構築するか」「builder に何を渡すか」「結果を panel / overlay 側へどう流すか」だけを残す。
+- stale 判定や sequence shape の知識を controller 側へ戻さない。
+
+#### S-2: panel 系既存ファイルの `modules/` 統合
+
+- `panel-ui.js`、`panel-renderer.js`、`subtitle-blocks.js`、`subtitle-block-resolver.js` は単なるファイル移動ではなく、panel owner の責務境界を整理したうえで `modules/` 配下へ統合する。
+- `panel-visibility-state.js` は panel 開閉 state の正本として維持し、開閉 state と panel DOM / render を再び混ぜない。
+- `content.js` から panel host / render snapshot / subtitle block 派生 state を外し、panel owner へ寄せる。
+- `content.js` には panel へ渡す raw input と DI だけを残す。
+
+#### S-3: term inspector の切り出し
+
+- `content.js` に残っている term inspector（旧 dictionary popup / subtitle popup）関連の state / style / shell / event / render を owner ごと切り出す。
+- term inspector が保持する listener、observer、DOM 参照は term inspector 側で作成・破棄できる契約にする。
+- 新規ファイル追加は最後の手段とし、既存統合で済まない責務だけを `modules/term-inspector.js` へ出す。
+- `content.js` には term inspector の生成・破棄・DI だけを残す。
+
+### メモリーリーク対策としての判断基準
+
+- listener / observer / timer / DOM 参照 / track 参照を「誰が所有しているか」を 1 箇所に寄せる。
+- restart / cleanup / OFF 時に、owner 単位で dispose できる構造を優先する。
+- `window.gc()` のような強制回収前提ではなく、参照を明示的に切れる設計を優先する。
+- state の正本を重複させず、panel / term inspector / sequence build の責務を controller / content へ戻さない。
+
+***
+
+## 実装順
+
+1. `modules/cue-sequence-builder.js` の返り値と API を見直し、scene block / snapshot 生成を builder 正本へ寄せる。
+2. `cue-controller.js` の `rebuildCurrentSceneSubtitleBlocks()` を builder 呼び出し中心へ寄せ、sequence 構築詳細を削る。
+3. panel 系既存ファイルの責務境界を整理し、`modules/` 配下へ統合する構成案を固める。
+4. `content.js` から panel / blocks 派生 state と render 詳細を外す。
+5. term inspector の owner 境界を整理し、必要最小限で `modules/term-inspector.js` へ切り出す。
+6. `content.js` から term inspector の state / shell / render / event 管理を外す。
+7. `manifest.json` の読み込み順と参照パスを更新する。
+8. 後続でトグル ON/OFF 相関ログ、完全リセット、large seek 調査へ進む。
+
+### 移行順の注意
+
+- selection 共通化、decision 統合、pending sync task cancel、listener cleanup 責務固定を壊さないことを優先する。
+- `lane-recovery-state` の命名を旧 `secondary-track-recovery` 前提へ戻さない。
+- bind / cleanup / mode restore の責務を controller 側へ戻さない。
+- `sameTrackUnreadable` を bind 理由へ戻さない。
 - 一時的な空 cue 状態だけで recovery が force rebind する挙動へ戻さない。
-
-### Step 16: cue sequence build 完全移譲方針
-
-`cue-controller.js` は orchestration 専用とし、sequence build 詳細は `modules/cue-sequence-builder.js` へさらに集約する。
-
-寄せたい責務:
-
-- cue 抽出。
-- 並び替え。
-- trim / normalize。
-- current scene block rebuild。
-- sequence 再構築の正本 API。
-- panel 側が消費しやすい shape への整形。
-
-`cue-controller.js` に残すのは、いつ rebuild するかの判断と、builder から返った結果を panel 側へ流す処理だけにする。
-
-### Step 17: panel 系既存ファイルの modules 統合方針
-
-subtitle panel / blocks は、まず root 直下の既存 panel 系ファイルを `modules/` へ統合する方針を優先する。
-
-寄せたい責務:
-
-- panel host/root 生成と DOM 更新。
-- block sequence の正本保持。
-- current block 更新。
-- panel open 時の block rebuild 入口。
-- trim / normalize / render。
-- block resolver と renderer の owner 境界整理。
-- panel visibility state と panel DOM owner の接続整理。
-
-`content.js` に残すのは、panel API の初期化、visibility 設定配線、sequence 更新依頼の受け渡しに留める。
-
-### Step 18: term inspector 薄化方針
-
-`content.js` に残っている in-player 単語詳細 UI は term inspector として分離する。
-
-寄せたい責務:
-
-- term inspector host 作成。
-- shell HTML / style 生成。
-- outside click / tab / word link / resize observer。
-- display state reset / open / position / reposition。
-- dictionary / translation の非同期反映。
-- dispose 時の listener / observer / DOM 参照解放。
-
-`content.js` に残すのは、term inspector API の DI、起動配線、cleanup 時の dispose 呼び出し程度に留める。
+- sequence build、panel、term inspector の旧新ロジックを長く併存させない。
 
 ***
 
-## 実装ステップ
+## 検証観点
 
-| Step | 内容 | 目的 | 状態 |
-|---|---|---|---|
-| 12 | `subtitle-sync-controller.test.js` に primary / secondary 共通 selection API、track identity、requested language 判定の退行防止テストを追加する | 共通 selection コア固定 | ✅ 完了 |
-| 13 | `subtitle-sync-controller.test.js` に pending sync task cancel の退行防止テストを追加する | 古い async 結果の無効化固定 | ✅ 完了 |
-| 14 | `subtitle-sync-controller.test.js` に primary native fallback の成功・失敗・cancel テストを追加する | fallback 共通経路固定 | ✅ 完了 |
-| 15 | `secondary-track-recovery` 系を `lane-recovery-state` へ命名整理する | 実態と責務名を一致させる | ✅ 完了 |
-| 16 | `cue-controller.js` から cue sequence build 詳細を `modules/cue-sequence-builder.js` へ完全移譲する | `cue-controller.js` 薄化 | 🟠 次に着手 |
-| 17 | root 直下の panel 系既存ファイルを `modules/` へ統合し、`content.js` から subtitle panel / blocks の管理責務を外す | `content.js` 薄化 | ⬜ 未着手 |
-| 18 | `content.js` に残る in-player 単語詳細 UI を `term inspector` として切り出す | `content.js` 薄化 | ⬜ 未着手 |
+### 薄化フェーズの確認
 
-***
+- `cue-controller.js` が sequence build 詳細を持たず、builder 呼び出し中心になっている。
+- `content.js` が panel / term inspector の詳細実装を持たず、DI と起動配線中心になっている。
+- panel 系ファイルが `modules/` に統合され、owner ごとの責務が追いやすい。
+- term inspector の listener / observer / DOM 参照が owner 単位で破棄できる。
 
-## 確認結果メモ
+### 退行防止の確認
 
-### Step 12〜15 の扱い
+- primary / secondary selection API 共通化が壊れていない。
+- `buildSecondarySyncDecision()` と `resolveSecondaryWaitOutcome()` の責務が変わっていない。
+- direct bind / native fallback role 共通化が壊れていない。
+- binder 側の cleanup / mode restore 責務が controller へ逆流していない。
+- `lane-recovery-state` 名称の追従が維持されている。
 
-- Step 12〜14 の退行防止テストは完了済みとして扱う。
-- Step 15 の recovery state 命名整理は完了済みとして扱う。
-- 今後の docs / 差し替え案 / 会話内説明では、旧 `secondary-track-recovery.js` ではなく `lane-recovery-state` 系を正本名として記述する。
+### 実機で見るログ
 
-### 次にやること
-
-**次にやることは Step 16 の cue sequence build 完全移譲である。** `cue-controller.js` から `rebuildCurrentSceneSubtitleBlocks()` 周辺の詳細責務を外し、`modules/cue-sequence-builder.js` を統合先として具体案を作るところから始める。
-
-その次に、Step 17 として panel 系既存ファイルの `modules/` 統合と `content.js` の panel / blocks 薄化を進める。
-
-その後に、Step 18 として `content.js` から term inspector 関連の詳細責務を外し、`modules/term-inspector.js` を統合先とした具体案を作る。
-
-### 新規ファイル追加の扱い
-
-今回の薄化では、**新規モジュール追加を目的化しない**。  
-まず `modules/cue-sequence-builder.js` の拡張、panel 系既存ファイルの `modules/` 統合、`modules/panel-visibility-state.js` の再利用で解決できる責務を優先する。
-
-`modules/term-inspector.js` は、既存構成への統合で term inspector owner を明確にできない場合に限って追加する。
-
-### メモリーリーク対策との関係
-
-今回の対象は UI の見た目調整ではなく、**参照の正本と cleanup 経路を明確にする構造整理** である。  
-`content.js` や `cue-controller.js` に詳細 state・listener・observer・sequence 配列保持が残るほど、破棄漏れや責務誤認が起きやすく、長時間再生時のメモリ増加原因の切り分けが難しくなる。
-
-そのため、Step 16〜18 では次を重視する。
-
-- sequence build の owner を `cue-sequence-builder.js` に戻す。
-- panel / blocks の owner を panel 系 modules 側へ寄せる。
-- term inspector の listener / observer / DOM 参照を独立 owner に閉じ込める。
-- dispose 呼び出しだけで参照が切れる構造を優先する。
+- `restart begin` / `restart done`
+- `extensionEnabled:false`
+- OFF 時の restore before / restore after / apply done
+- large seek 直後の `secondary-track-unbind-skipped`
+- `hadCleanup` / `hadTrack`
+- panel / term inspector dispose の発火有無
 
 ***
 
-## 後続で扱う論点
+## 後続ワークストリーム
 
-### 今回の Step 16〜18 に含めないもの
+### F-8 / F-9: トグル ON/OFF 相関ログと完全リセット
 
-- トグル完全リセットの実装修正そのもの。
-- large seek 問題の実装修正そのもの。
-- Step 8（`content.js` 配線専用化の総点検）。
-- Step 9（dead code / debug 整理）。
-- Step 10（lifecycle 網羅確認）。
-- 長時間再生時のメモリ増加観測の総括。
+- `settings-runtime.js` に相関 ID を入れ、OFF と ON の一連ログを同一操作単位で追えるようにする。
+- 完全リセットでは `modules/subtitle-state-reset.js` と `modules/cue-track-binder.js` を中心に、listener / timer / Map参照 / originalMode / track binding を明示解除する。
 
-### 後続ワークストリーム
+### F-10: large seek 問題
 
-| ワークストリーム | 対象 | メモ |
-|---|---|---|
-| F-9 | トグル ON/OFF 相関ログ、完全リセット | 観測基盤と解放実装は別フェーズで扱う |
-| F-10 | large seek / `secondary-track-unbind-skipped` | track 参照消失条件の切り分けを優先 |
-| Step 8 | `content.js` 配線専用化の総点検 | Step 17〜18 完了後に全体見直し |
-| Step 9 | dead code / debug 整理 | 置換後の不要分岐・不要ログ整理 |
-| Step 10 | lifecycle 網羅確認 | cleanup 経路が落ち着いてから実施 |
-| M-1 | 長時間再生時メモリ増加観測 | 構造改善後に再観測 |
-| 別スコープ failure | `cue-track-binder` / `playback-session-cleanup` / `playback-startup-coordinator` / `panel-ui-toggle` | 今回の薄化フェーズとは混ぜない |
+- `secondary-track-unbind-skipped` が出る直前の state を追跡し、monitorState と boundTrack のどちらで参照が消えているかを切り分ける。
+- `dispose` / `unbind` / `rebind` 順序と cleanup 競合を確認する。
+
+### M-1: メモリ観測
+
+- Step 16〜18 後に、長時間再生で listener / observer / timer / DOM 参照の残留が減っているかを観測する。
+- メモリ観測は今回の薄化フェーズ完了条件には含めず、後続検証として扱う。
 
 ***
 
-## 直近の進め方
+## メモ
 
-1. `cue-controller.js` の sequence build 責務を棚卸しし、`modules/cue-sequence-builder.js` に寄せる差し替え案を作る。
-2. root 直下の panel 系既存ファイルを棚卸しし、`modules/` へ統合する差し替え案を作る。
-3. `content.js` の panel / blocks 責務を棚卸しし、panel 系 modules へ寄せる差し替え案を作る。
-4. `content.js` の term inspector 責務を棚卸しし、`modules/term-inspector.js` に寄せる差し替え案を作る。
-5. Step 16〜18 の差し替え後に、Step 8 / 9 / 10 と F-9 / F-10 の後続フェーズへ移る。
-
-この順なら、すでに固めた decision 統合と退行防止テストを土台にしつつ、`content.js` / `cue-controller.js` を安全に薄くしていける。
+- `dictionary popup` / `subtitle popup` という旧称は以後 `term inspector` へ寄せる。
+- panel 系は新規 `subtitle-panel.js` を安易に増やすより、既存 root ファイルの `modules/` 統合を優先する。
+- `cue-controller.js` と `content.js` は薄く保つ。詳細ロジックを戻さない。
+- 今回は docs と責務再配置の整理を主眼とし、7-17 / 7-16 / 7-19〜7-20 の本実装は同時にやらない。
