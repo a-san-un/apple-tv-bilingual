@@ -1915,8 +1915,8 @@ function forwardContentLog(...args) {
     root.createCueSequenceBuilder || null;
   const createCueRenderCoordinator =
     root.cueRenderCoordinator?.createCueRenderCoordinator || null;
-  const createSecondaryTrackRecovery =
-    root.secondaryTrackRecovery?.createSecondaryTrackRecovery || null;
+  const createLaneRecoveryState =
+    root.createLaneRecoveryState || null;
   const overlayController = createOverlayController({
     getOverlayRoot: () => state.overlayRoot,
     setOverlayRoot: (rootNode) => {
@@ -1968,8 +1968,8 @@ function forwardContentLog(...args) {
       })
     : null;
 
-  const secondaryTrackRecovery = createSecondaryTrackRecovery
-    ? createSecondaryTrackRecovery({
+  const laneRecoveryState = createLaneRecoveryState
+    ? createLaneRecoveryState({
         logContent,
         SECONDARY_RECOVERY_WINDOW_MS: 1000,
         SECONDARY_FORCE_REBIND_MISS_COUNT: 2,
@@ -1985,7 +1985,7 @@ function forwardContentLog(...args) {
     ? createSubtitleRecoveryManager({
         logContent,
         cooldownMs: 4000,
-        secondaryTrackRecovery,
+        laneRecoveryState,
       })
     : null;
 

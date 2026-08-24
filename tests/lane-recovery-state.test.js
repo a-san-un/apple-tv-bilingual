@@ -1,21 +1,52 @@
+// =============================================================
+// Apple TV+ Bilingual Subtitles - tests/lane-recovery-state.test.js
+// 役割:
+// - modules/lane-recovery-state.js の primary / secondary lane recovery
+//   判定ロジックを検証する。
+// - laneStates の初期化、missing 観測、recover / force-rebind / terminated
+//   への遷移、terminated からの retry reset を確認する。
+// =============================================================
+
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+// -------------------------------------------------------
+// module ロード
+// -------------------------------------------------------
+
+/**
+ * lane-recovery-state.js を動的 import し、
+ * window.ATVB.createLaneRecoveryState を取得する。
+ */
 async function loadFactory() {
   global.window = global.window || {};
   global.window.ATVB = {};
 
   const moduleUrl = new URL(
-    "../modules/secondary-track-recovery.js",
+    "../modules/lane-recovery-state.js",
     import.meta.url,
   );
 
   await import(`${moduleUrl.href}?t=${Date.now()}-${Math.random()}`);
 
-  return global.window?.ATVB?.secondaryTrackRecovery
-    ?.createSecondaryTrackRecovery;
+  return global.window?.ATVB?.createLaneRecoveryState;
 }
 
-function missingInput(now) {
+// -------------------------------------------------------
+// テスト用入力ヘルパー
+// -------------------------------------------------------
+
+/**
+ * secondary track が見つかっているが cue が来ない missing 状態の入力を作る。
+ * 必要に応じて recovery / force-rebind フラグを上書きできる。
+ */
+function missingInput(
+  now,
+  {
+    shouldRecoverSecondary = false,
+    shouldForceSecondaryRebind = false,
+    primaryHealthy = true,
+  } = {},
+) {
   return {
     now,
     runtime: {
@@ -27,11 +58,16 @@ function missingInput(now) {
     },
     sequence: [],
     derived: {
-      primaryHealthy: true,
+      primaryHealthy,
+      shouldRecoverSecondary,
+      shouldForceSecondaryRebind,
     },
   };
 }
 
+/**
+ * secondary track の cue が戻った recovered 状態の入力を作る。
+ */
 function recoveredInput(now) {
   return {
     now,
@@ -45,11 +81,13 @@ function recoveredInput(now) {
     sequence: [],
     derived: {
       primaryHealthy: true,
+      shouldRecoverSecondary: false,
+      shouldForceSecondaryRebind: false,
     },
   };
 }
 
-describe("secondary-track-recovery", () => {
+describe("lane-recovery-state", () => {
   let originalWindow;
 
   beforeEach(() => {
@@ -61,15 +99,19 @@ describe("secondary-track-recovery", () => {
     vi.restoreAllMocks();
   });
 
-  test("exposes createSecondaryTrackRecovery on window.ATVB.secondaryTrackRecovery", async () => {
-    const createSecondaryTrackRecovery = await loadFactory();
+  // -------------------------------------------------------
+  // 公開 API の確認
+  // -------------------------------------------------------
 
-    expect(typeof createSecondaryTrackRecovery).toBe("function");
+  test("exposes createLaneRecoveryState on window.ATVB", async () => {
+    const createLaneRecoveryState = await loadFactory();
+
+    expect(typeof createLaneRecoveryState).toBe("function");
   });
 
   test("initializes primary and secondary laneStates with the existing lane state shape", async () => {
-    const createSecondaryTrackRecovery = await loadFactory();
-    const recovery = createSecondaryTrackRecovery();
+    const createLaneRecoveryState = await loadFactory();
+    const recovery = createLaneRecoveryState();
 
     expect(recovery.laneStates).toEqual({
       primary: {
@@ -98,8 +140,8 @@ describe("secondary-track-recovery", () => {
   });
 
   test("createLaneState creates an independent lane state", async () => {
-    const createSecondaryTrackRecovery = await loadFactory();
-    const recovery = createSecondaryTrackRecovery();
+    const createLaneRecoveryState = await loadFactory();
+    const recovery = createLaneRecoveryState();
 
     const laneState = recovery.createLaneState("custom");
 
@@ -118,9 +160,13 @@ describe("secondary-track-recovery", () => {
     expect(laneState).not.toBe(recovery.laneStates.secondary);
   });
 
+  // -------------------------------------------------------
+  // updateLaneState の挙動確認
+  // -------------------------------------------------------
+
   test("updateLaneState records a missing duration and resets recovery fields when healthy", async () => {
-    const createSecondaryTrackRecovery = await loadFactory();
-    const recovery = createSecondaryTrackRecovery();
+    const createLaneRecoveryState = await loadFactory();
+    const recovery = createLaneRecoveryState();
     const laneState = recovery.laneStates.secondary;
 
     recovery.updateLaneState(laneState, {
@@ -164,9 +210,13 @@ describe("secondary-track-recovery", () => {
     });
   });
 
+  // -------------------------------------------------------
+  // evaluateSecondaryRecovery の遷移確認
+  // -------------------------------------------------------
+
   test("waits until the recovery window has elapsed before requesting recovery", async () => {
-    const createSecondaryTrackRecovery = await loadFactory();
-    const recovery = createSecondaryTrackRecovery();
+    const createLaneRecoveryState = await loadFactory();
+    const recovery = createLaneRecoveryState();
 
     const first = recovery.evaluateSecondaryRecovery(missingInput(100));
     const waiting = recovery.evaluateSecondaryRecovery(missingInput(1099));
@@ -189,16 +239,39 @@ describe("secondary-track-recovery", () => {
     });
   });
 
-  test("requests recovery after the recovery window has elapsed", async () => {
-    const createSecondaryTrackRecovery = await loadFactory();
-    const recovery = createSecondaryTrackRecovery();
+  test("returns observation-only until shouldRecoverSecondary becomes true after the recovery window", async () => {
+    const createLaneRecoveryState = await loadFactory();
+    const recovery = createLaneRecoveryState();
 
     recovery.evaluateSecondaryRecovery(missingInput(100));
     const decision = recovery.evaluateSecondaryRecovery(missingInput(1100));
 
     expect(decision).toMatchObject({
+      action: "idle",
+      reason: "secondary_missing_observation_only",
+    });
+    expect(recovery.laneStates.secondary).toMatchObject({
+      missCount: 0,
+      terminated: false,
+      lastDecision: "idle",
+      lastDecisionAt: 1100,
+    });
+  });
+
+  test("requests recovery after the recovery window when shouldRecoverSecondary is enabled", async () => {
+    const createLaneRecoveryState = await loadFactory();
+    const recovery = createLaneRecoveryState();
+
+    recovery.evaluateSecondaryRecovery(missingInput(100));
+    const decision = recovery.evaluateSecondaryRecovery(
+      missingInput(1100, {
+        shouldRecoverSecondary: true,
+      }),
+    );
+
+    expect(decision).toMatchObject({
       action: "recover",
-      reason: "secondary_current_missing_with_primary_present",
+      reason: "secondary_recovery_continued_failure",
     });
     expect(recovery.laneStates.secondary).toMatchObject({
       missCount: 1,
@@ -208,14 +281,23 @@ describe("secondary-track-recovery", () => {
     });
   });
 
-  test("uses force-rebind after the repeated-miss threshold", async () => {
-    const createSecondaryTrackRecovery = await loadFactory();
-    const recovery = createSecondaryTrackRecovery();
+  test("uses force-rebind after the repeated-miss threshold when force-rebind is enabled", async () => {
+    const createLaneRecoveryState = await loadFactory();
+    const recovery = createLaneRecoveryState();
 
     recovery.evaluateSecondaryRecovery(missingInput(100));
-    recovery.evaluateSecondaryRecovery(missingInput(1100));
+    recovery.evaluateSecondaryRecovery(
+      missingInput(1100, {
+        shouldRecoverSecondary: true,
+      }),
+    );
 
-    const decision = recovery.evaluateSecondaryRecovery(missingInput(1300));
+    const decision = recovery.evaluateSecondaryRecovery(
+      missingInput(1300, {
+        shouldRecoverSecondary: true,
+        shouldForceSecondaryRebind: true,
+      }),
+    );
 
     expect(decision).toMatchObject({
       action: "force-rebind",
@@ -230,13 +312,21 @@ describe("secondary-track-recovery", () => {
   });
 
   test("debounces a repeated recovery decision within 200 ms without incrementing missCount", async () => {
-    const createSecondaryTrackRecovery = await loadFactory();
-    const recovery = createSecondaryTrackRecovery();
+    const createLaneRecoveryState = await loadFactory();
+    const recovery = createLaneRecoveryState();
 
     recovery.evaluateSecondaryRecovery(missingInput(100));
-    recovery.evaluateSecondaryRecovery(missingInput(1100));
+    recovery.evaluateSecondaryRecovery(
+      missingInput(1100, {
+        shouldRecoverSecondary: true,
+      }),
+    );
 
-    const decision = recovery.evaluateSecondaryRecovery(missingInput(1200));
+    const decision = recovery.evaluateSecondaryRecovery(
+      missingInput(1200, {
+        shouldRecoverSecondary: true,
+      }),
+    );
 
     expect(decision).toMatchObject({
       action: "idle",
@@ -249,20 +339,32 @@ describe("secondary-track-recovery", () => {
     });
   });
 
-  test("enters terminated after the recovery miss limit", async () => {
-    const createSecondaryTrackRecovery = await loadFactory();
-    const recovery = createSecondaryTrackRecovery({
+  // -------------------------------------------------------
+  // terminated / retry reset の確認
+  // -------------------------------------------------------
+
+  test("enters terminated after the recovery miss limit when force-rebind is not enabled", async () => {
+    const createLaneRecoveryState = await loadFactory();
+    const recovery = createLaneRecoveryState({
       SECONDARY_RECOVERY_MISS_LIMIT: 2,
       SECONDARY_RECOVERY_DEBOUNCE_MS: 0,
     });
 
     recovery.evaluateSecondaryRecovery(missingInput(100));
-    const first = recovery.evaluateSecondaryRecovery(missingInput(1100));
-    const terminated = recovery.evaluateSecondaryRecovery(missingInput(1300));
+    const first = recovery.evaluateSecondaryRecovery(
+      missingInput(1100, {
+        shouldRecoverSecondary: true,
+      }),
+    );
+    const terminated = recovery.evaluateSecondaryRecovery(
+      missingInput(1300, {
+        shouldRecoverSecondary: true,
+      }),
+    );
 
     expect(first).toMatchObject({
       action: "recover",
-      reason: "secondary_current_missing_with_primary_present",
+      reason: "secondary_recovery_continued_failure",
     });
     expect(terminated).toMatchObject({
       action: "terminated",
@@ -277,18 +379,26 @@ describe("secondary-track-recovery", () => {
   });
 
   test("resets a terminated lane after the terminated retry window", async () => {
-    const createSecondaryTrackRecovery = await loadFactory();
-    const recovery = createSecondaryTrackRecovery({
+    const createLaneRecoveryState = await loadFactory();
+    const recovery = createLaneRecoveryState({
       SECONDARY_RECOVERY_MISS_LIMIT: 1,
       SECONDARY_TERMINATED_RETRY_MS: 10_000,
     });
 
     recovery.evaluateSecondaryRecovery(missingInput(100));
-    recovery.evaluateSecondaryRecovery(missingInput(1100));
+    recovery.evaluateSecondaryRecovery(
+      missingInput(1100, {
+        shouldRecoverSecondary: true,
+      }),
+    );
 
     expect(recovery.laneStates.secondary.terminated).toBe(true);
 
-    const retry = recovery.evaluateSecondaryRecovery(missingInput(11_100));
+    const retry = recovery.evaluateSecondaryRecovery(
+      missingInput(11_100, {
+        shouldRecoverSecondary: true,
+      }),
+    );
 
     expect(retry).toMatchObject({
       action: "idle",
@@ -305,12 +415,20 @@ describe("secondary-track-recovery", () => {
     });
   });
 
+  // -------------------------------------------------------
+  // 回復・手動リセットの確認
+  // -------------------------------------------------------
+
   test("resets the secondary lane when subtitle cues recover", async () => {
-    const createSecondaryTrackRecovery = await loadFactory();
-    const recovery = createSecondaryTrackRecovery();
+    const createLaneRecoveryState = await loadFactory();
+    const recovery = createLaneRecoveryState();
 
     recovery.evaluateSecondaryRecovery(missingInput(100));
-    recovery.evaluateSecondaryRecovery(missingInput(1100));
+    recovery.evaluateSecondaryRecovery(
+      missingInput(1100, {
+        shouldRecoverSecondary: true,
+      }),
+    );
 
     const decision = recovery.evaluateSecondaryRecovery(recoveredInput(1200));
 
@@ -331,9 +449,9 @@ describe("secondary-track-recovery", () => {
   });
 
   test("resetSecondaryRecoveryLane resets state and emits the existing reset log payload", async () => {
-    const createSecondaryTrackRecovery = await loadFactory();
+    const createLaneRecoveryState = await loadFactory();
     const logContent = vi.fn();
-    const recovery = createSecondaryTrackRecovery({ logContent });
+    const recovery = createLaneRecoveryState({ logContent });
 
     const laneState = recovery.laneStates.secondary;
     Object.assign(laneState, {

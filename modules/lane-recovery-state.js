@@ -1,17 +1,20 @@
 // =============================================================
-// Apple TV+ Bilingual Subtitles - modules/secondary-track-recovery.js
+// Apple TV+ Bilingual Subtitles - modules/lane-recovery-state.js
 // 役割:
-// - secondary lane の recovery 判定ロジックをモジュールへ分離する。
+// - primary / secondary 両 lane の recovery 判定ロジックをモジュールへ分離する。
 // - laneStates / createLaneState / resetLaneState / updateLaneState /
 //   evaluateSecondaryRecovery を公開する。
 // - runtime missing を観測し、recover / force-rebind / terminated の
 //   判定を継続失敗ベースで行う。
+// - 旧ファイル名は secondary-track-recovery.js だったが、
+//   primary lane の観測も保持している実態に合わせて改名した。
 // =============================================================
 
 (() => {
   const root = (window.ATVB = window.ATVB || {});
 
   /**
+   * primary / secondary 両 lane の recovery 判定状態を保持するインスタンスを生成する。
    * @param {{
    *   logContent?: Function,
    *   SECONDARY_RECOVERY_WINDOW_MS?: number,
@@ -21,7 +24,7 @@
    *   SECONDARY_RECOVERY_DEBOUNCE_MS?: number,
    * }} deps
    */
-  function createSecondaryTrackRecovery(deps = {}) {
+  function createLaneRecoveryState(deps = {}) {
     const {
       logContent,
       SECONDARY_RECOVERY_WINDOW_MS = 1000,
@@ -30,6 +33,10 @@
       SECONDARY_TERMINATED_RETRY_MS = 10_000,
       SECONDARY_RECOVERY_DEBOUNCE_MS = 200,
     } = deps;
+
+    // -------------------------------------------------------
+    // lane state 初期化
+    // -------------------------------------------------------
 
     /**
      * lane ごとの recovery 観測状態を初期化して返す。
@@ -49,10 +56,15 @@
       };
     }
 
+    // primary / secondary の lane state を module 内で正本として保持する。
     const laneStates = {
       primary: createLaneState("primary"),
       secondary: createLaneState("secondary"),
     };
+
+    // -------------------------------------------------------
+    // lane state リセット
+    // -------------------------------------------------------
 
     /**
      * 1 つの laneState を初期化する。
@@ -99,6 +111,10 @@
       return laneStates.secondary;
     }
 
+    // -------------------------------------------------------
+    // lane state 更新
+    // -------------------------------------------------------
+
     /**
      * lane の health / missing 状態を更新する。
      * missing 中は開始時刻と継続時間を伸ばし、非 missing へ戻ったら観測状態をクリアする。
@@ -123,6 +139,10 @@
       laneState.missingDurationMs = Math.max(0, now - laneState.missingSince);
       return laneState;
     }
+
+    // -------------------------------------------------------
+    // 汎用 lane recovery 判定（補助）
+    // -------------------------------------------------------
 
     /**
      * 汎用 lane recovery 判定。
@@ -260,6 +280,10 @@
 
       return result;
     }
+
+    // -------------------------------------------------------
+    // secondary lane 本体判定
+    // -------------------------------------------------------
 
     /**
      * secondary lane の runtime missing を観測し、
@@ -426,6 +450,10 @@
       };
     }
 
+    // -------------------------------------------------------
+    // 破棄
+    // -------------------------------------------------------
+
     /**
      * module 全体の lane state を初期化する。
      * dispose 時や作り直し前の後始末で使う。
@@ -434,6 +462,10 @@
       resetLaneState(laneStates.primary);
       resetLaneState(laneStates.secondary);
     }
+
+    // -------------------------------------------------------
+    // エクスポート
+    // -------------------------------------------------------
 
     return {
       laneStates,
@@ -447,5 +479,5 @@
     };
   }
 
-  root.createSecondaryTrackRecovery = createSecondaryTrackRecovery;
+  root.createLaneRecoveryState = createLaneRecoveryState;
 })();

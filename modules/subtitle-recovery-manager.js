@@ -3,7 +3,7 @@
 // 役割:
 // - subtitle health snapshot を受け取り、復旧アクションを決定する。
 // - both-missing recovery の判定と cooldown を担当する。
-// - secondary recovery 判定は secondary-track-recovery.js へ委譲する。
+// - secondary recovery 判定は lane-recovery-state.js へ委譲する。
 // - DOM / TextTrack を保持せず、軽量な内部状態だけを持つ。
 // =============================================================
 
@@ -13,10 +13,11 @@
   const root = (window.ATVB = window.ATVB || {});
 
   /**
+   * subtitle health snapshot から復旧アクションを決定するインスタンスを生成する。
    * @param {{
    *   logContent?: Function,
    *   cooldownMs?: number,
-   *   secondaryTrackRecovery?: {
+   *   laneRecoveryState?: {
    *     evaluateSecondaryRecovery?: Function,
    *     resetSecondaryRecoveryLane?: Function,
    *     destroy?: Function,
@@ -28,10 +29,14 @@
     const {
       logContent,
       cooldownMs = 4000,
-      secondaryTrackRecovery = null,
+      laneRecoveryState = null,
     } = deps;
 
     let lastBothMissingRecoveryAttemptAt = 0;
+
+    // -------------------------------------------------------
+    // リセット
+    // -------------------------------------------------------
 
     /**
      * manager 内部状態を初期化する。
@@ -53,18 +58,26 @@
       });
     }
 
+    // -------------------------------------------------------
+    // 破棄
+    // -------------------------------------------------------
+
     /**
      * manager の後始末を行う。
-     * both-missing 状態をリセットし、secondary recovery module 側の
+     * both-missing 状態をリセットし、lane-recovery-state.js 側の
      * lane state もあわせて破棄する。
      */
     function dispose() {
       reset("dispose");
-      secondaryTrackRecovery?.resetSecondaryRecoveryLane?.(
+      laneRecoveryState?.resetSecondaryRecoveryLane?.(
         "subtitle_recovery_manager_dispose",
       );
-      secondaryTrackRecovery?.destroy?.();
+      laneRecoveryState?.destroy?.();
     }
+
+    // -------------------------------------------------------
+    // both-missing recovery 判定
+    // -------------------------------------------------------
 
     /**
      * primary / secondary の両方に live signal が見えないときだけ
@@ -124,8 +137,12 @@
       };
     }
 
+    // -------------------------------------------------------
+    // secondary recovery 判定への委譲
+    // -------------------------------------------------------
+
     /**
-     * secondary recovery 判定は secondary-track-recovery.js へ委譲する。
+     * secondary recovery 判定は lane-recovery-state.js へ委譲する。
      * manager 側では derived の recovery フラグを boolean に正規化して渡すだけに留める。
      */
     function evaluateSecondaryRecovery({
@@ -135,7 +152,7 @@
       sequence,
       derived,
     } = {}) {
-      if (!secondaryTrackRecovery?.evaluateSecondaryRecovery) {
+      if (!laneRecoveryState?.evaluateSecondaryRecovery) {
         return {
           primaryLane: null,
           secondaryLane: null,
@@ -151,7 +168,7 @@
           derived?.shouldForceSecondaryRebind === true,
       };
 
-      return secondaryTrackRecovery.evaluateSecondaryRecovery({
+      return laneRecoveryState.evaluateSecondaryRecovery({
         now,
         runtime,
         currentCue,
@@ -160,16 +177,24 @@
       });
     }
 
+    // -------------------------------------------------------
+    // secondary lane リセット
+    // -------------------------------------------------------
+
     /**
      * secondary lane の recovery 観測状態だけを明示的に初期化する。
      * track 切替や pipeline 再作成後の cleanup で使う。
      */
     function resetSecondaryRecovery(reason = "manual-reset") {
-      return secondaryTrackRecovery?.resetSecondaryRecoveryLane?.(reason) ?? null;
+      return laneRecoveryState?.resetSecondaryRecoveryLane?.(reason) ?? null;
     }
 
+    // -------------------------------------------------------
+    // lane state snapshot 取得
+    // -------------------------------------------------------
+
     /**
-     * secondary-track-recovery.js が保持している laneStates を
+     * lane-recovery-state.js が保持している laneStates を
      * 外部参照しやすい軽量 snapshot に整形して返す。
      *
      * 現在の laneStates shape は
@@ -178,7 +203,7 @@
      * missCount / terminated / lastDecision / lastDecisionAt を持つ。
      */
     function getLaneStates() {
-      const laneStates = secondaryTrackRecovery?.laneStates;
+      const laneStates = laneRecoveryState?.laneStates;
       if (!laneStates) return null;
 
       const toLaneSnapshot = (laneState) => {
@@ -203,6 +228,10 @@
       };
     }
 
+    // -------------------------------------------------------
+    // cooldown 解除
+    // -------------------------------------------------------
+
     /**
      * recovery 成功時に both-missing cooldown 状態を解除する。
      * 次回の both-missing 判定を即時に再開できるようにする。
@@ -216,6 +245,9 @@
       });
     }
 
+    // —————————————————––
+    // エクスポート
+    // —————————————————––
     return {
       evaluateBothMissingRecovery,
       evaluateSecondaryRecovery,
