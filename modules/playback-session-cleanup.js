@@ -34,8 +34,7 @@
       clearInitialCueRecovery,
       renderSecondarySubtitle,
       overlayController,
-      destroyOverlay,
-      destroyUiHosts,
+      disposePanelUi,
       applyLayout,
       clearInternalSubtitleState,
       cueController,
@@ -188,8 +187,7 @@
       clearInitialCueRecovery?.();
       clearSecondaryTrackState();
       overlayController?.clearOverlayState?.();
-      destroyOverlay?.();
-      destroyUiHosts?.();
+      disposePanelUi?.({ reason });
 
       runtimeObservers?.stopAll?.();
 
@@ -356,8 +354,7 @@
         subtitleRecoveryManager?.dispose?.();
 
         overlayController?.clearOverlayState?.();
-        destroyOverlay?.();
-        destroyUiHosts?.();
+        disposePanelUi?.({ reason: "content_switch" });
 
         runtimeObservers?.stopAll?.();
 
@@ -401,11 +398,11 @@
         restoreMode: true,
         reason,
       });
+      cueController?.destroy?.();
       subtitleRecoveryManager?.dispose?.();
 
       overlayController?.clearOverlayState?.();
-      destroyOverlay?.();
-      destroyUiHosts?.();
+      disposePanelUi?.({ reason });
 
       runtimeObservers?.stopAll?.();
 

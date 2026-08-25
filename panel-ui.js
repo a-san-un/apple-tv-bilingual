@@ -1,35 +1,69 @@
 // =============================================================
 // Apple TV Bilingual Subtitles - panel-ui.js
+//
 // 役割:
 // - 右側字幕パネルの UI ホストを作る
 // - 字幕パネル開閉ボタンを作る
 // - ネイティブトグルを再生画面へ差し込む
 // - パネル表示とボタン見た目を分けて扱う
+//
+// 位置づけ:
+// - `content.js` から panel build の「順序知識」を引き受ける owner。
+// - `mountForPlayback()` が再生画面用 panel UI 一式の唯一の入口となり、
+//   `createToggleButton()` / `createRightPanel()` / `watchForPlayerTabs()` /
+//   popup host / debug panel の呼び出し順序をこのファイル内に閉じ込める。
+// - `setPanelOpen()` は表示切り替えの外部向け窓口として `applyPanelVisibility()`
+//   をラップする。呼び出し元（content.js）が内部関数名を直接知らなくてよい形にする。
+// - visibility の永続化正本は `modules/panel-visibility-state.js`側にあり、
+//   このファイルは DOM 表示切り替えと button 見た目の owner に留める。
 // =============================================================
 
 (function () {
   "use strict";
 
-  // panel-ui の公開 API 一式を組み立てる
+  /**
+   * panel-ui の公開 API 一式を組み立てる。
+   *
+   * @param {object} deps - 依存注入オブジェクト。
+   * @param {object} deps.state - content.js 側で保持する共有 state。
+   * @param {() => Element} deps.getTarget - panel / toggle button を差し込む対象ノードを返す関数。
+   * @param {(panelOpen: boolean) => void} deps.applyLayout - panelOpen に応じてレイアウトを適用する関数。
+   * @param {(...args: any[]) => void} deps.logContent - content ログを記録する関数。
+   * @param {() => void} deps.renderCurrentSnapshot - 現在字幕の snapshot 描画を行う関数。
+   * @param {() => void} deps.renderPanel - 履歴パネル全体の再描画を行う関数。
+   * @param {(reason: string) => void} deps.rebuildSubtitleBlocksForPanelOpen - panel open 時の字幕ブロック再構築関数。
+   * @param {() => void} deps.destroyOverlay - overlay UI を破棄する関数。
+   * @param {() => void} [deps.mountPopupHost] - popup host（単語ポップアップ等）を mount する関数。
+   * @param {() => void} [deps.mountDebugPanel] - debug panel を mount する関数。
+   * @param {object} [deps.overlayController] - overlay 位置同期などを行うコントローラ。
+   * @returns {object} panel-ui の公開 API。
+   */
   function createPanelUi(deps) {
     const {
       state,
       getTarget,
-      getLiveDebugLogFilter,
-      getDebugLogText,
-      clearDebugLogs,
-      sendToBackground,
       applyLayout,
       logContent,
       renderCurrentSnapshot,
       renderPanel,
       rebuildSubtitleBlocksForPanelOpen,
       destroyOverlay,
+      mountPopupHost,
+      mountDebugPanel,
     } = deps;
 
     const PANEL_SLOT_LAYER_STYLE_ID = "atv-panel-slot-layer-style";
 
-    // パネル配置用の style 要素を 1 回だけ入れる
+    // -----------------------------------------------------------
+    // Section: panel slot style
+    // -----------------------------------------------------------
+
+    /**
+     * パネル配置用の style 要素を 1 回だけ head へ追加する。
+     * 既に存在する場合は何もしない（冪等）。
+     *
+     * @returns {void}
+     */
     function ensurePanelSlotLayerStyle() {
       if (document.getElementById(PANEL_SLOT_LAYER_STYLE_ID)) return;
 
@@ -40,61 +74,28 @@
       document.head.appendChild(style);
     }
 
-    // デバッグ領域の HTML を返す
-    function buildPanelDebugShellHTML() {
-      return `
-        <div id="debug-section" class="debug-section">
-          <div class="debug-section__header">
-            <span class="debug-section__title">デバッグログ（開発者向け）</span>
-            <button
-              id="debugSectionToggle"
-              class="debug-toggle-button"
-              type="button"
-              aria-expanded="false"
-              aria-controls="debugSectionBody"
-            >▶</button>
-          </div>
-          <div id="debugSectionBody" class="debug-section__body" hidden>
-            <div class="debug-filters">
-              <label class="debug-filter">
-                <span class="debug-filter__label">source</span>
-                <select id="debugFilterSource" class="debug-filter__control">
-                  <option value="">all</option>
-                  <option value="content">content</option>
-                </select>
-              </label>
-              <label class="debug-filter">
-                <span class="debug-filter__label">category</span>
-                <select id="debugFilterCategory" class="debug-filter__control">
-                  <option value="">all</option>
-                  <option value="subtitle">subtitle</option>
-                </select>
-              </label>
-              <label class="debug-filter debug-filter--text">
-                <span class="debug-filter__label">text</span>
-                <input
-                  id="debugFilterText"
-                  class="debug-filter__control"
-                  type="text"
-                  placeholder="cuechange / overlay / current subtitle block"
-                />
-              </label>
-            </div>
-            <div class="debug-toolbar">
-              <button id="debugCopyBtn" class="debug-btn" type="button">Copy</button>
-              <button id="debugDownloadBtn" class="debug-btn" type="button">Download</button>
-              <button id="debugClearBtn" class="debug-btn" type="button">Clear</button>
-            </div>
-            <textarea id="debug-log" readonly></textarea>
-          </div>
-        </div>
-      `;
-    }
+    // -----------------------------------------------------------
+    // Section: panel shell HTML builders
+    // -----------------------------------------------------------
 
-    // パネル本体の HTML を返す
+    // debug panel shell は shared builder（debug-panel-shell.js）から取得する。
+
+    /**
+     * パネル本体（header・debug shell・字幕リスト領域）の HTML を返す。
+     * ShadowRoot 内に挿入するため、panel.css へのリンクを合わせて出力する。
+     *
+     * @returns {string} panel 本体の HTML 文字列。
+     */
     function buildPanelShellHTML() {
       // ShadowRoot 内で panel.css を読むための URL を解決する
       const panelCssUrl = chrome.runtime.getURL("panel.css");
+      const debugShellHtml =
+        window.ATVB?.debugPanelShell?.buildDebugPanelShellHTML?.({
+          variant: "panel",
+          sourceOptions: ["content"],
+          categoryOptions: ["subtitle"],
+          placeholder: "cuechange / overlay / current subtitle block",
+        }) ?? "";
 
       return `
         <link rel="stylesheet" href="${panelCssUrl}">
@@ -105,7 +106,7 @@
               <button id="settings-btn" type="button" title="設定">⚙️</button>
             </div>
           </div>
-          ${buildPanelDebugShellHTML()}
+          ${debugShellHtml}
           <div id="panel-scroll">
             <div id="subtitle-list"></div>
           </div>
@@ -113,7 +114,12 @@
       `;
     }
 
-    // ヘッダーの設定ボタンにイベントを付ける
+    /**
+     * パネルヘッダー内のボタン（設定ボタン等）へイベントを配線する。
+     * `state.panelShadowRoot` が未生成の場合は何もしない。
+     *
+     * @returns {void}
+     */
     function wirePanelHeaderActions() {
       // panel host の ShadowRoot を参照する
       const root = state.panelShadowRoot;
@@ -127,7 +133,16 @@
       });
     }
 
-    // 右側字幕パネルの host を作る
+    // -----------------------------------------------------------
+    // Section: panel host lifecycle (create / debug mount)
+    // -----------------------------------------------------------
+
+    /**
+     * 右側字幕パネルの host（ShadowRoot を持つ div）を作る。
+     * 既存 host があればそれを再利用し、ShadowRoot 参照を state に同期する。
+     *
+     * @returns {Element|null} 作成または再利用した panel host 要素。target が無ければ null。
+     */
     function createRightPanel() {
       // パネルを差し込む対象ノードを取る
       const target = getTarget?.();
@@ -164,38 +179,15 @@
       return host;
     }
 
-    // debug panel を初回だけ mount する
-    function createDebugPanel() {
-      if (!state.panelShadowRoot) return;
+    // -----------------------------------------------------------
+    // Section: UI element lookup / destroy
+    // -----------------------------------------------------------
 
-      // debug panel の mount 先を panel shadow root に合わせる
-      state.debugPanelRoot = state.panelShadowRoot;
-
-      // debug panel モジュール本体を取る
-      const debugPanel = window.ATVB?.debugPanel;
-      if (!debugPanel?.mount) return;
-
-      // 必要な getter / action を渡して mount する
-      debugPanel.mount(state.debugPanelRoot, {
-        getFilter: getLiveDebugLogFilter,
-        getLogText: getDebugLogText,
-        clearLogs: clearDebugLogs,
-        downloadLogs: (text, done) => {
-          // ダウンロード処理は background に委譲する
-          sendToBackground({ type: "DOWNLOAD_DEBUG_LOG", text }, (res) => {
-            if (typeof done === "function") {
-              done({
-                ok: !!res?.ok,
-                downloadId: res?.downloadId ?? null,
-                error: res?.error ?? "unknown",
-              });
-            }
-          });
-        },
-      });
-    }
-
-    // 主要 UI 要素をまとめて返す
+    /**
+     * 主要 UI 要素（panel host / overlay host / toggle button）をまとめて返す。
+     *
+     * @returns {{panelHost: Element|null, overlayHost: Element|null, toggleBtn: Element|null}}
+     */
     function getPanelUiElements() {
       // target 配下の UI 要素を一か所で集める
       const target = getTarget();
@@ -207,7 +199,12 @@
       };
     }
 
-    // 指定 id の UI host を消す
+    /**
+     * 指定 id の UI host を DOM から削除する。
+     *
+     * @param {string} id - 削除対象要素の id（# は不要）。
+     * @returns {void}
+     */
     function removeHost(id) {
       // panel host / toggle button ともに target 配下を見る
       const root = getTarget();
@@ -215,58 +212,76 @@
       if (el) el.remove();
     }
 
-    // パネル系 UI をまとめて破棄する
-    function destroyFeatureUiHosts() {
+    /**
+     * panel owner が保持する UI host / observer / overlay 参照を冪等に破棄する。
+     * restart / extension disabled / playback close のいずれから呼ばれても壊れない。
+     *
+     * 注意:
+     * - popup / debug host の実装 owner は Step 18 まで content.js 側に残る。
+     * - ただし teardown 契約上の破棄責務は panel-ui.dispose() が持つ。
+     *
+     * @param {object} [options]
+     * @param {string} [options.reason="unknown"] - ログ用の破棄理由。
+     * @returns {void}
+     */
+    function dispose({ reason = "unknown" } = {}) {
+      logContent?.("panelUi.dispose begin", {
+        reason,
+        hasPanelShadowRoot: Boolean(state.panelShadowRoot),
+        hasPopupShadowRoot: Boolean(state.popupShadowRoot),
+        hasDebugPanelRoot: Boolean(state.debugPanelRoot),
+        hasPanelTabsObserver: Boolean(state.panelTabsObserver),
+      });
+
       // debug panel があれば先に unmount する
-      window.ATVB?.debugPanel?.unmount?.();
+      window.ATVB?.debugPanelRuntime?.unmount?.(state.debugPanelRoot);
+
+      // panel tabs observer があれば先に止める
+      state.panelTabsObserver?.disconnect?.();
+      state.panelTabsObserver = null;
 
       // 再生画面に影響する UI host を個別に消す
       removeHost("atv-panel-host");
       removeHost("atv-popup-host");
       removeHost("atv-toggle-btn");
 
-      // ★ F-2 fix: closest("li") が null のときも要素単体で確実に除去する
       const nativeToggleEl = document.getElementById("atvb-native-toggle");
       if (nativeToggleEl) {
         const liWrapper = nativeToggleEl.closest("li");
         if (liWrapper) {
-          liWrapper.remove();          // wrapper の <li> ごと消す（通常ケース）
+          liWrapper.remove();
         } else {
-          nativeToggleEl.remove();     // li が見つからなければ要素単体で消す（フォールバック）
+          nativeToggleEl.remove();
         }
       }
 
-      // overlay も破棄する
       destroyOverlay?.();
 
-      // 参照していた root を null に戻す
       state.panelShadowRoot = null;
       state.popupShadowRoot = null;
       state.debugPanelRoot = null;
+
+      logContent?.("panelUi.dispose done", {
+        reason,
+        hasPanelShadowRoot: Boolean(state.panelShadowRoot),
+        hasPopupShadowRoot: Boolean(state.popupShadowRoot),
+        hasDebugPanelRoot: Boolean(state.debugPanelRoot),
+        hasPanelTabsObserver: Boolean(state.panelTabsObserver),
+      });
     }
 
-    // restart 用に UI host をまとめて破棄する
-    function destroyUiHosts() {
-      if (false) {
-        logContent?.("字幕パネル開閉ボタン/右側字幕パネル destroyUiHosts start", {
-          hasSubtitlePanelToggleButton: Boolean(getTarget?.().querySelector("#atv-toggle-btn")),
-          hasPanelHost: Boolean(getTarget?.().querySelector("#atv-panel-host")),
-          panelOpen: state.panelOpen,
-        });
-      }
+    // -----------------------------------------------------------
+    // Section: visibility control
+    // -----------------------------------------------------------
 
-      destroyFeatureUiHosts();
-
-      if (false) {
-        logContent?.("字幕パネル開閉ボタン/右側字幕パネル destroyUiHosts done", {
-          hasSubtitlePanelToggleButton: Boolean(getTarget?.().querySelector("#atv-toggle-btn")),
-          hasPanelHost: Boolean(getTarget?.().querySelector("#atv-panel-host")),
-          panelOpen: state.panelOpen,
-        });
-      }
-    }
-
-    // 右側字幕パネルと overlay の表示だけを切り替える
+    /**
+     * 右側字幕パネルと overlay の表示・非表示だけを切り替える。
+     * DOM の表示切り替え後、次のフレームで overlay 位置と toggle button を
+     * 再計算する（panelWidthPx のズレを防ぐため rAF 内で実行する）。
+     *
+     * @param {boolean} show - true でパネルを表示、false で非表示にする。
+     * @returns {void}
+     */
     function applyPanelVisibility(show) {
       logContent?.("右側字幕パネル applyPanelVisibility start", {
         requestedOpen: show,
@@ -301,7 +316,13 @@
       });
     }
 
-    // ランタイム状態を切り替えて保存する
+    /**
+     * panel の開閉 state を切り替え、レイアウト・表示を反映してから
+     * ランタイム値を local へ永続化する。
+     *
+     * @param {boolean} [force] - 明示的に開閉状態を指定する場合に渡す。省略時は現在値を反転する。
+     * @returns {void}
+     */
     function togglePanel(force) {
       // force があればそれを使い、なければ現在値を反転する
       if (typeof force === "boolean") state.panelOpen = force;
@@ -315,7 +336,25 @@
       globalThis.ATVB_PANEL_VISIBILITY?.persist(state.panelOpen);
     }
 
-    // パネル状態全体を適用する（open 判定 → 表示制御 → 再描画）
+    /**
+     * `state.panelOpen` の現在値に対して表示だけを反映する。
+     * `togglePanel` と異なり state 自体は変更せず、永続化も行わない。
+     * 外部（content.js）から「今の panelOpen を表示へ反映したい」場合の窓口。
+     *
+     * @param {boolean} panelOpen - 反映したい開閉状態。
+     * @returns {void}
+     */
+    function setPanelOpen(panelOpen) {
+      applyPanelVisibility(panelOpen);
+    }
+
+    /**
+     * panel 状態全体を適用する（表示制御 → 字幕ブロック再構築 → snapshot 描画 → 履歴再描画）。
+     * `reason` はログ用のトリガー識別文字列。
+     *
+     * @param {string} reason - 呼び出し理由（ログ用）。
+     * @returns {void}
+     */
     function applyPanelState(reason) {
       logContent?.("右側字幕パネル applyPanelState start", {
         reason,
@@ -360,7 +399,17 @@
       }
     }
 
-    // 字幕パネル開閉ボタンを作る
+    // -----------------------------------------------------------
+    // Section: toggle button
+    // -----------------------------------------------------------
+
+    /**
+     * 字幕パネル開閉ボタン（固定表示の ›/‹ ボタン）を作る。
+     * 既にボタンが存在する場合は再作成しない。
+     * クリックで `togglePanel()` を呼び、resize 時は開いている場合のみ位置を再計算する。
+     *
+     * @returns {void}
+     */
     function createToggleButton() {
       logContent?.("字幕パネル開閉ボタン create start", {
         alreadyExists: Boolean(getTarget().querySelector("#atv-toggle-btn")),
@@ -466,7 +515,13 @@
       );
     }
 
-    // ボタンの矢印と位置だけを更新する
+    /**
+     * toggle button の矢印表記と位置（right オフセット）だけを更新する。
+     * ボタンが存在しない場合は何もしない。
+     *
+     * @param {boolean} isOpen - true なら「閉じる」表記＋panel 幅ぶんオフセット、false なら「開く」表記＋右端。
+     * @returns {void}
+     */
     function updateToggleButton(isOpen) {
       // target 上の toggle button を取る
       const btn = getTarget().querySelector("#atv-toggle-btn");
@@ -507,16 +562,18 @@
       });
     }
 
-    // panelOpen の初期値を local から読む
-    function loadPanelVisibility() {
-      // sync 設定の panelDefaultOpen は「初期値」としてだけ使う
-      const panelDefaultOpenSetting = state.contentSettings?.panelDefaultOpen !== false;
+    // -----------------------------------------------------------
+    // Section: visibility persistence (load only; persist は togglePanel 内)
+    // -----------------------------------------------------------
+    // Section: native toggle injection
+    // -----------------------------------------------------------
 
-      // local にランタイム保存値があればそちらを優先して読む
-      return globalThis.ATVB_PANEL_VISIBILITY.load(panelDefaultOpenSetting);
-    }
-
-    // 再生画面のネイティブタブ横へ ON/OFF トグルを差し込む
+    /**
+     * 再生画面のネイティブタブ横（Up Next タブの隣）へ拡張 ON/OFF トグルを差し込む。
+     * Up Next タブが見つからない場合、または既にトグルが存在する場合は何もしない。
+     *
+     * @returns {void}
+     */
     function injectNativeToggle() {
       if (document.getElementById("atvb-native-toggle")) return;
 
@@ -622,12 +679,23 @@
       }
     }
 
-    // 再生タブ出現を監視してネイティブトグルを差し込む
-    // ★ F-2 修正: エピソード移動時に Apple TV+ がタブ DOM を再構築する空白期間に
-    //   Observer が空振りするケースに備え、フォールバックタイマーを追加する
+    /**
+     * 再生タブの出現を監視し、ネイティブトグルを差し込む／再注入する。
+     * 初回はタブが既に存在すれば即注入し、その後は MutationObserver で
+     * Svelte 等による DOM 再構築後もトグルが消えていれば再注入する。
+     *
+     * ★ F-2 修正: エピソード移動時に Apple TV+ がタブ DOM を再構築する空白期間に
+     *   Observer が空振りするケースに備え、まず即時チェックを行う。
+     *
+     * @returns {void}
+     */
     function watchForPlayerTabs() {
       // ★ Svelte 再マウント対策: 注入後も Observer を継続し、
       //   atvb-native-toggle が消えたタイミングで即再注入する
+
+      // 既存 observer があれば先に止めて積み増しを防ぐ
+      state.panelTabsObserver?.disconnect?.();
+      state.panelTabsObserver = null;
 
       // すでにタブがあれば即注入する（初回）
       if (document.querySelector('[data-testid="uts.col.PlayerTabUpNext-trigger"]')) {
@@ -651,27 +719,71 @@
       });
 
       obs.observe(document.body, { childList: true, subtree: true });
+      state.panelTabsObserver = obs;
+    }
+
+    // -----------------------------------------------------------
+    // Section: playback mount entry point
+    // -----------------------------------------------------------
+
+    /**
+     * 再生画面用の panel UI 一式をまとめて mount する。
+     *
+     * panel build 順序知識を owner 化するための入口関数。
+     * `content.js` はこの関数を呼ぶだけでよく、
+     * toggle button → right panel → native toggle watch → popup host → debug panel
+     * という順序知識は、このファイル内に閉じ込める。
+     *
+     * @param {object} [options]
+     * @param {boolean} [options.panelOpen=false] - mount 後に反映する panel 開閉状態。
+     * @returns {void}
+     */
+    function mountForPlayback({ panelOpen = false } = {}) {
+      ensurePanelSlotLayerStyle();
+      createToggleButton();
+      createRightPanel();
+      watchForPlayerTabs();
+
+      if (typeof mountPopupHost === "function") {
+        mountPopupHost();
+      }
+
+      if (typeof mountDebugPanel === "function") {
+        mountDebugPanel();
+      }
+
+      applyPanelVisibility(panelOpen);
+    }
+
+    // -----------------------------------------------------------
+    // Section: public API
+    // -----------------------------------------------------------
+
+    /**
+     * toggle-only 起動用の公開 API。
+     * 再生画面に native toggle だけを注入し、Svelte 再マウント対策の
+     * observer を張る（内部で `watchForPlayerTabs()` を呼ぶ）。
+     * panel host / popup host / debug host はここでは mount しない。
+     *
+     * @returns {void}
+     */
+    function mountToggleOnlyUi() {
+      watchForPlayerTabs();
     }
 
     // 公開する panel-ui API
     return {
-      createRightPanel,
-      createDebugPanel,
-      createToggleButton,
-      togglePanel,
-      applyPanelVisibility,
+      dispose,
+      mountForPlayback,
+      setPanelOpen,
       applyPanelState,
-      destroyUiHosts,
-      getPanelUiElements,
-      updateToggleButton,
-      loadPanelVisibility,
-      watchForPlayerTabs,
-      injectNativeToggle,
+      mountToggleOnlyUi,
     };
   }
 
   // グローバルへ登録する
-  globalThis.ATVB = globalThis.ATVB || {};
-  globalThis.ATVB.panelUi = globalThis.ATVB.panelUi || {};
-  globalThis.ATVB.panelUi.createPanelUi = createPanelUi;
+  const root = (window.ATVB = window.ATVB || {});
+  root.panelUi = root.panelUi || {};
+  root.panelUi.createPanelUi = createPanelUi;
 })();
+

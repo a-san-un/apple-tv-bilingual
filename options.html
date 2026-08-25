@@ -155,133 +155,14 @@
           <p class="helper-text">APIキーはこのブラウザ内に保存されます</p>
         </section>
       </form>
-
-      <section class="settings-section debug-section">
-        <div class="debug-section__header">
-          <div>
-            <h2>デバッグログ（開発者向け）</h2>
-            <p class="helper-text">
-              popup / options / background / content
-              から収集したログをリアルタイム表示します
-            </p>
-          </div>
-          <button
-            id="debugSectionToggle"
-            class="secondary-button debug-toggle-button"
-            type="button"
-            aria-expanded="false"
-            aria-controls="debugSectionBody"
-          >
-            ▶
-          </button>
-        </div>
-
-        <div id="debugSectionBody" class="debug-section__body" hidden>
-          <div class="debug-toolbar">
-            <div class="debug-toolbar__top">
-              <div class="debug-toolbar__meta">
-                <span id="debugRealtimeBadge" class="debug-badge">LIVE</span>
-                <span id="debugLogCount" class="debug-count">0 / 0 logs</span>
-              </div>
-
-              <div class="debug-toolbar__actions">
-                <button id="debugCopyBtn" class="secondary-button" type="button">
-                  Copy
-                </button>
-                <button
-                  id="debugDownloadBtn"
-                  class="secondary-button"
-                  type="button"
-                >
-                  Download
-                </button>
-                <button
-                  id="debugClearBtn"
-                  class="secondary-button danger-button"
-                  type="button"
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
-
-            <div class="debug-toolbar__filters">
-              <label class="toggle-row debug-toggle-row">
-                <span class="switch">
-                  <input id="debugShowAll" type="checkbox" />
-                  <span class="slider"></span>
-                </span>
-                <span class="toggle-label">
-                  全ログ表示（source / category / text フィルタを無視）
-                </span>
-              </label>
-
-              <select
-                id="debugFilterSource"
-                class="debug-filter-select"
-                aria-label="ログ発生元で絞り込み"
-              >
-                <option value="">すべての発生元</option>
-                <option value="content">content</option>
-                <option value="options">options</option>
-                <option value="popup">popup</option>
-                <option value="background">background</option>
-                <option value="debug-panel">debug-panel</option>
-              </select>
-
-              <select
-                id="debugFilterCategory"
-                class="debug-filter-select"
-                aria-label="カテゴリで絞り込み"
-              >
-                <option value="">すべてのカテゴリ</option>
-                <option value="settings">settings</option>
-                <option value="subtitle">subtitle</option>
-                <option value="ui">ui</option>
-                <option value="api">api</option>
-                <option value="error">error</option>
-                <option value="default">default</option>
-              </select>
-
-              <input
-                id="debugFilterText"
-                class="debug-filter-text"
-                type="search"
-                placeholder="メッセージ / payload を検索"
-                autocomplete="off"
-                spellcheck="false"
-                aria-label="テキスト検索"
-              />
-            </div>
-
-            <p class="helper-text">
-              全ログ表示を ON にすると、保存済み debugLogs をそのまま表示します。
-            </p>
-          </div>
-
-          <div class="field">
-            <span class="field-label">ログ出力</span>
-            <div
-              id="debugLogOutput"
-              class="debug-log-view"
-              role="log"
-              aria-live="polite"
-              aria-relevant="additions text"
-              tabindex="0"
-            >
-              <div class="debug-log-empty">
-                表示できるデバッグログはまだありません。
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+      <section id="debugPanelMount" class="settings-section"></section>
     </main>
 
     <script src="modules/language-definitions.js"></script>
     <script src="modules/settings-schema.js"></script>
     <script src="modules/settings-store.js"></script>
     <script src="settings-bridge.js"></script>
+    <script src="modules/debug-panel-shell.js"></script>
     <script src="options.js"></script>
   </body>
 </html>

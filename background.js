@@ -95,7 +95,7 @@ function getAppleTvContentScriptAssets() {
     : [];
   const defaultJsFiles = [
     "vtt-normalizer.js",
-    "debug-logger.js",
+    "modules/debug-logger.js",
     "subtitle-track-resolver.js",
     "runtime-observers.js",
     "playback-controls-layout.js",

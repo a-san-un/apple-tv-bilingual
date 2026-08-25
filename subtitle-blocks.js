@@ -1,21 +1,37 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - subtitle-blocks.js
 // version: 1.4.0
-// 役割: primary / secondary cues から panel / overlay 共通の
-// subtitle block sequence を構築する。
-// sequence の正本は primary 基準とし、primary が空の間は
-// secondary だけでは current block を成立させない。
-// 追加: block 境界のすき間（cue 終了直後の一瞬）で current が
-// 見つからなくなる問題を避けるため、直前に終わった block を
-// 短時間だけ current として保持する grace-period フォールバックを追加。
+//
+// 役割:
+// - primary / secondary cues から panel / overlay 共通の
+//   subtitle block sequence を構築する
+// - sequence の正本は primary 基準とし、primary が空の間は
+//   secondary だけでは current block を成立させない
+// - block 境界のすき間（cue 終了直後の一瞬）で current が
+//   見つからなくなる問題を避けるため、直前に終わった block を
+//   短時間だけ current として保持する grace-period フォールバックを持つ
+//
+// 設計方針:
+// - 外部公開 API は buildSubtitleBlockSequence のみに限定する
+// - group 化・secondary 対応付け・current 判定・health 診断などの
+//   補助関数は module 内部に留める
 // =============================================================
 
 (() => {
   try {
     const root = (window.ATVB = window.ATVB || {});
 
-    // cues / cueList / array-like を安全に配列へ正規化する。
-    // 読み取り失敗時は空配列へフォールバックする。
+    // -------------------------------------------------------
+    // 基本ユーティリティ (basic utilities)
+    // -------------------------------------------------------
+
+    /**
+     * cues / cueList / array-like を安全に配列へ正規化する。
+     * 読み取り失敗時は空配列へフォールバックする。
+     *
+     * @param {*} cuesLike - Array / TextTrackCueList / array-like な入力。
+     * @returns {Array<*>} 正規化後の配列。
+     */
     function toArray(cuesLike) {
       if (!cuesLike) return [];
       try {
@@ -25,14 +41,24 @@
       }
     }
 
-    // cue text を比較・結合しやすい形へ正規化する。
-    // null / undefined は空文字として扱う。
+    /**
+     * cue text を比較・結合しやすい形へ正規化する。
+     * null / undefined は空文字として扱う。
+     *
+     * @param {*} text - 正規化前の文字列入力。
+     * @returns {string} trim 済み文字列。
+     */
     function normalizeText(text) {
       return String(text || "").trim();
     }
 
-    // block の同一性比較に使う key を組み立てる。
-    // start / end / primaryText を固定精度で連結する。
+    /**
+     * block の同一性比較に使う key を組み立てる。
+     * start / end / primaryText を固定精度で連結する。
+     *
+     * @param {Object} block - subtitle block。
+     * @returns {string} block 識別用 key。
+     */
     function buildSubtitleBlockKey(block) {
       return [
         Number(block?.startTime ?? 0).toFixed(3),
@@ -41,16 +67,33 @@
       ].join("::");
     }
 
-    // block が past / current / future のどれかを返す。
-    // 再生時刻 now を block time range と比較して判定する。
+    /**
+     * block が past / current / future のどれかを返す。
+     * 再生時刻 now を block time range と比較して判定する。
+     *
+     * @param {Object} block - subtitle block。
+     * @param {number} now - 現在の再生時刻（秒）。
+     * @returns {"past"|"current"|"future"} block state。
+     */
     function classifyBlockState(block, now) {
       if (block.endTime < now) return "past";
       if (block.startTime > now) return "future";
       return "current";
     }
 
-    // 近い timing を持つ連続 cue 群を 1 表示単位の group へ集約する。
-    // primary / secondary のどちらにも使える共通 group 化ロジックとする。
+    // -------------------------------------------------------
+    // cue group 化 (cue grouping)
+    // -------------------------------------------------------
+
+    /**
+     * 近い timing を持つ連続 cue 群を 1 表示単位の group へ集約する。
+     * primary / secondary のどちらにも使える共通 group 化ロジックとする。
+     *
+     * @param {ArrayLike<Object>|Array<Object>} cues - cue 群。
+     * @param {Function|null} cleanCueText - cue から text を抽出・整形する関数。
+     * @param {number} [mergeTolerance=0.12] - start/end の merge 許容秒数。
+     * @returns {Array<Object>} group 配列。
+     */
     function groupCues(cues, cleanCueText, mergeTolerance = 0.12) {
       const cueList = toArray(cues);
       const groups = [];
@@ -94,21 +137,16 @@
       }));
     }
 
-    // 後方互換のため primary 向け旧名も残す。
-    function groupPrimaryCues(primaryCues, cleanCueText, mergeTolerance = 0.12) {
-      return groupCues(primaryCues, cleanCueText, mergeTolerance).map(
-        (group) => ({
-          startTime: group.startTime,
-          endTime: group.endTime,
-          primarySegments: group.segments.slice(),
-          primaryText: group.text,
-          cues: group.cues.slice(),
-        }),
-      );
-    }
 
-    // block の最小共通 shape を primary / secondary group から組み立てる。
-    // sequence の正本は primary 基準とし、primary が空の block は作らない。
+
+    /**
+     * block の最小共通 shape を primary / secondary group から組み立てる。
+     * sequence の正本は primary 基準とし、primary が空の block は作らない。
+     *
+     * @param {Object|null} primaryGroup - primary 側 group。
+     * @param {Object|null} secondaryGroup - secondary 側 group。
+     * @returns {Object|null} subtitle block。primary が空なら null。
+     */
     function buildSubtitleBlockFromGroups(primaryGroup, secondaryGroup) {
       const primaryText = normalizeText(
         primaryGroup?.text ?? primaryGroup?.primaryText,
@@ -145,8 +183,20 @@
       };
     }
 
-    // primary block に最も近い secondary cue text を探索する。
-    // timing overlap を優先しつつ、近傍 cue も matchWindow 内なら候補に含める。
+    // -------------------------------------------------------
+    // secondary 対応付け (secondary matching)
+    // -------------------------------------------------------
+
+    /**
+     * primary block に最も近い secondary cue text を探索する。
+     * timing overlap を優先しつつ、近傍 cue も matchWindow 内なら候補に含める。
+     *
+     * @param {Object} block - primary 基準の subtitle block。
+     * @param {ArrayLike<Object>|Array<Object>} secondaryCues - secondary cue 群。
+     * @param {Function|null} cleanCueText - cue text 整形関数。
+     * @param {number} matchWindow - 許容マッチ秒数。
+     * @returns {string} 対応づいた secondary text。見つからなければ空文字。
+     */
     function matchSecondaryText(
       block,
       secondaryCues,
@@ -189,36 +239,19 @@
       );
     }
 
-    // 再生時刻近傍の cue group を 1 つ選ぶ。
-    // overlap を最優先し、無ければ start/end が最も近い group を返す。
-    function findNearestGroupAtTime(groups, now, matchWindow = 2.0) {
-      const list = Array.isArray(groups) ? groups : [];
-      if (!list.length) return null;
+    // -------------------------------------------------------
+    // sequence 状態解析 (sequence state analysis)
+    // -------------------------------------------------------
 
-      let bestGroup = null;
-      let bestScore = Number.POSITIVE_INFINITY;
-
-      for (const group of list) {
-        const startTime = Number(group?.startTime ?? 0);
-        const endTime = Number(group?.endTime ?? 0);
-        const overlaps = startTime <= now + 0.35 && now <= endTime + 0.35;
-        const score = overlaps
-          ? 0
-          : Math.min(Math.abs(startTime - now), Math.abs(endTime - now));
-
-        if (!overlaps && score > matchWindow) continue;
-
-        if (score < bestScore) {
-          bestScore = score;
-          bestGroup = group;
-        }
-      }
-
-      return bestGroup;
-    }
-
-    // sequence の current block と secondary の有無から health を診断する。
-    // recovery 判定で参照しやすい最小限のフラグをまとめて返す。
+    /**
+     * sequence の current block と secondary の有無から health を診断する。
+     * recovery 判定で参照しやすい最小限のフラグをまとめて返す。
+     *
+     * @param {Array<Object>} blocks - subtitle block 配列。
+     * @param {number} currentIndex - 現在 index。
+     * @param {Array<Object>} [previousBlocks=[]] - 直前の block 配列。
+     * @returns {Object} sequence health 情報。
+     */
     function analyzeSequenceHealth(blocks, currentIndex, previousBlocks = []) {
       const list = Array.isArray(blocks) ? blocks : [];
       const currentBlock =
@@ -265,12 +298,19 @@
       };
     }
 
-    // block 配列から current index を1つ選ぶ。
-    // 通常は classifyBlockState で "current" になった block をそのまま使うが、
-    // block 境界のすき間（cue 終了直後の一瞬など）に now が落ちた場合、
-    // 直前に終わった block を GAP_HOLD_SECONDS の間だけ current として保持する。
-    // これにより cue 切り替わりの瞬間に current が -1 になり
-    // 字幕表示が一瞬途切れる／更新が止まって見える問題を避ける。
+    /**
+     * block 配列から current index を1つ選ぶ。
+     * 通常は classifyBlockState で "current" になった block をそのまま使うが、
+     * block 境界のすき間（cue 終了直後の一瞬など）に now が落ちた場合、
+     * 直前に終わった block を gapHoldSeconds の間だけ current として保持する。
+     * これにより cue 切り替わりの瞬間に current が -1 になり
+     * 字幕表示が一瞬途切れる／更新が止まって見える問題を避ける。
+     *
+     * @param {Array<Object>} blocks - subtitle block 配列。
+     * @param {number} now - 現在の再生時刻（秒）。
+     * @param {{ gapHoldSeconds?: number }} [options={}] - 判定オプション。
+     * @returns {number} currentIndex。見つからなければ -1。
+     */
     function resolveCurrentIndex(blocks, now, { gapHoldSeconds = 0.1 } = {}) {
       const list = Array.isArray(blocks) ? blocks : [];
       if (!list.length) return -1;
@@ -320,9 +360,31 @@
       return closestPastIndex;
     }
 
-    // subtitle block sequence 全体を構築する。
-    // primary cue 群をまず block 単位へ集約し、その後 secondary pairing と state 判定を行う。
-    // sequence の正本は primary 基準とし、primary が空の間は空 sequence を返す。
+    // -------------------------------------------------------
+    // 公開エントリーポイント (public entry point)
+    // -------------------------------------------------------
+
+    /**
+     * subtitle block sequence 全体を構築する。
+     * primary cue 群をまず block 単位へ集約し、その後 secondary pairing と state 判定を行う。
+     * sequence の正本は primary 基準とし、primary が空の間は空 sequence を返す。
+     *
+     * @param {Object} params
+     * @param {ArrayLike<Object>|Array<Object>} params.primaryCues - primary cue 群。
+     * @param {ArrayLike<Object>|Array<Object>} params.secondaryCues - secondary cue 群。
+     * @param {number} params.now - 現在の再生時刻（秒）。
+     * @param {Array<Object>} [params.previousBlocks=[]] - 直前の block 配列。
+     * @param {Function} params.cleanCueText - cue text 整形関数。
+     * @param {number} [params.matchWindow=2.0] - secondary 対応付け許容秒数。
+     * @param {string} [params.rebuildReason="cuechange"] - sequence 再構築理由（meta 用）。
+     * @param {number} [params.primaryMergeTolerance=0.12] - group merge 許容秒数。
+     * @param {number} [params.gapHoldSeconds=0.4] - current gap 保持秒数。
+     * @returns {{
+     *   blocks: Array<Object>,
+     *   currentIndex: number,
+     *   meta: Object,
+     * }}
+     */
     function buildSubtitleBlockSequence({
       primaryCues,
       secondaryCues,
@@ -422,15 +484,12 @@
       };
     }
 
+    // -------------------------------------------------------
+    // エクスポート (public API)
+    // -------------------------------------------------------
+
     root.subtitleBlocks = {
-      buildSubtitleBlockKey,
-      groupCues,
-      groupPrimaryCues,
-      buildSubtitleBlockFromGroups,
       buildSubtitleBlockSequence,
-      analyzeSequenceHealth,
-      findNearestGroupAtTime,
-      resolveCurrentIndex,
     };
   } catch (error) {
     console.error("[ATVB] subtitle-blocks: failed", error); // eslint-disable-line no-console

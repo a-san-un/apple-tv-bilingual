@@ -546,7 +546,7 @@
                 "function",
             });
 
-            panelUi?.destroyUiHosts?.();
+            panelUi?.dispose?.();
             panelUi?.watchForPlayerTabs?.();
 
             detachForDisabled({

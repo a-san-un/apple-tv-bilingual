@@ -7,6 +7,8 @@
 // - reason 文字列ではなく options オブジェクトで振る舞いを制御する。
 // - 通常の subtitle clear と、拡張 ON/OFF トグル時の完全リセットを分け、
 //   古い字幕参照を次回セッションへ持ち越さないようにする。
+// - panel host / popup host / toggle button / observer の teardown は
+//   panel-ui.dispose() が担当し、このモジュールは subtitle state reset に専念する。
 //
 // clearSubtitleState(options):
 //   options.preserveSecondaryDom  = true  → パネルの secondary DOM は保持する

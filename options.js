@@ -1,6 +1,6 @@
 // =============================================================
 // options.js - Options page logic
-// version: 2.6.3
+// version: 2.6.4
 // -------------------------------------------------------------
 // 役割:
 // - Options 画面の設定 UI を初期化し、保存・再読込・即時反映を担当する
@@ -9,12 +9,14 @@
 // - 保存後、拡張が有効なら Apple TV+ タブへ設定を即時送信する
 // - デバッグログの表示・絞り込み・コピー・保存・削除を扱う
 // - storage 変更を監視し、デバッグログをリアルタイム更新する
+// - settings 用 debug panel shell を shared builder から差し込む
 //
 // 補足:
 // - 設定キー・デフォルト値の正本は settings-schema.js を参照する
 // - 言語一覧の正本は language-definitions.js とする
 // - Debug Download は background 経由(saveAs)に統一する
 // =============================================================
+
 
 // popup と同じ共通言語定義を使う。
 // 取得できない場合でも壊れにくいよう空配列 fallback を置く。
@@ -71,6 +73,7 @@ const els = {
   groqApiKey: document.getElementById("groqApiKey"),
   toggleGoogleKey: document.getElementById("toggleGoogleKey"),
   toggleGroqKey: document.getElementById("toggleGroqKey"),
+  debugPanelMount: document.getElementById("debugPanelMount"),
   debugSectionToggle: document.getElementById("debugSectionToggle"),
   debugSectionBody: document.getElementById("debugSectionBody"),
   debugLogOutput: document.getElementById("debugLogOutput"),
@@ -276,17 +279,14 @@ function buildDebugLineSignature(line) {
 // UI 上のフィルター値を読む。
 // 字幕パネル debug panel と同じ ID 構造に合わせる。
 function readUiFilters() {
-  const source = els.debugFilterSource?.value?.trim() || "";
-  const category = els.debugFilterCategory?.value?.trim() || "";
-  const text = els.debugFilterText?.value?.trim() || "";
-  const showAll = Boolean(els.debugShowAll?.checked);
-
-  return {
-    source,
-    category,
-    text,
-    showAll,
-  };
+  return (
+    globalThis.ATVB?.debugPanelRuntime?.readUiFilters?.(document) ?? {
+      source: "",
+      category: "",
+      text: "",
+      showAll: false,
+    }
+  );
 }
 
 // 1行のログが現在の UI フィルターに一致するか判定する。
@@ -321,20 +321,21 @@ function matchesDebugFilter(line, filter) {
 }
 
 // カテゴリ表示対象と UI フィルターを両方適用する。
-function getVisibleDebugLogs(logs) {
-  const filter = readUiFilters();
+function getVisibleDebugLogs(logs, filter = readUiFilters()) {
   const normalizedLogs = (logs || [])
     .map((line) => ensureLogShape(line))
     .filter(Boolean);
 
+  const matchedLogs = normalizedLogs.filter((line) =>
+    matchesDebugFilter(line, filter),
+  );
+
   if (filter.showAll) {
-    return normalizedLogs;
+    return matchedLogs;
   }
 
-  return normalizedLogs.filter(
-    (line) =>
-      OPTIONS_DEFAULT_VISIBLE_CATEGORIES.has(line.category) &&
-      matchesDebugFilter(line, filter),
+  return matchedLogs.filter((line) =>
+    OPTIONS_DEFAULT_VISIBLE_CATEGORIES.has(line.category),
   );
 }
 
@@ -378,41 +379,54 @@ function createDebugLogItem(line) {
   return item;
 }
 
-// フィルター適用後のログを debug panel へ再描画する。
-async function renderDebugLogs() {
-  if (!els.debugLogOutput) return;
-
-  const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
-    await chrome.storage.local.get(DEBUG_LOGS_KEY);
-  const visibleLogs = getVisibleDebugLogs(debugLogs);
-
-  els.debugLogOutput.innerHTML = "";
-
-  if (els.debugLogCount) {
-    els.debugLogCount.textContent =
-      `${visibleLogs.length} / ${debugLogs.length} logs`;
-  }
-
-  if (!visibleLogs.length) {
-    const empty = document.createElement("div");
-    empty.className = "debug-log-empty";
-    empty.textContent = "表示できるデバッグログはまだありません。";
-    els.debugLogOutput.appendChild(empty);
-    return;
-  }
-
-  const fragment = document.createDocumentFragment();
-  visibleLogs.forEach((line) => {
-    const item = createDebugLogItem(line);
-    if (item) fragment.appendChild(item);
-  });
-
-  els.debugLogOutput.appendChild(fragment);
-  els.debugLogOutput.scrollTop = els.debugLogOutput.scrollHeight;
+function getAllDebugLogs() {
+  return chrome.storage.local
+    .get(DEBUG_LOGS_KEY)
+    .then(({ [DEBUG_LOGS_KEY]: debugLogs = [] }) => debugLogs);
 }
 
-// 表示中ログをプレーンテキストとしてコピーする。
-async function copyDebugLogs() {
+function renderDebugLogItems(root, visibleLogs) {
+  const output = root.getElementById("debugLogOutput");
+  if (!output) return;
+
+  visibleLogs.forEach((line) => {
+    const item = createDebugLogItem(line);
+    if (item) output.appendChild(item);
+  });
+}
+
+function renderDebugLogEmptyState(root) {
+  const output = root.getElementById("debugLogOutput");
+  if (!output) return;
+
+  const empty = document.createElement("div");
+  empty.className = "debug-log-empty";
+  empty.textContent = "表示できるデバッグログはまだありません。";
+  output.appendChild(empty);
+}
+
+function updateDebugLogMeta(root, meta = {}) {
+  const countEl = root.getElementById("debugLogCount");
+  const badgeEl = root.getElementById("debugRealtimeBadge");
+
+  if (countEl) {
+    const visibleCount = Number(meta.visibleCount || 0);
+    const totalCount = Number(meta.totalCount || 0);
+    countEl.textContent = `${visibleCount} / ${totalCount} logs`;
+  }
+
+  if (badgeEl) {
+    badgeEl.hidden = false;
+    badgeEl.textContent = "LIVE";
+  }
+}
+
+// フィルター適用後のログを debug panel へ再描画する。
+async function renderDebugLogs() {
+  await globalThis.ATVB?.debugPanelRuntime?.update?.(document);
+}
+
+async function copyDebugLogsInternal() {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
   const visibleLogs = getVisibleDebugLogs(debugLogs);
@@ -423,18 +437,15 @@ async function copyDebugLogs() {
     lineCount: visibleLogs.length,
   });
   await appendDebugLog(line);
-  await renderDebugLogs();
   showSaveStatus("デバッグログをコピーしました");
 }
 
-// 表示中ログを background 経由で保存する。
-async function downloadDebugLogs() {
+async function downloadDebugLogsInternal() {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
   const visibleLogs = getVisibleDebugLogs(debugLogs);
   const text = visibleLogs.map(formatDebugLine).join("\n");
 
-  // 保存先選択ダイアログは content 側と同じ background ハンドラで統一する。
   const response = await new Promise((resolve) => {
     chrome.runtime.sendMessage({ type: "DOWNLOAD_DEBUG_LOG", text }, (res) => {
       if (chrome.runtime.lastError) {
@@ -463,12 +474,10 @@ async function downloadDebugLogs() {
     },
   );
   await appendDebugLog(line);
-  await renderDebugLogs();
   showSaveStatus("デバッグログをダウンロードしました");
 }
 
-// 現在表示中のフィルター結果に一致するログだけを削除する。
-async function clearDebugLogs() {
+async function clearDebugLogsInternal() {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
 
@@ -483,12 +492,6 @@ async function clearDebugLogs() {
     .filter((line) => !visibleSignatures.has(buildDebugLineSignature(line)));
 
   await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: remainingLogs });
-
-  if (els.debugLogOutput) {
-    els.debugLogOutput.innerHTML = "";
-  }
-
-  await renderDebugLogs();
   showSaveStatus("デバッグログをクリアしました");
 }
 
@@ -820,57 +823,93 @@ function bindEvents() {
   els.toggleGroqKey.addEventListener("click", () => {
     toggleSecretInput(els.groqApiKey, els.toggleGroqKey);
   });
+}
 
-  if (els.debugCopyBtn) {
-    els.debugCopyBtn.addEventListener("click", copyDebugLogs);
-  }
 
-  if (els.debugDownloadBtn) {
-    els.debugDownloadBtn.addEventListener("click", downloadDebugLogs);
-  }
+// -------------------------------------------------------------
+// settings debug panel shell
+// -------------------------------------------------------------
 
-  if (els.debugClearBtn) {
-    els.debugClearBtn.addEventListener("click", clearDebugLogs);
-  }
+/**
+ * settings 画面用 debug panel shell を shared builder から差し込む。
+ *
+ * 前提:
+ * - options.html に #debugPanelMount を置く
+ * - modules/debug-panel-shell.js が options.js より先に読み込まれている
+ *
+ * @returns {void}
+ */
+function mountOptionsDebugPanelShell() {
+  const mountEl = els.debugPanelMount;
+  if (!mountEl) return;
 
-  // 字幕パネル側と同じ構造でフィルター変更に追従する。
-  if (els.debugFilterSource) {
-    els.debugFilterSource.addEventListener("change", () => {
-      renderDebugLogs();
-    });
-  }
+  const html =
+    globalThis.ATVB?.debugPanelShell?.buildDebugPanelShellHTML?.({
+      variant: "options",
+    }) ?? "";
 
-  if (els.debugFilterCategory) {
-    els.debugFilterCategory.addEventListener("change", () => {
-      renderDebugLogs();
-    });
-  }
+  if (!html) return;
 
-  if (els.debugShowAll) {
-    els.debugShowAll.addEventListener("change", () => {
-      renderDebugLogs();
-    });
-  }
+  mountEl.innerHTML = html;
 
-  if (els.debugFilterText) {
-    els.debugFilterText.addEventListener("input", () => {
-      renderDebugLogs();
-    });
-  }
+  els.debugSectionToggle = document.getElementById("debugSectionToggle");
+  els.debugSectionBody = document.getElementById("debugSectionBody");
+  els.debugLogOutput = document.getElementById("debugLogOutput");
+  els.debugCopyBtn = document.getElementById("debugCopyBtn");
+  els.debugDownloadBtn = document.getElementById("debugDownloadBtn");
+  els.debugClearBtn = document.getElementById("debugClearBtn");
+  els.debugShowAll = document.getElementById("debugShowAll");
+  els.debugFilterSource = document.getElementById("debugFilterSource");
+  els.debugFilterCategory = document.getElementById("debugFilterCategory");
+  els.debugFilterText = document.getElementById("debugFilterText");
+  els.debugLogCount = document.getElementById("debugLogCount");
+  els.debugRealtimeBadge = document.getElementById("debugRealtimeBadge");
+}
 
-  if (els.debugSectionToggle && els.debugSectionBody) {
-    els.debugSectionToggle.addEventListener("click", () => {
-      const isHidden = els.debugSectionBody.hidden;
-      els.debugSectionBody.hidden = !isHidden;
-      els.debugSectionToggle.textContent = isHidden ? "▼" : "▶";
-      els.debugSectionToggle.setAttribute("aria-expanded", String(isHidden));
-    });
-  }
+function mountOptionsDebugPanelRuntime() {
+  globalThis.ATVB?.debugPanelRuntime?.mount?.(document, {
+    variant: "options",
+
+    getLogs: async () => getAllDebugLogs(),
+
+    getVisibleLogs: (logs, uiFilter) => getVisibleDebugLogs(logs, uiFilter),
+
+    getMeta: (logs, visibleLogs) => ({
+      totalCount: Array.isArray(logs) ? logs.length : 0,
+      visibleCount: Array.isArray(visibleLogs) ? visibleLogs.length : 0,
+    }),
+
+    renderLogItems: (root, visibleLogs) => {
+      renderDebugLogItems(root, visibleLogs);
+    },
+
+    renderEmptyState: (root) => {
+      renderDebugLogEmptyState(root);
+    },
+
+    updateMeta: (root, meta) => {
+      updateDebugLogMeta(root, meta);
+    },
+
+    copyLogs: async () => {
+      await copyDebugLogsInternal();
+    },
+
+    downloadLogs: async () => {
+      await downloadDebugLogsInternal();
+    },
+
+    clearLogs: async () => {
+      await clearDebugLogsInternal();
+    },
+  });
 }
 
 // 初期化エントリポイント。
 // DOM 準備後にイベント bind、初期ログ追加、設定読込を行う。
 document.addEventListener("DOMContentLoaded", async () => {
+  mountOptionsDebugPanelShell();
+  mountOptionsDebugPanelRuntime();
   bindEvents();
   bindDebugLogRealtimeWatch();
 
@@ -882,4 +921,5 @@ document.addEventListener("DOMContentLoaded", async () => {
   await appendDebugLog(line);
 
   await loadSettings();
+  await globalThis.ATVB?.debugPanelRuntime?.update?.(document);
 });

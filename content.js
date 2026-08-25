@@ -84,7 +84,11 @@
     ejdictMap: null,
     secondaryHideTimer: null,
     overlayRoot: null,
+    // panelShadowRoot: 所有者は panel-ui.js（生成・破棄・null 化を一元管理）。
+    // content.js / panel-renderer.js / playback-session-cleanup.js からは読み取り専用とする。
     panelShadowRoot: null,
+    // popupShadowRoot / debugPanelRoot: term inspector / debug UI 抽出（Step 18）まで
+    // content.js が owner を保持する暫定状態。17-A-7 の panel owner 完全移管対象外。
     popupShadowRoot: null,
     debugPanelRoot: null,
     popupDocClickHandler: null,
@@ -369,12 +373,6 @@ function forwardContentLog(...args) {
     };
   }
 
-  // logger の更新通知を Debug パネル更新へ接続する。
-  function _registerDebugLogUpdateCallback() {
-    window.ATVB?.logger?.setOnLogUpdated?.(() => {
-      updateLiveDebugPanel();
-    });
-  }
 
   (async function loadEJDict() {
     try {
@@ -1155,44 +1153,46 @@ function forwardContentLog(...args) {
     wireSubtitlePopupUiEvents();
   }
 
-  // [debug mount] debug panel モジュールを panelShadowRoot にマウントする。
-  // HTML shell は buildPanelDebugShellHTML が担い、UI wiring は debugPanel.mount 側へ委ねる。
+  // [debug mount] debug panel runtime を panelShadowRoot にマウントする。
+  // HTML shell は buildPanelDebugShellHTML が担い、UI wiring は debugPanelRuntime.mount 側へ委ねる。
   function createDebugPanel() {
     if (!state.panelShadowRoot) return;
-    state.debugPanelRoot = state.panelShadowRoot;
-    const debugPanel = window.ATVB?.debugPanel;
-    if (!debugPanel?.mount) return;
 
-    debugPanel.mount(state.debugPanelRoot, {
+    state.debugPanelRoot = state.panelShadowRoot;
+    const debugPanelRuntime = window.ATVB?.debugPanelRuntime;
+    if (!debugPanelRuntime?.mount) return;
+
+    debugPanelRuntime.mount(state.debugPanelRoot, {
+      variant: "panel",
       getFilter: getLiveDebugLogFilter,
       getLogText: getDebugLogText,
       clearLogs: clearDebugLogs,
-      downloadLogs: (text, done) => {
-        // 保存先ダイアログは background 側の downloads API で開く。
-        sendToBackground({ type: "DOWNLOAD_DEBUG_LOG", text }, (res) => {
-          if (typeof done === "function") {
-            done({
+      downloadLogs: async (text) => {
+        const result = await new Promise((resolve) => {
+          // 保存先ダイアログは background 側の downloads API で開く。
+          sendToBackground({ type: "DOWNLOAD_DEBUG_LOG", text }, (res) => {
+            resolve({
               ok: !!res?.ok,
               downloadId: res?.downloadId ?? null,
               error: res?.error ?? "unknown",
             });
-          }
+          });
+        });
+
+        if (!result.ok) {
+          logContentError("debug log download failed", {
+            error: result.error,
+          });
+          return;
+        }
+
+        logContentUi("debug log downloaded", {
+          downloadId: result.downloadId,
         });
       },
       logInfo: logContentUi,
       logError: logContentError,
     });
-  }
-  
-  async function updateLiveDebugPanel() {
-    try {
-      const root = state.debugPanelRoot;
-      if (!root) return;                         // ← root 未確立なら即 return
-      await window.ATVB?.debugPanel?.update?.(root);
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.warn("[ATV-Bilingual] updateLiveDebugPanel failed:", error);
-    }
   }
 
   function repositionPopup(reason = "manual") {
@@ -1655,13 +1655,13 @@ function forwardContentLog(...args) {
       .join("<br>");
   }
 
+  // --- Panel / subtitle-block pipeline module resolution (17-A-9: single entry point) ---
+  // createPanelUi, createPanelRenderer, buildSubtitleBlockSequence, resolvePanelBlocksForRender
+  // はすべてここで取得し、以降のコードはこのブロックで確定したローカル変数のみを参照する。
   const createPanelUi = window.ATVB?.panelUi?.createPanelUi;
-
-  if (typeof createPanelUi !== "function") {
-    throw new Error("ATVB panelUi.createPanelUi is not available");
-  }
-
   const createPanelRenderer = window.ATVB?.panelRenderer?.createPanelRenderer;
+  const subtitleBlocksDeps = window.ATVB?.subtitleBlocks || {};
+  const { buildSubtitleBlockSequence } = subtitleBlocksDeps;
   const subtitleBlockResolverApi = window.ATVB?.subtitleBlockResolver || {};
   const {
     resolvePanelBlocksForRender = () => ({
@@ -1671,17 +1671,32 @@ function forwardContentLog(...args) {
       sameWindowGroups: new Map(),
     }),
   } = subtitleBlockResolverApi;
+
+  if (typeof createPanelUi !== "function") {
+    throw new Error("ATVB panelUi.createPanelUi is not available");
+  }
+
+  if (typeof createPanelRenderer !== "function") {
+    throw new Error("ATVB panelRenderer.createPanelRenderer is not available");
+  }
+
+  if (typeof buildSubtitleBlockSequence !== "function") {
+    throw new Error("ATVB subtitleBlocks.buildSubtitleBlockSequence is not available");
+  }
+
+  const createSubtitleBlockState = window.ATVB?.createSubtitleBlockState || null;
+
+  if (typeof createSubtitleBlockState !== "function") {
+    throw new Error("ATVB createSubtitleBlockState is not available");
+  }
+  // --- End panel / subtitle-block pipeline module resolution ---
+
   const createCueController = window.ATVB?.cueController?.createCueController;
   const createCueTrackBinder = window.ATVB?.cueTrackBinder?.createCueTrackBinder;
   const createTrackListenerBinding =
     window.ATVB?.cueTrackBinder?.createTrackListenerBinding || null;
   const createSubtitleSyncController =
     window.ATVB?.subtitleSyncController?.createSubtitleSyncController;
-
-
-  if (typeof createPanelRenderer !== "function") {
-    throw new Error("ATVB panelRenderer.createPanelRenderer is not available");
-  }
 
   if (typeof createCueController !== "function") {
     throw new Error("ATVB cueController.createCueController is not available");
@@ -1694,9 +1709,7 @@ function forwardContentLog(...args) {
   const root = (window.ATVB = window.ATVB || {});
   const vttDeps = window.ATVB?.vtt || {};
   const resolverDeps = window.ATVB?.resolver || {};
-  const subtitleBlocksDeps = window.ATVB?.subtitleBlocks || {};
   const createSecondarySubtitleDom = root.createSecondarySubtitleDom || null;
-  const { buildSubtitleBlockSequence } = subtitleBlocksDeps;
 
   function getTrackCuesLength(track) {
     return resolverDeps.getTrackCuesLength?.(track) ?? 0;
@@ -1835,32 +1848,12 @@ function forwardContentLog(...args) {
     }
   }
 
-  function getSubtitleBlockSequence() {
-    if (state.subtitleBlocks && typeof state.subtitleBlocks === "object") {
-      return state.subtitleBlocks;
-    }
-    if (Array.isArray(state.subtitleBlocks)) {
-      return {
-        blocks: state.subtitleBlocks,
-        currentIndex: -1,
-        meta: null,
-      };
-    }
-    return {
-      blocks: [],
-      currentIndex: -1,
-      meta: null,
-    };
-  }
-
-  function getCurrentSubtitleBlockFromSequence() {
-    return state.currentSubtitleBlock || null;
-  }
-
-  function setCurrentSubtitleBlock(block, meta = null) {
-    state.currentSubtitleBlock = block || null;
-    state.subtitleBlockMeta = meta || null;
-  }
+  const subtitleBlockState = createSubtitleBlockState({
+    state,
+    now: () => Date.now(),
+    logSubtitle: logContentSubtitle,
+    renderCurrentSnapshot,
+  });
 
   const { renderPanel } = createPanelRenderer({
     resolvePanelBlocksForRender,
@@ -1953,10 +1946,9 @@ function forwardContentLog(...args) {
         cleanCueText: vttDeps.cleanCueText,
         getPrimaryTrackCues: () => state.primaryTrack?.cues || [],
         getSecondaryTrackCues: () => state.secondaryTrack?.cues || [],
-        getPreviousSubtitleBlocks: () => getSubtitleBlockSequence() || [],
+        getPreviousSubtitleBlocks: () => subtitleBlockState.getSequence(),
         buildSubtitleBlockSequence,
         setSubtitleBlocks,
-        setCurrentSubtitleBlock,
         getBoundPrimaryTrack: () => state.primaryTrack,
         getBoundSecondaryTrack: () => state.secondaryTrack,
       })
@@ -2010,12 +2002,11 @@ function forwardContentLog(...args) {
     getVideoElement: () => state.video ?? null,
     getPrimaryTrackCues: () => state.primaryTrack?.cues || [],
     getSecondaryTrackCues: () => state.secondaryTrack?.cues || [],
-    getPreviousSubtitleBlocks: () => getSubtitleBlockSequence() || [],
+    getPreviousSubtitleBlocks: () => subtitleBlockState.getSequence(),
     buildSubtitleBlockSequence,
     setSubtitleBlocks,
-    getSubtitleBlockSequence,
-    getCurrentSubtitleBlockFromSequence,
-    setCurrentSubtitleBlock,
+    getSubtitleBlockSequence: () => subtitleBlockState.getSequence(),
+    getCurrentSubtitleBlockFromSequence: () => subtitleBlockState.getCurrentBlock(),
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     renderCurrentSnapshot,
@@ -2170,35 +2161,6 @@ function forwardContentLog(...args) {
   root.cueTrackBinder = root.cueTrackBinder ?? {};
   if (cueTrackBinder) root.cueTrackBinder.instance = cueTrackBinder;
 
-  function rebuildSubtitleBlocksForPanelOpen(reason = "panel_open") {
-    const sequence = getSubtitleBlockSequence();
-    const blocks = Array.isArray(sequence?.blocks) ? sequence.blocks : [];
-    const currentIndex = Number.isInteger(sequence?.currentIndex)
-      ? sequence.currentIndex
-      : -1;
-    const shouldRebuild = blocks.length === 0 || currentIndex < 0;
-
-    logContent("panel open rebuild check", {
-      reason,
-      blockCount: blocks.length,
-      currentIndex,
-      shouldRebuild,
-    });
-
-    if (!shouldRebuild) return null;
-
-    const rebuildResult =
-      cueController?.rebuildCurrentSceneSubtitleBlocks?.() || null;
-
-    logContent("panel open rebuild result", {
-      reason,
-      rebuildResult,
-    });
-
-    return rebuildResult;
-  }
-
-
 let syncIntervalOrchestrator = null;
 
   panelUi = createPanelUi({
@@ -2209,31 +2171,14 @@ let syncIntervalOrchestrator = null;
     clearDebugLogs,
     sendToBackground,
     applyLayout,
-    persistPanelVisibility,
     logContent,
     renderCurrentSnapshot,
     renderPanel,
-    rebuildSubtitleBlocksForPanelOpen,
+    rebuildSubtitleBlocksForPanelOpen: (reason) => subtitleBlockState.rebuildForPanelOpen(reason),
     destroyOverlay,
+    mountPopupHost: createPopupHost,
+    mountDebugPanel: createDebugPanel,
     overlayController,
-    onPanelClose: () => {
-      // ① まず tick を止めて renderCurrentSnapshot が走らないようにする
-      syncIntervalOrchestrator?.stop?.();
-      // ② その後 overlay を非表示・state リセット
-      setOverlayVisible(false);
-      overlayController.clearOverlayState?.();
-      // ③ cue unbind（secondary monitor cleanup は unbindSecondarySubtitleTrack 経由で一本化）
-      cueController.handoffPrimarySubtitleToNative();
-      cueController.unbindSecondarySubtitleTrack({ restoreMode: false });
-      // ④ interval 停止
-      if (secondaryTrackSyncInterval) {
-        clearInterval(secondaryTrackSyncInterval);
-        secondaryTrackSyncInterval = null;
-      }
-
-      logContent("panel closed: extension paused");
-    },
-
     onPanelOpen: () => {
       // 1. オーバーレイを再表示
       setOverlayVisible(true);
@@ -2246,7 +2191,6 @@ let syncIntervalOrchestrator = null;
 
       logContent("panel opened: extension resumed");
     },
-
   });
 
   const { createRuntimeObservers } = root.runtimeObservers;
@@ -2284,7 +2228,7 @@ let syncIntervalOrchestrator = null;
     get cueController() { return cueController; },
     renderSecondarySubtitle,
     get syncIntervalOrchestrator() { return syncIntervalOrchestrator; },
-    mountToggleOnlyUi: () => panelUi?.watchForPlayerTabs?.(),
+    mountToggleOnlyUi: () => panelUi?.mountToggleOnlyUi?.(),
     get panelUi() { return panelUi; }, 
   });
 
@@ -2347,8 +2291,7 @@ let syncIntervalOrchestrator = null;
         renderSecondarySubtitle,
         overlayController,
         destroyOverlay,
-        destroyUiHosts: () => panelUi?.destroyUiHosts?.(),
-        destroyFeatureUiHosts: () => panelUi?.destroyFeatureUiHosts?.(),
+        disposePanelUi: (...args) => panelUi?.dispose?.(...args),
         applyLayout,
         clearInternalSubtitleState,
         cueController,
@@ -2379,15 +2322,6 @@ let syncIntervalOrchestrator = null;
       },
     }) ?? null;
     
-
-  function persistPanelVisibility() {
-    globalThis.ATVB_PANEL_VISIBILITY.persist(state.panelOpen, (msg, data) => {
-      logContent(msg, data);
-    });
-  }
-
-
-
   function clearInitialCueRecoveryTimers() {
     if (!state.initialCueRecoveryTimers.length) return;
     state.initialCueRecoveryTimers.forEach((timerId) => clearTimeout(timerId));
@@ -2739,7 +2673,6 @@ let syncIntervalOrchestrator = null;
     });
 
     renderCurrentSnapshot();
-    renderPanel();
   }
 
   // [binder/cue: recovery] initial snapshot apply
@@ -2747,7 +2680,7 @@ let syncIntervalOrchestrator = null;
   function renderCurrentSnapshot() {
     if (syncIntervalOrchestrator?.isPaused?.()) return;
 
-    const sequence = getSubtitleBlockSequence();
+    const sequence = subtitleBlockState.getSequence();
     const blocks = Array.isArray(sequence?.blocks) ? sequence.blocks : [];
     const currentIndex = Number.isInteger(sequence?.currentIndex)
       ? sequence.currentIndex
@@ -2755,35 +2688,35 @@ let syncIntervalOrchestrator = null;
     const meta = sequence?.meta || null;
 
     const subtitleViewResolver = window.ATVB?.subtitleViewResolver || null;
+    const sequenceCurrentBlock = subtitleBlockState.getCurrentBlock();
+    const holdBlockCandidate =
+      state.nearbyRebuildHoldView?.currentBlock ||
+      state.currentSubtitleView?.currentBlock ||
+      sequenceCurrentBlock ||
+      state.currentSubtitleBlock ||
+      null;
 
-    const currentBlockFromSequence =
-      currentIndex >= 0 && currentIndex < blocks.length
-        ? blocks[currentIndex] || null
-        : null;
+    const DEBUG_CURRENT_SNAPSHOT_INPUT = false;
 
-    if (false) {
+    if (DEBUG_CURRENT_SNAPSHOT_INPUT) {
       logContentSubtitle("current subtitle view snapshot input", {
         contentKey: historyStore.getCurrentKey() || "",
         totalBlockCount: blocks.length,
         currentIndex,
         sequenceMeta: meta || null,
-        currentBlockFromSequence: currentBlockFromSequence
+        currentBlockFromSequence: sequenceCurrentBlock
           ? {
-              key: currentBlockFromSequence.key || "",
-              startTime: Number(currentBlockFromSequence.startTime ?? 0),
-              endTime: Number(currentBlockFromSequence.endTime ?? 0),
-              state: currentBlockFromSequence.state || "",
-              primaryText: String(currentBlockFromSequence.primaryText || ""),
-              secondaryText: String(currentBlockFromSequence.secondaryText || ""),
-              hasPrimarySignal: Boolean(currentBlockFromSequence.hasPrimarySignal),
-              hasSecondarySignal: Boolean(currentBlockFromSequence.hasSecondarySignal),
+              key: sequenceCurrentBlock.key || "",
+              startTime: Number(sequenceCurrentBlock.startTime ?? 0),
+              endTime: Number(sequenceCurrentBlock.endTime ?? 0),
+              state: sequenceCurrentBlock.state || "",
+              primaryText: String(sequenceCurrentBlock.primaryText || ""),
+              secondaryText: String(sequenceCurrentBlock.secondaryText || ""),
+              hasPrimarySignal: Boolean(sequenceCurrentBlock.hasPrimarySignal),
+              hasSecondarySignal: Boolean(sequenceCurrentBlock.hasSecondarySignal),
             }
           : null,
-        holdBlockCandidate:
-          state.nearbyRebuildHoldView?.currentBlock ||
-          state.currentSubtitleView?.currentBlock ||
-          state.currentSubtitleBlock ||
-          null,
+        holdBlockCandidate,
         blocksPreview: blocks
           .slice(
             Math.max(0, currentIndex - 2),
@@ -2805,26 +2738,22 @@ let syncIntervalOrchestrator = null;
     const view =
       subtitleViewResolver &&
       typeof subtitleViewResolver.resolveUiSubtitleView === "function"
-      ? subtitleViewResolver.resolveUiSubtitleView(blocks, currentIndex, {
-          ...(meta || {}),
-          DEBUG_PANEL_PROBE,
-          now: state.video?.currentTime ?? 0,
-          currentTime: state.video?.currentTime ?? 0,
-          contentKey: historyStore.getCurrentKey() || "",
-          holdView: state.nearbyRebuildHoldView || null,
-          holdBlock:
-            state.nearbyRebuildHoldView?.currentBlock ||
-            state.currentSubtitleView?.currentBlock ||
-            state.currentSubtitleBlock ||
-            null,
-          holdBlockTotalBlockCount: Array.isArray(
-            state.nearbyRebuildHoldView?.blocks,
-          )
-            ? state.nearbyRebuildHoldView.blocks.length
-            : Array.isArray(blocks)
-            ? blocks.length
-            : 0,
-        })
+        ? subtitleViewResolver.resolveUiSubtitleView(blocks, currentIndex, {
+            ...(meta || {}),
+            DEBUG_PANEL_PROBE,
+            now: state.video?.currentTime ?? 0,
+            currentTime: state.video?.currentTime ?? 0,
+            contentKey: historyStore.getCurrentKey() || "",
+            holdView: state.nearbyRebuildHoldView || null,
+            holdBlock: holdBlockCandidate,
+            holdBlockTotalBlockCount: Array.isArray(
+              state.nearbyRebuildHoldView?.blocks,
+            )
+              ? state.nearbyRebuildHoldView.blocks.length
+              : Array.isArray(blocks)
+                ? blocks.length
+                : 0,
+          })
         : {
             primary: "",
             secondary: "",
@@ -2861,6 +2790,16 @@ let syncIntervalOrchestrator = null;
     state.currentSecondaryText = secondaryText;
     state.lastPrimaryText = primaryText;
     state.lastSecondaryText = secondaryText;
+
+    // currentSubtitleBlock は sequence 正本優先の mirror として同期する。
+    state.currentSubtitleBlock =
+      view?.currentBlock ||
+      sequenceCurrentBlock ||
+      null;
+
+    if (state.currentSubtitleBlock) {
+      state.lastCurrentSubtitleBlockAt = Date.now();
+    }
 
     // 空 view は異常ではなく「まだ現在位置の cue が来ていない待機状態」。
     // 起動直後の観測で waiting / ready を見分けやすいよう snapshot ログを残す。
@@ -2955,7 +2894,7 @@ let syncIntervalOrchestrator = null;
     // 言語設定が未完了なら panelOpen=false に寄せて UI を閉じる
     if (!isLanguageSelectionReady(requestedSettings)) {
       state.panelOpen = false;
-      panelUi.destroyUiHosts();
+      panelUi.dispose({ reason: "manual-restart-cleanup" });
       applyLayout(false);
       showLanguageSetupNotice();
       logContentSettings(
@@ -3124,15 +3063,13 @@ let syncIntervalOrchestrator = null;
     // panelDefaultOpen は通常起動時の panelOpen 初期値としてだけ使う
     const panelDefaultOpenSetting = state.contentSettings.panelDefaultOpen !== false;
 
-    // panelOpen を確定してから UI をまとめて build する
-    function _applyPanelVisibleAndBuild(panelOpen) {
+    function applyPanelVisibleAndBuild(panelOpen) {
       state.panelOpen = panelOpen;
       logContent("字幕パネル開閉ボタン/右側字幕パネル build start", {
         panelOpen,
         extensionEnabled: state.contentSettings?.extensionEnabled,
       });
 
-      // 確定した panelOpen をログへ残す
       logContent("startBilingual panelOpen applied", {
         panelOpen: state.panelOpen,
         panelDefaultOpenSetting: state.contentSettings.panelDefaultOpen,
@@ -3140,15 +3077,15 @@ let syncIntervalOrchestrator = null;
         requestedSecondaryLang: state.requestedSecondaryLang || "",
       });
 
-      // panelOpen に合わせて layout controller を初期化する
       layoutController.initForPanelOpen(state.panelOpen);
       logContent("字幕パネル開閉ボタン/右側字幕パネル build done", {
         panelOpen: state.panelOpen,
-        hasSubtitlePanelToggleButton: Boolean(document.body.querySelector("#atv-toggle-btn")),
+        hasSubtitlePanelToggleButton: Boolean(
+          document.body.querySelector("#atv-toggle-btn"),
+        ),
         hasPanelHost: Boolean(document.querySelector("#atv-panel-host")),
       });
 
-      // 再生画面で使う UI を順番に build する
       logPanelProbe("startBilingual ui build step", {
         step: "before_createOverlay",
         panelOpen: state.panelOpen,
@@ -3156,39 +3093,20 @@ let syncIntervalOrchestrator = null;
       createOverlay();
 
       logPanelProbe("startBilingual ui build step", {
-        step: "before_createToggleButton",
+        step: "before_mountForPlayback",
         panelOpen: state.panelOpen,
       });
-      panelUi.createToggleButton();
-
-      logPanelProbe("startBilingual ui build step", {
-        step: "after_createToggleButton",
-        hasToggleButton: Boolean(document.body.querySelector("#atv-toggle-btn")),
+      panelUi.mountForPlayback({
+        panelOpen: state.panelOpen,
       });
-      panelUi.createRightPanel();
 
-      logPanelProbe("startBilingual ui build step", {
-        step: "after_createRightPanel",
-        hasPanelHost: Boolean(document.querySelector("#atv-panel-host")),
-      });
-      panelUi.watchForPlayerTabs();
-
-      logPanelProbe("startBilingual ui build step", {
-        step: "after_watchForPlayerTabs",
-        hasNativeToggle: Boolean(document.getElementById("atvb-native-toggle")),
-      });
-      createPopupHost();
-      createDebugPanel();
-
-      // build 後に panelOpen を各 UI へ反映する
       logPanelProbe("startBilingual ui build step", {
         step: "before_applyPanelVisibility",
         panelOpen: state.panelOpen,
       });
       applyLayout(state.panelOpen);
       renderCurrentSnapshot();
-      renderPanel();
-      panelUi.applyPanelVisibility(state.panelOpen);
+      panelUi.setPanelOpen(state.panelOpen);
 
       logPanelProbe("startBilingual ui build step", {
         step: "after_applyPanelVisibility",
@@ -3199,11 +3117,11 @@ let syncIntervalOrchestrator = null;
 
     // restart 時は keepPanelOpen を優先する
     if (typeof options.keepPanelOpen === "boolean") {
-      _applyPanelVisibleAndBuild(options.keepPanelOpen);
+      applyPanelVisibleAndBuild(options.keepPanelOpen);
     } else {
       // 通常起動時だけ panelDefaultOpen を初期値として local の保存値を復元する
       globalThis.ATVB_PANEL_VISIBILITY.load(panelDefaultOpenSetting).then((restored) => {
-        _applyPanelVisibleAndBuild(restored);
+        applyPanelVisibleAndBuild(restored);
       });
     }
 
@@ -3257,7 +3175,7 @@ let syncIntervalOrchestrator = null;
         trackCount: v?.textTracks?.length ?? 0,
       });
     }
-    panelUi?.watchForPlayerTabs?.();
+    panelUi?.mountToggleOnlyUi?.();
     loadSettingsFromSync();
   }
 

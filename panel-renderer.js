@@ -1,27 +1,37 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - panel-renderer.js
-// version: 2.7.2
-//
 // 役割:
-// - 右字幕パネルの list 描画責務を担当する
-// - panel は resolver の window 表示に依存せず、取得済み subtitleBlocks 全件を表示する
-// - 過去 / 現在 / 未来をひとつのスクロールリストとして扱う
-// - 現在行だけ subtitleView / currentSubtitleBlock で補強し、強調表示する
-//
-// 方針:
-// - truth は state.subtitleBlocks（取得済み字幕ブロック全件）
-// - panel は常に全件ビュー
-// - strict current が取れればそれを使い、取れなければ currentTime に最も近い block を current 扱いにする
-// - panel は current block を常時中央追従させず、下端近くまで来たら
-//   上から 1〜2 行ぶん余白を残す位置へ送る自動スクロールを行う
+// - 右字幕パネルの list 描画責務を担当する。
+// - panel 用 block の truth / same-window grouping / current 派生を
+//   resolver へ委譲し、renderer は描画と interaction に集中する。
+// - subtitleView / currentSubtitleBlock を使って current 行の表示テキストを補強する。
+// - panel 内の word popup / seek click / auto scroll を担当する。
+// - DOM / listener の生成は panel 内部に閉じ、content.js へ詳細を持ち込まない。
 // =============================================================
-(function () {
+
+(() => {
   "use strict";
 
-  window.ATVB = window.ATVB || {};
+  const root = (window.ATVB = window.ATVB || {});
 
+  /**
+   * 右字幕パネル描画を担う renderer factory を生成する。
+   * panel の current 判定や same-window grouping は resolver 側の正本を利用し、
+   * renderer は displayBlocks をそのまま DOM へ反映する責務に寄せる。
+   *
+   * @param {{
+   *   resolvePanelBlocksForRender?: Function,
+   *   state: Object,
+   *   makeClickableSpans: Function,
+   *   formatTime: Function,
+   *   showPopup: Function,
+   *   findCueAt: Function,
+   *   logContent?: Function,
+   * }} deps
+   */
   function createPanelRenderer(deps = {}) {
     const {
+      resolvePanelBlocksForRender,
       state,
       makeClickableSpans,
       formatTime,
@@ -30,8 +40,17 @@
       logContent,
     } = deps;
 
-    // view schema 差分を吸収し、primary / secondary を安定して引けるようにする。
-    // 新 schema を優先しつつ、旧 mainLines / subLines にも後方互換を残す。
+    // -------------------------------------------------------
+    // subtitleView / block text 正規化
+    // -------------------------------------------------------
+
+    /**
+     * subtitleView から primary / secondary テキストを安定して取り出す。
+     * 新 schema を優先しつつ、旧 mainLines / subLines にも後方互換を残す。
+     *
+     * @param {Object|null} subtitleView
+     * @returns {{ primary: string, secondary: string }}
+     */
     function getSubtitleViewTexts(subtitleView) {
       const primary = String(
         subtitleView?.primary ||
@@ -55,7 +74,13 @@
       };
     }
 
-    // block から panel 描画用の primary / secondary を安全に取り出す。
+    /**
+     * panel block から primary / secondary テキストを安全に取り出す。
+     * renderer が旧 field 名と新 field 名の差分を吸収する。
+     *
+     * @param {Object|null} block
+     * @returns {{ primary: string, secondary: string }}
+     */
     function getBlockTexts(block) {
       return {
         primary: String(block?.primaryText || block?.primary || "").trim(),
@@ -63,6 +88,17 @@
       };
     }
 
+    // -------------------------------------------------------
+    // HTML 生成
+    // -------------------------------------------------------
+
+    /**
+     * panel block 1 件分の HTML を生成する。
+     * current / emphasized などの表示状態は resolver の返り値をそのまま使う。
+     *
+     * @param {Object} block
+     * @returns {string}
+     */
     function buildPanelBlockHtml(block) {
       const isWindowCurrent = block.isWindowCurrent === true;
       const isSequentialCurrent =
@@ -79,9 +115,10 @@
       const { primary, secondary } = getBlockTexts(block);
       const pText = makeClickableSpans(primary, primary);
       const sText = makeClickableSpans(secondary, primary);
-      const seekTime = Array.isArray(block.cues) && block.cues[0]
-        ? Number(block.cues[0].startTime ?? block.startTime)
-        : Number(block.startTime ?? 0);
+      const seekTime =
+        Array.isArray(block.cues) && block.cues[0]
+          ? Number(block.cues[0].startTime ?? block.startTime)
+          : Number(block.startTime ?? 0);
 
       return `
         <div
@@ -105,7 +142,16 @@
       `;
     }
 
-    // panel 内の .atv-word に hover / click を結び、popup を表示する。
+    // -------------------------------------------------------
+    // interaction
+    // -------------------------------------------------------
+
+    /**
+     * panel 内の単語 span へ hover / click interaction を結びつける。
+     * click 時は popup を表示し、block click 側へイベントを流さない。
+     *
+     * @param {HTMLElement} blockEl
+     */
     function bindPanelWordInteractions(blockEl) {
       blockEl.querySelectorAll(".atv-word").forEach((span) => {
         span.addEventListener("mouseenter", () => {
@@ -132,8 +178,12 @@
       });
     }
 
-    // 行クリックで該当 startTime へ seek する。
-    // 単語 click は popup 優先なのでここでは除外する。
+    /**
+     * panel list 配下の block へ click interaction を結びつける。
+     * 単語 click は popup 優先のため seek 対象から除外する。
+     *
+     * @param {HTMLElement} list
+     */
     function bindPanelBlockInteractions(list) {
       list.querySelectorAll(".subtitle-block").forEach((blockEl) => {
         bindPanelWordInteractions(blockEl);
@@ -147,6 +197,7 @@
           const t = parseFloat(
             blockEl.dataset.seekTime || blockEl.dataset.time,
           );
+
           if (state.video && !Number.isNaN(t)) {
             state.video.currentTime = t;
             setTimeout(() => renderPanel(), 100);
@@ -155,8 +206,21 @@
       });
     }
 
-    // 最後に描画した current block snapshot を state に残す。
-    // panel / overlay のズレ確認時の観測点として使う。
+    // -------------------------------------------------------
+    // snapshot / observation
+    // -------------------------------------------------------
+
+    /**
+     * 最後に panel へ描画した current block snapshot を state へ保存する。
+     * panel / overlay / subtitleView のズレ確認時の観測点として使う。
+     *
+     * @param {{
+     *   currentBlock: Object|null,
+     *   displayBlocks: Object[],
+     *   curPrimaryCue: Object|null,
+     *   subtitleView: Object|null,
+     * }} params
+     */
     function updatePanelRenderSnapshot({
       currentBlock,
       displayBlocks,
@@ -212,22 +276,28 @@
       }
     }
 
-    // 直近でスクロールを実行した current block の key を覚えておく。
-    // 同じ current に対して renderPanel() が連続で呼ばれても、
-    // 毎回スクロールをやり直して動きがガクつくのを防ぐ。
+    // -------------------------------------------------------
+    // auto scroll
+    // -------------------------------------------------------
+
+    /**
+     * 同一 current block に対して連続スクロールしないための直近 key。
+     * renderPanel() の多重呼び出しでもガクつきを抑える。
+     *
+     * @type {string|null}
+     */
     let lastScrolledCurrentKey = null;
 
-    // current block は「今再生しているブロックにマークが付いた状態」を維持する。
-    // 上下に約1ブロック分の余白を確保し、
-    // 余白を割り込んだときだけ current 行を余白ぶん離れた位置へ戻す。
-    // (下端の余白を割り込んだ場合、結果的に current 行は
-    //  スクロールによって画面下から画面上の余白位置まで移動して見える)
+    /**
+     * current block が可視領域の上下余白を割り込んだときだけ自動スクロールする。
+     * 常時中央追従ではなく、1 ブロック分の余白を保つことで視線移動を抑える。
+     */
     function scrollCurrentPanelBlockIntoView() {
-      const root = state.panelShadowRoot;
-      if (!root) return;
+      const shadowRoot = state.panelShadowRoot;
+      if (!shadowRoot) return;
 
-      const scroller = root.getElementById("panel-scroll");
-      const current = root.getElementById("current-block");
+      const scroller = shadowRoot.getElementById("panel-scroll");
+      const current = shadowRoot.getElementById("current-block");
       if (!scroller || !current) return;
 
       const scrollerRect = scroller.getBoundingClientRect();
@@ -237,8 +307,7 @@
         currentRect.top - scrollerRect.top + scroller.scrollTop;
       const currentBottom = currentTop + currentRect.height;
 
-      // 上下の余白は「1ブロック分」に固定する。
-      // ブロックごとに高さが変わっても、余白の考え方をぶらさない。
+      // 1 ブロック分の余白を上下に確保する。
       const margin = currentRect.height || 56;
 
       const viewTop = scroller.scrollTop + margin;
@@ -249,7 +318,6 @@
         scroller.scrollHeight - scroller.clientHeight,
       );
 
-      // current block を一意に識別する key（同一判定用）。
       const currentKey =
         current.getAttribute("data-seek-time") ||
         current.getAttribute("data-time") ||
@@ -258,36 +326,57 @@
       const isSameAsLastScrolled =
         Boolean(currentKey) && currentKey === lastScrolledCurrentKey;
 
-      // 上余白を割り込んでいる場合（巻き戻し・シーク直後など）。
+      // 上余白を割り込んだ場合は現在行を余白位置まで戻す。
       if (currentTop < viewTop) {
         const target = Math.max(
           0,
           Math.min(maxScrollTop, currentTop - margin),
         );
+
         scroller.scrollTo({
           top: target,
           behavior: isSameAsLastScrolled ? "auto" : "smooth",
         });
+
         lastScrolledCurrentKey = currentKey;
         return;
       }
 
-      // 下余白まで到達したら、current 行を上余白ぶん離れた位置へ戻す。
-      // 同じ current に対しては再発火させない。
+      // 下余白を割り込んだ場合のみスクロールし、同一 current では再発火させない。
       if (currentBottom > viewBottom && !isSameAsLastScrolled) {
         const target = Math.max(
           0,
           Math.min(maxScrollTop, currentTop - margin),
         );
-        scroller.scrollTo({ top: target, behavior: "smooth" });
+
+        scroller.scrollTo({
+          top: target,
+          behavior: "smooth",
+        });
+
         lastScrolledCurrentKey = currentKey;
       }
     }
 
-    // state.subtitleBlocks を panel 表示用 block 配列へ正規化する。
-    // 旧 Array 形式と、新しい { blocks, currentIndex, meta } 形式の両方を受ける。
-    // strict current が無ければ currentTime 最寄り block を current 扱いにする。
-    function getAllPanelBlocks(currentTime) {
+    // -------------------------------------------------------
+    // resolver adapter
+    // -------------------------------------------------------
+
+    /**
+     * state.subtitleBlocks を panel renderer 用の displayBlocks へ解決する。
+     * current 判定・same-window grouping・panel 強調フラグは resolver の正本を使う。
+     *
+     * @param {number} currentTime
+     * @param {Object|null} subtitleView
+     * @returns {{
+     *   blocks: Object[],
+     *   displayBlocks: Object[],
+     *   currentBlocks: Object[],
+     *   usedCurrentFallback: boolean,
+     *   sameWindowGroups: Map<any, any>,
+     * }}
+     */
+    function getAllPanelBlocks(currentTime, subtitleView = null) {
       const subtitleBlocksState = state.subtitleBlocks;
       const sourceBlocks = Array.isArray(subtitleBlocksState)
         ? subtitleBlocksState.slice()
@@ -295,84 +384,42 @@
           ? subtitleBlocksState.blocks.slice()
           : [];
 
-      const sequenceCurrentIndex = Number.isInteger(subtitleBlocksState?.currentIndex)
-        ? subtitleBlocksState.currentIndex
-        : -1;
+      const currentSubtitleBlock =
+        subtitleView?.currentBlock ||
+        state.currentSubtitleBlock ||
+        null;
 
-      const normalizedBlocks = sourceBlocks
-        .filter((block) => block && typeof block === "object")
-        .map((block, index) => ({
-          ...block,
-          key: block.key || `subtitle-block-${index}`,
-          primary: block.primary || block.primaryText || "",
-          secondary: block.secondary || block.secondaryText || "",
-          primaryText: block.primaryText || block.primary || "",
-          secondaryText: block.secondaryText || block.secondary || "",
-        }))
-        .sort((a, b) => {
-          const aStart = Number(a.startTime ?? 0);
-          const bStart = Number(b.startTime ?? 0);
-          return aStart - bStart;
-        });
-
-      let currentIndex =
-        sequenceCurrentIndex >= 0 && sequenceCurrentIndex < normalizedBlocks.length
-          ? sequenceCurrentIndex
-          : normalizedBlocks.findIndex((block) => block.state === "current");
-
-      if (currentIndex < 0 && normalizedBlocks.length > 0) {
-        let closestIndex = 0;
-        let closestDelta = Number.POSITIVE_INFINITY;
-
-        for (let i = 0; i < normalizedBlocks.length; i++) {
-          const block = normalizedBlocks[i];
-          const start = Number(block.startTime ?? 0);
-          const end = Number(block.endTime ?? start);
-          const center = (start + end) / 2;
-          const delta = Math.abs(center - currentTime);
-
-          if (delta < closestDelta) {
-            closestDelta = delta;
-            closestIndex = i;
-          }
-        }
-
-        currentIndex = closestIndex;
+      if (typeof resolvePanelBlocksForRender !== "function") {
+        return {
+          blocks: sourceBlocks,
+          displayBlocks: sourceBlocks,
+          currentBlocks: [],
+          usedCurrentFallback: false,
+          sameWindowGroups: new Map(),
+        };
       }
 
-      const panelBlocks = normalizedBlocks.map((block, index) => {
-        const isCurrent = index === currentIndex;
-        const start = Number(block.startTime ?? 0);
-        const end = Number(block.endTime ?? start);
-
-        let derivedState = block.state;
-        if (!derivedState) {
-          if (isCurrent) {
-            derivedState = "current";
-          } else if (end < currentTime) {
-            derivedState = "past";
-          } else {
-            derivedState = "future";
-          }
-        }
-
-        return {
-          ...block,
-          state: isCurrent ? "current" : derivedState,
-          isWindowCurrent: isCurrent,
-          isSequentialCurrent: isCurrent,
-          isPanelEmphasized: isCurrent,
-        };
+      return resolvePanelBlocksForRender({
+        sourceBlocks,
+        currentTime,
+        currentSubtitleBlock,
+        debugLog:
+          typeof logContent === "function"
+            ? (message, payload) =>
+                logContent(`panel resolver: ${message}`, payload)
+            : null,
       });
-
-      return {
-        panelBlocks,
-        currentIndex,
-        currentBlock:
-          currentIndex >= 0 ? panelBlocks[currentIndex] || null : null,
-      };
     }
 
+    // -------------------------------------------------------
+    // panel render
+    // -------------------------------------------------------
+
+    /**
+     * 現在の subtitleBlocks / subtitleView / currentTime を使って panel を再描画する。
+     * current block の表示テキストは subtitleView を優先して補強し、
+     * DOM の全 rebuild が不要な場合は既存ノードを差分更新する。
+     */
     function renderPanel() {
       if (!state.panelShadowRoot) return;
 
@@ -386,24 +433,26 @@
         getSubtitleViewTexts(subtitleView);
 
       const {
-        panelBlocks: basePanelBlocks,
-        currentIndex,
-        currentBlock: baseCurrentBlock,
-      } = getAllPanelBlocks(currentTime);
+        displayBlocks: resolvedDisplayBlocks,
+        currentBlocks,
+      } = getAllPanelBlocks(currentTime, subtitleView);
 
       const resolvedCurrentBlock =
+        (Array.isArray(currentBlocks) ? currentBlocks[0] || null : null) ||
         subtitleViewCurrentBlock ||
-        (currentIndex >= 0 ? basePanelBlocks[currentIndex] || null : null) ||
-        baseCurrentBlock ||
+        state.currentSubtitleBlock ||
         null;
 
-      const panelBlocks = basePanelBlocks.map((block, index) => {
+      // current 行だけは subtitleView を優先して表示テキストを補強する。
+      const panelBlocks = (Array.isArray(resolvedDisplayBlocks)
+        ? resolvedDisplayBlocks
+        : []
+      ).map((block) => {
         const isCurrent =
-          index === currentIndex ||
-          (resolvedCurrentBlock &&
-            block?.key &&
-            resolvedCurrentBlock?.key &&
-            block.key === resolvedCurrentBlock.key);
+          resolvedCurrentBlock &&
+          block?.key &&
+          resolvedCurrentBlock?.key &&
+          block.key === resolvedCurrentBlock.key;
 
         if (!isCurrent) {
           return {
@@ -433,11 +482,16 @@
           secondary: fallbackSecondary,
           primaryText: fallbackPrimary,
           secondaryText: fallbackSecondary,
-          state: "current",
-          isWindowCurrent: true,
-          isSequentialCurrent: true,
-          isPanelEmphasized: true,
         };
+      });
+
+      const currentIndex = panelBlocks.findIndex((block) => {
+        return (
+          resolvedCurrentBlock &&
+          block?.key &&
+          resolvedCurrentBlock?.key &&
+          block.key === resolvedCurrentBlock.key
+        );
       });
 
       const currentBlock =
@@ -452,39 +506,6 @@
           ? findCueAt(state.primaryTrack, currentBlock.startTime + 0.01)
           : null;
 
-      if (false && typeof logContent === "function") {
-        logContent("panel render blocks debug", {
-          currentTime,
-          currentBlock: currentBlock
-            ? {
-                key: currentBlock.key || null,
-                startTime: currentBlock.startTime ?? null,
-                endTime: currentBlock.endTime ?? null,
-                state: currentBlock.state || null,
-                primaryPreview: String(currentBlock.primaryText || currentBlock.primary || "").slice(0, 80),
-                secondaryPreview: String(currentBlock.secondaryText || currentBlock.secondary || "").slice(0, 80),
-              }
-            : null,
-          stateCurrentSubtitleBlock: state.currentSubtitleBlock || null,
-          subtitleViewCurrentBlock: subtitleViewCurrentBlock || null,
-          subtitleViewPrimary,
-          subtitleViewSecondary,
-          panelBlocksPreview: panelBlocks
-            .slice(
-              Math.max(0, currentIndex - 2),
-              currentIndex >= 0 ? currentIndex + 3 : 5,
-            )
-            .map((block) => ({
-              startTime: block.startTime ?? null,
-              state: block.state || null,
-              isPanelEmphasized: block.isPanelEmphasized ?? null,
-              primaryPreview: String(block.primary || "").slice(0, 80),
-              secondaryPreview: String(block.secondary || "").slice(0, 80),
-            })),
-          totalBlockCount: panelBlocks.length,
-        });
-      }
-
       updatePanelRenderSnapshot({
         currentBlock,
         displayBlocks: panelBlocks,
@@ -492,19 +513,22 @@
         subtitleView,
       });
 
-      // ブロック構成（件数 + 各ブロックの識別子）の signature を作る。
-      // 前回描画と同じ構成であれば、DOM を丸ごと作り直さない。
+      // -----------------------------------------------------
+      // DOM rebuild 判定
+      // -----------------------------------------------------
+
+      // block 構成が同一なら list 全 rebuild を避ける。
       const blockSignature = panelBlocks
         .map((block) => `${block.key || block.startTime || ""}`)
         .join("|");
 
       const shouldRebuildList = state.lastPanelBlockSignature !== blockSignature;
 
-      // ブロックの追加/削除がリストのどこで起きても、
-      // ユーザーが見ている位置が視覚的にズレないようにする。
-      // scrollHeight の差分ではなく、「現在ビューポート上端に
-      // 見えている実在のブロック（アンカー）」を基準に、
-      // 再構築後も同じ見た目の位置へ scrollTop を復元する。
+      // -----------------------------------------------------
+      // スクロール位置アンカー保存
+      // -----------------------------------------------------
+
+      // list 再構築前に、ビューポート先頭の実 block を基準位置として記録する。
       const scrollerEl =
         state.panelShadowRoot?.getElementById("panel-scroll") || null;
 
@@ -516,103 +540,129 @@
         const candidates = Array.from(
           list.querySelectorAll(".subtitle-block"),
         );
-        // ビューポート上端に最初にかかっている要素をアンカーにする。
-        const anchorEl = candidates.find((el) => {
-          const rect = el.getBoundingClientRect();
-          return rect.bottom > scrollerRect.top;
-        });
 
-        if (anchorEl) {
-          const anchorRect = anchorEl.getBoundingClientRect();
-          anchorKey =
-            anchorEl.getAttribute("data-seek-time") ||
-            anchorEl.getAttribute("data-time");
-          // ビューポート上端からアンカーまでの距離（見た目上の位置）。
-          anchorViewportOffset = anchorRect.top - scrollerRect.top;
+        for (const el of candidates) {
+          const rect = el.getBoundingClientRect();
+          if (rect.bottom > scrollerRect.top + 1) {
+            anchorKey =
+              el.getAttribute("data-seek-time") ||
+              el.getAttribute("data-time") ||
+              null;
+            anchorViewportOffset = rect.top - scrollerRect.top;
+            break;
+          }
         }
       }
 
-      if (shouldRebuildList) {
-        list.innerHTML = panelBlocks
-          .map((block) => buildPanelBlockHtml(block))
-          .join("");
+      // -----------------------------------------------------
+      // DOM 反映
+      // -----------------------------------------------------
 
+      if (shouldRebuildList) {
+        list.innerHTML = panelBlocks.map(buildPanelBlockHtml).join("");
         bindPanelBlockInteractions(list);
         state.lastPanelBlockSignature = blockSignature;
 
-        if (scrollerEl && anchorKey !== null) {
-          const newAnchorEl = list.querySelector(
-            `[data-seek-time="${anchorKey}"]`,
+        // 再構築後も同じアンカーが見える位置へ scrollTop を補正する。
+        if (scrollerEl && anchorKey) {
+          const nextAnchor = list.querySelector(
+            `.subtitle-block[data-seek-time="${anchorKey}"], .subtitle-block[data-time="${anchorKey}"]`,
           );
-          if (newAnchorEl) {
-            // ★ offsetTop は使わない。
-            // #panel はShadow DOM内にあり、#panel-scroll / .subtitle-block に
-            // position指定が無いため、offsetParent の探索が Shadow DOM の
-            // 境界を越えてページ側まで遡ってしまい、無関係な絶対座標が
-            // 返ってくることがある。
-            // getBoundingClientRect() はビューポート基準の絶対座標であり、
-            // offsetParent の有無や Shadow DOM 境界に影響されないため、
-            // #panel-scroll という「実際にスクロールする要素」の中での
-            // 相対位置を確実に再現できる。
-            const scrollerRectNow = scrollerEl.getBoundingClientRect();
-            const newAnchorRectNow = newAnchorEl.getBoundingClientRect();
 
-            // 再構築直後、現状の scrollTop のままでアンカーが
-            // ビューポート上端からどれだけ離れて見えているか。
-            const currentViewportOffset =
-              newAnchorRectNow.top - scrollerRectNow.top;
-
-            // 「見たかった位置(anchorViewportOffset)」との差分だけ
-            // scrollTop を動かす。
-            const delta = currentViewportOffset - anchorViewportOffset;
-
-            const maxScrollTop = Math.max(
-              0,
-              scrollerEl.scrollHeight - scrollerEl.clientHeight,
-            );
-            scrollerEl.scrollTop = Math.max(
-              0,
-              Math.min(maxScrollTop, scrollerEl.scrollTop + delta),
-            );
+          if (nextAnchor) {
+            const scrollerRect = scrollerEl.getBoundingClientRect();
+            const nextRect = nextAnchor.getBoundingClientRect();
+            const delta =
+              nextRect.top - scrollerRect.top - anchorViewportOffset;
+            scrollerEl.scrollTop += delta;
           }
         }
       } else {
-        // 構成が同じ場合は current の付け替えだけ行い、
-        // スクロールアニメーションを中断させないようにする。
-        const existingCurrent = list.querySelector("#current-block");
-        if (existingCurrent && existingCurrent.id === "current-block") {
-          existingCurrent.removeAttribute("id");
-          existingCurrent.setAttribute("data-sequential-current", "false");
-          existingCurrent.setAttribute("data-panel-emphasized", "false");
-          const mark = existingCurrent.querySelector(".subtitle-mark");
-          if (mark) mark.innerHTML = "";
-        }
+        const existingBlocks = Array.from(
+          list.querySelectorAll(".subtitle-block"),
+        );
 
-        const newCurrentEl = currentBlock
-          ? list.querySelector(
-              `[data-seek-time="${currentBlock.startTime ?? ""}"]`,
-            )
-          : null;
-        if (newCurrentEl) {
-          newCurrentEl.id = "current-block";
-          newCurrentEl.setAttribute("data-sequential-current", "true");
-          newCurrentEl.setAttribute("data-panel-emphasized", "true");
-          const mark = newCurrentEl.querySelector(".subtitle-mark");
-          if (mark) {
-            mark.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" /><polygon class="play-core" points="10,8 17,12 10,16" /></svg>`;
+        panelBlocks.forEach((block, index) => {
+          const el = existingBlocks[index];
+          if (!el) return;
+
+          const shouldBeCurrent = block.isSequentialCurrent === true;
+          if (shouldBeCurrent) {
+            el.id = "current-block";
+          } else if (el.id === "current-block") {
+            el.removeAttribute("id");
           }
-        }
+
+          el.dataset.windowCurrent = block.isWindowCurrent ? "true" : "false";
+          el.dataset.sequentialCurrent = block.isSequentialCurrent
+            ? "true"
+            : "false";
+          el.dataset.panelEmphasized = block.isPanelEmphasized
+            ? "true"
+            : "false";
+
+          const primaryEl = el.querySelector(".subtitle-primary");
+          const secondaryEl = el.querySelector(".subtitle-secondary");
+          const markEl = el.querySelector(".subtitle-mark");
+
+          const { primary, secondary } = getBlockTexts(block);
+
+          if (primaryEl) {
+            primaryEl.innerHTML = makeClickableSpans(primary, primary);
+          }
+
+          if (secondary) {
+            if (secondaryEl) {
+              secondaryEl.innerHTML = makeClickableSpans(secondary, primary);
+            } else {
+              const contentEl = el.querySelector(".subtitle-content");
+              if (contentEl) {
+                const node = document.createElement("div");
+                node.className = "subtitle-secondary";
+                node.innerHTML = makeClickableSpans(secondary, primary);
+                contentEl.appendChild(node);
+              }
+            }
+          } else if (secondaryEl) {
+            secondaryEl.remove();
+          }
+
+          if (markEl) {
+            markEl.innerHTML = block.isPanelEmphasized
+              ? `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" /><polygon class="play-core" points="10,8 17,12 10,16" /></svg>`
+              : "";
+          }
+        });
       }
+
+      // -----------------------------------------------------
+      // current 行自動スクロール
+      // -----------------------------------------------------
 
       scrollCurrentPanelBlockIntoView();
     }
 
+    // -------------------------------------------------------
+    // エクスポート
+    // -------------------------------------------------------
+
     return {
       renderPanel,
+      getSubtitleViewTexts,
+      getBlockTexts,
+      buildPanelBlockHtml,
+      bindPanelWordInteractions,
+      bindPanelBlockInteractions,
+      updatePanelRenderSnapshot,
+      scrollCurrentPanelBlockIntoView,
+      getAllPanelBlocks,
     };
   }
 
-  window.ATVB.panelRenderer = {
-    createPanelRenderer,
-  };
+  // -------------------------------------------------------
+  // エクスポート（namespace形式: window.ATVB.panelRenderer.*）
+  // -------------------------------------------------------
+
+  root.panelRenderer = root.panelRenderer || {};
+  root.panelRenderer.createPanelRenderer = createPanelRenderer;
 })();
