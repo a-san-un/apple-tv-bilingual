@@ -433,32 +433,36 @@ Step 17-A は次の順序で進める。
 - `panel-visibility-state` は load / persist 専用のままか。
 - Step 17-B の visibility cleanup owner 固定と Step 18 の term inspector 抽出に接続できる形か。
 
-## 8. Step 17-B / 18 へつなぐ出口
+## 8. 実施状況と残作業
 
-Step 17-A の完了時点では、panel 系 API を薄く固定し、`content.js` は panel owner の生成・更新・破棄だけを担当する構成へ寄せる。
+### 完了済み
 
-想定する出口 API 断面:
+- 17-A-7: `content.js` の panel renderer 直接依存を外し、`panelRenderer` と `getPanelRenderInput()` を panel owner へ DI する形に整理した。
+- 17-A-7: subtitle block facade から panel list の直接描画を外し、block rebuild と subtitle snapshot 更新までに縮小した。
+- 17-A-9: `panel-ui.js`、`panel-renderer.js`、`subtitle-blocks.js`、`subtitle-block-resolver.js` を `modules/` 配下へ移動した。
+- 17-A-9: `manifest.json` の content_scripts 参照を `modules/` 配下のパスへ更新し、既存の依存順を維持した。
+- panel.css は ShadowRoot 内から `chrome.runtime.getURL("panel.css")` で参照する web accessible resource であるため、Step 17-A の JS module 移行対象から除外した。
 
-- `createPanelUi(...)`
-- `panel.setOpen(isOpen)`
-- `panel.updateScene(snapshotLike)`
-- `panel.dispose()`
+### 残作業
 
-この状態まで寄せられれば、Step 17-B では visibility state と cleanup owner の固定へ進みやすく、Step 18 では term inspector の抽出を panel とは独立した owner として進められる。
+#### 17-A-8: dispose 契約の固定
 
-## 9. 今回と混ぜない論点
+- `panelUi.dispose()` が host、toggle、observer、listener、timer、overlay、render snapshot、block state をどこまで破棄するかをコードと JSDoc で確定する。
+- `destroyUiHosts()`、`destroyFeatureUiHosts()`、`removeHost()`、`dispose()` の責務重複を確認し、cleanup の入口を `panelUi.dispose()` に寄せる。
+- playback detach、SPA 遷移、拡張機能無効化、再起動時に同じ dispose 経路が使われるか確認する。
+- dispose 後に stale な ShadowRoot、DOM node、listener、observer、timer、render snapshot、block state が残らないことを確認する。
 
-今回の Step 17-A には次を混ぜない。
+#### 17-A-10: Step 17-B / 18 向け API 境界の固定
 
-- Step 17-B 以降の visibility cleanup owner 固定の完遂
-- Step 18 の term inspector 抽出実装
-- toggle 完全リセット実装
-- large seek 後の track 参照消失調査
-- async response エラー調査
-- panel UI / overlay UI / layout 調整
-- 別スコープの test failure 修正
+- `content.js` に残る `getSubtitleBlockSequence`、`getCurrentSubtitleBlockFromSequence`、`renderCurrentSnapshot`、`applyPanelStateEffects` の利用元を棚卸しする。
+- content.js に残す高レベル中継 API と、panel owner / block state owner に閉じる API を確定する。
+- `panelUi.applyPanelState()` と `panelUi.refreshPanel()` の使い分けを API 契約として明文化する。
+- Step 17-B で扱う UI / lifecycle / popup / overlay の論点と、Step 17-A で閉じる panel/block owner 論点を分離する。
 
-## 10. 結論
+### 完了判定
 
-Step 17-A は、panel 機能追加ではなく owner 整理と cleanup 契約の固定が主目的である。  
-実装は、依存棚卸し → visibility 正本固定 → panel owner 再整理 → renderer / resolver / block state 分離 → `content.js` 薄化 → dispose 契約固定 → modules 統合 → API 境界固定、の順で進めるのが最も安全である。
+- `content.js` が panel DOM、ShadowRoot、listener、observer、render snapshot、block state の実装詳細を持たない。
+- `panelUi.dispose()` を単一入口として panel 系の cleanup 経路を追跡できる。
+- `modules/` 移行後の manifest 読み込み順、panel open/close、seek、SPA 遷移、再入場を実機確認する。
+- Step 17-B / 18 に渡す API と未解決論点が文書化されている。
+
