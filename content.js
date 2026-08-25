@@ -47,7 +47,6 @@
   ];
   const TRACK_RESOLVE_RETRY_DELAYS_MS = [120, 260, 420, 680];
   const SECONDARY_SUBTITLE_IDLE_CLEAR_MS = 3200;
-  const PANEL_PRIMARY_GRACE_MS = 600;
   const SUBTITLE_HISTORY_MAX_PER_CONTENT = 500;
   const PANEL_SLOT_LAYER_STYLE_ID = "atv-panel-slot-layer-style";
 
@@ -648,12 +647,9 @@ function forwardContentLog(...args) {
     };
   }
 
-  function _ensurePanelSlotLayerStyle() {
-    if (!secondarySubtitleDom?.ensure) return;
-    secondarySubtitleDom.ensure();
-  }
-
   // [render: secondary subtitle dom]
+  // panel host / panel slot style の owner は panel-ui.js に移した。
+  // content.js は secondary subtitle DOM の高レベル描画だけを担当する。
   function renderSecondarySubtitle(text, track, reason = "unspecified") {
     if (!secondarySubtitleDom?.render) return;
     secondarySubtitleDom.render(text, track, reason);
@@ -1855,37 +1851,46 @@ function forwardContentLog(...args) {
     renderCurrentSnapshot,
   });
 
-  const { renderPanel } = createPanelRenderer({
+  // -----------------------------------------------------------
+  // Section: panel renderer dependency injection
+  // -----------------------------------------------------------
+
+  /**
+   * panel list の描画専用 renderer。
+   *
+   * renderer は共有 state を直接参照しない。
+   * state からの入力組み立て、snapshot / signature / scroll key の保持、
+   * seek 後の再描画予約は panel-ui.js が owner として担当する。
+   */
+  const panelRenderer = createPanelRenderer({
     resolvePanelBlocksForRender,
-    state,
     makeClickableSpans,
     formatTime: vttDeps.formatTime,
     showPopup,
     findCueAt,
-    getCurrentCue,
-    cleanCueText: vttDeps.cleanCueText,
     logContent,
-    PANEL_PRIMARY_GRACE_MS,
-    DEBUG_PANEL_PROBE,
   });
+
+  // -----------------------------------------------------------
+  // Section: subtitle block state facade
+  // -----------------------------------------------------------
 
   /**
    * subtitle block state の読み取り・書き込みを集約する facade。
    *
-   * - content.js 内で `subtitleBlockState` を直接参照する箇所を減らすための窓口。
-   * - panel open 時の効果（block再構築 → snapshot描画 → panel再描画）を
-   *   `applyPanelOpenEffects()` に集約し、呼び出し側に順序知識を持たせない。
+   * - `modules/subtitle-block-state.js` を block state の正本とする。
+   * - content.js 内の block state 参照は、この facade 経由に統一する。
+   * - panel list の描画は panel-ui.js owner の責務であり、この facade は実行しない。
+   * - panel open 時の effect は block 再構築と subtitle snapshot 更新までに留める。
    *
    * @param {object} deps - 依存注入オブジェクト。
-   * @param {object} deps.subtitleBlockState - block state の正本（modules/subtitle-block-state.js）。
-   * @param {() => void} deps.renderCurrentSnapshot - 現在字幕 snapshot の再描画関数。
-   * @param {() => void} deps.renderPanel - 履歴パネル全体の再描画関数。
+   * @param {object} deps.subtitleBlockState - block state の正本。
+   * @param {() => void} deps.renderCurrentSnapshot - 現在字幕 snapshot の高レベル描画関数。
    * @returns {object} subtitle-block-api の公開 API。
    */
   function createSubtitleBlockApi({
     subtitleBlockState,
     renderCurrentSnapshot,
-    renderPanel,
   }) {
     return {
       getSequence: () => subtitleBlockState.getSequence(),
@@ -1897,19 +1902,48 @@ function forwardContentLog(...args) {
       applyPanelOpenEffects: (reason = "panel_open") => {
         subtitleBlockState.rebuildForPanelOpen(reason);
         renderCurrentSnapshot?.();
-        renderPanel?.();
       },
     };
   }
 
-  // [panel: block-state facade]
-  // content.js から subtitleBlockState への直接依存を減らすための窓口。
-  // Step 17-A 以降、content.js 内の subtitleBlockState 参照はこの facade 経由に統一する。
+  // content.js は subtitleBlockState の内部実装を直接扱わない。
+  // panel list の render 実行は panelUi.applyPanelState() / refreshPanel() へ委譲する。
   const subtitleBlockApi = createSubtitleBlockApi({
     subtitleBlockState,
     renderCurrentSnapshot,
-    renderPanel,
   });
+
+  // -----------------------------------------------------------
+  // Section: panel render input adapter
+  // -----------------------------------------------------------
+
+  /**
+   * panel-ui.js が panel-renderer.js を呼ぶための描画入力を組み立てる。
+   *
+   * content.js は共有 state をここで値へ分解するだけであり、
+   * ShadowRoot の所有、snapshot / signature / scroll key の保持、
+   * seek 後の再描画予約は panel-ui.js に委譲する。
+   *
+   * @returns {{
+   *   shadowRoot: ShadowRoot|null,
+   *   subtitleBlocks: object|Array<object>|null,
+   *   subtitleView: object|null,
+   *   currentSubtitleBlock: object|null,
+   *   currentTime: number,
+   *   primaryTrack: TextTrack|null,
+   * }}
+   */
+  function getPanelRenderInput() {
+    return {
+      shadowRoot: state.panelShadowRoot || null,
+      subtitleBlocks: state.subtitleBlocks || null,
+      subtitleView: state.currentSubtitleView || null,
+      currentSubtitleBlock: subtitleBlockApi.getCurrentBlock(),
+      currentTime: Number(state.video?.currentTime ?? 0),
+      primaryTrack: state.primaryTrack || null,
+    };
+  }
+
 
   const { createPlaybackControlsLayout } = root.playbackControlsLayout;
   const playbackControlsLayout = createPlaybackControlsLayout({
@@ -2072,7 +2106,8 @@ function forwardContentLog(...args) {
       overlayController.updateOverlayFromBlock(block, {
         contentKey: historyStore.getCurrentKey() || "",
       }),
-    renderPanel,
+    refreshPanel: (reason = "service-refresh-panel") =>
+      panelUi?.refreshPanel?.(reason),
     matchesRequestedLanguage: resolverDeps.matchesRequestedLanguage,
     isForcedLikeTrack: resolverDeps.isForcedLikeTrack,
     textTrackDebug,
@@ -2214,8 +2249,18 @@ function forwardContentLog(...args) {
   root.cueTrackBinder = root.cueTrackBinder ?? {};
   if (cueTrackBinder) root.cueTrackBinder.instance = cueTrackBinder;
 
-let syncIntervalOrchestrator = null;
+  // -----------------------------------------------------------
+  // Section: panel UI owner dependency injection
+  // -----------------------------------------------------------
 
+  let syncIntervalOrchestrator = null;
+
+  /**
+   * panel-ui.js は panel host / ShadowRoot / renderer 実行 / render state の owner。
+   *
+   * content.js は共有 state と高レベルサービスを DI し、
+   * panel DOM・render snapshot・seek 後の再描画制御の実装詳細を持たない。
+   */
   panelUi = createPanelUi({
     state,
     getTarget,
@@ -2225,12 +2270,22 @@ let syncIntervalOrchestrator = null;
     sendToBackground,
     applyLayout,
     logContent,
+
+    // block 再構築と subtitle snapshot 更新までが content 側の高レベル effect。
+    // panel list render は panel-ui.js がこの callback 後に実施する。
     applyPanelStateEffects: (reason) =>
       subtitleBlockApi.applyPanelOpenEffects(reason),
+
     destroyOverlay,
     mountPopupHost: createPopupHost,
     mountDebugPanel: createDebugPanel,
     overlayController,
+
+    // panel renderer は state を直接読まない。
+    // panel-ui.js が owner として描画入力を受け取り、内部で panelRenderer を実行する。
+    panelRenderer,
+    getPanelRenderInput,
+
     onPanelOpen: () => {
       // 1. オーバーレイを再表示
       setOverlayVisible(true);
@@ -2636,21 +2691,9 @@ let syncIntervalOrchestrator = null;
     });
   }
 
-
-  function _refreshSettingsOnPanelOpen() {
-    if (!state.panelOpen) return;
-
-    reinitializeCoordinator?.reloadSettingsAndReinitialize(
-      "panel_open_settings_reloaded",
-    );
-
-    logContent("panel open settings reloaded", {
-      primaryLang: state.contentSettings.primaryLang,
-      secondaryLang: state.contentSettings.secondaryLang,
-      requestedSecondaryLang: state.requestedSecondaryLang,
-      trackCount: state.video?.textTracks?.length ?? 0,
-    });
-  }
+  // panel open 時の再初期化は reinitializeCoordinator.reinitializeSubtitlePipeline()
+  // に一本化する。
+  // settings reload を伴う別入口は Step 17-A の現行経路では未使用のため置かない。
 
   // [binder/cue: attach] secondary track binder
   // [binder/cue: fan-out] cuechange fan-out:
@@ -2879,7 +2922,8 @@ let syncIntervalOrchestrator = null;
         contentKey: historyStore.getCurrentKey() || "",
       });
     }
-    renderPanel();
+
+    panelUi?.refreshPanel?.("render-current-snapshot");
   }
 
   // [startup path: initial bilingual start]
