@@ -29,9 +29,8 @@
    * @param {() => Element} deps.getTarget - panel / toggle button を差し込む対象ノードを返す関数。
    * @param {(panelOpen: boolean) => void} deps.applyLayout - panelOpen に応じてレイアウトを適用する関数。
    * @param {(...args: any[]) => void} deps.logContent - content ログを記録する関数。
-   * @param {() => void} deps.renderCurrentSnapshot - 現在字幕の snapshot 描画を行う関数。
-   * @param {() => void} deps.renderPanel - 履歴パネル全体の再描画を行う関数。
-   * @param {(reason: string) => void} deps.rebuildSubtitleBlocksForPanelOpen - panel open 時の字幕ブロック再構築関数。
+   * @param {(reason: string) => void} deps.applyPanelStateEffects - panel open 時に必要な
+   *   block 再構築・snapshot 描画・履歴パネル再描画をまとめて適用する関数。
    * @param {() => void} deps.destroyOverlay - overlay UI を破棄する関数。
    * @param {() => void} [deps.mountPopupHost] - popup host（単語ポップアップ等）を mount する関数。
    * @param {() => void} [deps.mountDebugPanel] - debug panel を mount する関数。
@@ -44,9 +43,7 @@
       getTarget,
       applyLayout,
       logContent,
-      renderCurrentSnapshot,
-      renderPanel,
-      rebuildSubtitleBlocksForPanelOpen,
+      applyPanelStateEffects,
       destroyOverlay,
       mountPopupHost,
       mountDebugPanel,
@@ -349,8 +346,11 @@
     }
 
     /**
-     * panel 状態全体を適用する（表示制御 → 字幕ブロック再構築 → snapshot 描画 → 履歴再描画）。
+     * panel 状態全体を適用する（表示制御 → panel open 時の副作用適用）。
      * `reason` はログ用のトリガー識別文字列。
+     *
+     * - block 再構築 / snapshot 描画 / 履歴パネル再描画の順序知識は
+     *   `content.js` 側の高レベル API へ委譲し、この owner は「いつ適用するか」だけを持つ。
      *
      * @param {string} reason - 呼び出し理由（ログ用）。
      * @returns {void}
@@ -366,19 +366,10 @@
       // 表示切り替えを先に行う
       applyPanelVisibility(state.panelOpen);
 
-      // パネルが開いているときだけ字幕ブロックを再構築する
-      if (typeof rebuildSubtitleBlocksForPanelOpen === "function") {
-        rebuildSubtitleBlocksForPanelOpen(reason);
-      }
-
-      // 現在字幕の snapshot を描画する
-      if (typeof renderCurrentSnapshot === "function") {
-        renderCurrentSnapshot();
-      }
-
-      // 履歴パネル全体を再描画する
-      if (typeof renderPanel === "function") {
-        renderPanel();
+      // panel open 時に必要な block / snapshot / render 反映は
+      // content.js から渡された高レベル API へまとめて委譲する。
+      if (typeof applyPanelStateEffects === "function") {
+        applyPanelStateEffects(reason);
       }
 
       // パネル状態をログへ残す

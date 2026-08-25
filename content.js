@@ -2214,9 +2214,8 @@ let syncIntervalOrchestrator = null;
     sendToBackground,
     applyLayout,
     logContent,
-    renderCurrentSnapshot,
-    renderPanel,
-    rebuildSubtitleBlocksForPanelOpen: (reason) => subtitleBlockState.rebuildForPanelOpen(reason),
+    applyPanelStateEffects: (reason) =>
+      subtitleBlockApi.applyPanelOpenEffects(reason),
     destroyOverlay,
     mountPopupHost: createPopupHost,
     mountDebugPanel: createDebugPanel,
