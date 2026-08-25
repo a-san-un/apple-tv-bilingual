@@ -1988,7 +1988,11 @@ function forwardContentLog(...args) {
         cleanCueText: vttDeps.cleanCueText,
         getPrimaryTrackCues: () => state.primaryTrack?.cues || [],
         getSecondaryTrackCues: () => state.secondaryTrack?.cues || [],
-        getPreviousSubtitleBlocks: () => subtitleBlockState.getSequence(),
+
+        // subtitle block state の参照は facade 経由に統一する。
+        // builder は block state の内部実装を直接知らない。
+        getPreviousSubtitleBlocks: () => subtitleBlockApi.getSequence(),
+
         buildSubtitleBlockSequence,
         setSubtitleBlocks,
         getBoundPrimaryTrack: () => state.primaryTrack,
@@ -2044,11 +2048,18 @@ function forwardContentLog(...args) {
     getVideoElement: () => state.video ?? null,
     getPrimaryTrackCues: () => state.primaryTrack?.cues || [],
     getSecondaryTrackCues: () => state.secondaryTrack?.cues || [],
-    getPreviousSubtitleBlocks: () => subtitleBlockState.getSequence(),
+
+    // cue-controller へ渡す block state の参照は facade に統一する。
+    // DI key は既存 cue-controller の契約を維持し、取得実装だけを差し替える。
+    getPreviousSubtitleBlocks: () => subtitleBlockApi.getSequence(),
+
     buildSubtitleBlockSequence,
     setSubtitleBlocks,
-    getSubtitleBlockSequence: () => subtitleBlockState.getSequence(),
-    getCurrentSubtitleBlockFromSequence: () => subtitleBlockState.getCurrentBlock(),
+
+    getSubtitleBlockSequence: () => subtitleBlockApi.getSequence(),
+    getCurrentSubtitleBlockFromSequence: () =>
+      subtitleBlockApi.getCurrentBlock(),
+
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     renderCurrentSnapshot,
