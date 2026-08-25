@@ -1869,6 +1869,48 @@ function forwardContentLog(...args) {
     DEBUG_PANEL_PROBE,
   });
 
+  /**
+   * subtitle block state の読み取り・書き込みを集約する facade。
+   *
+   * - content.js 内で `subtitleBlockState` を直接参照する箇所を減らすための窓口。
+   * - panel open 時の効果（block再構築 → snapshot描画 → panel再描画）を
+   *   `applyPanelOpenEffects()` に集約し、呼び出し側に順序知識を持たせない。
+   *
+   * @param {object} deps - 依存注入オブジェクト。
+   * @param {object} deps.subtitleBlockState - block state の正本（modules/subtitle-block-state.js）。
+   * @param {() => void} deps.renderCurrentSnapshot - 現在字幕 snapshot の再描画関数。
+   * @param {() => void} deps.renderPanel - 履歴パネル全体の再描画関数。
+   * @returns {object} subtitle-block-api の公開 API。
+   */
+  function createSubtitleBlockApi({
+    subtitleBlockState,
+    renderCurrentSnapshot,
+    renderPanel,
+  }) {
+    return {
+      getSequence: () => subtitleBlockState.getSequence(),
+      getCurrentBlock: () => subtitleBlockState.getCurrentBlock(),
+      syncCurrentBlock: (block, meta = null) =>
+        subtitleBlockState.syncCurrentBlock(block, meta),
+      rebuildForPanelOpen: (reason = "panel_open") =>
+        subtitleBlockState.rebuildForPanelOpen(reason),
+      applyPanelOpenEffects: (reason = "panel_open") => {
+        subtitleBlockState.rebuildForPanelOpen(reason);
+        renderCurrentSnapshot?.();
+        renderPanel?.();
+      },
+    };
+  }
+
+  // [panel: block-state facade]
+  // content.js から subtitleBlockState への直接依存を減らすための窓口。
+  // Step 17-A 以降、content.js 内の subtitleBlockState 参照はこの facade 経由に統一する。
+  const subtitleBlockApi = createSubtitleBlockApi({
+    subtitleBlockState,
+    renderCurrentSnapshot,
+    renderPanel,
+  });
+
   const { createPlaybackControlsLayout } = root.playbackControlsLayout;
   const playbackControlsLayout = createPlaybackControlsLayout({
     DEBUG_SECONDARY_SUBS,
@@ -2677,10 +2719,11 @@ let syncIntervalOrchestrator = null;
 
   // [binder/cue: recovery] initial snapshot apply
   // 起動直後に取得済み cue を即時適用し、current block 未確定時は failure ではなく waiting 状態として扱う。
+  // subtitleBlockState への直接参照は使わず、subtitleBlockApi 経由に統一する。
   function renderCurrentSnapshot() {
     if (syncIntervalOrchestrator?.isPaused?.()) return;
 
-    const sequence = subtitleBlockState.getSequence();
+    const sequence = subtitleBlockApi.getSequence();
     const blocks = Array.isArray(sequence?.blocks) ? sequence.blocks : [];
     const currentIndex = Number.isInteger(sequence?.currentIndex)
       ? sequence.currentIndex
@@ -2688,7 +2731,7 @@ let syncIntervalOrchestrator = null;
     const meta = sequence?.meta || null;
 
     const subtitleViewResolver = window.ATVB?.subtitleViewResolver || null;
-    const sequenceCurrentBlock = subtitleBlockState.getCurrentBlock();
+    const sequenceCurrentBlock = subtitleBlockApi.getCurrentBlock();
     const holdBlockCandidate =
       state.nearbyRebuildHoldView?.currentBlock ||
       state.currentSubtitleView?.currentBlock ||
