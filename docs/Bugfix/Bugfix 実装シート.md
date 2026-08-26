@@ -1,17 +1,17 @@
-# Bugfix 実装シート 2026-08-26（作業台版）
+# Bugfix 実装シート 2026-08-26（作業台完了記録版）
 
 **ブランチ:** `issue-32-content-core-split`  
 **対応マスタープラン:** `docs/Bugfix/Bugfix マスタープラン.md`  
 **対応方針メモ:** `docs/Bugfix/Step17-A_panel系統合_方針整理メモ.md`  
-**最新反映コミット:** `1ce5c3a docs: Step 17-A-8完了と17-B visibility/lifecycle計画を記録する (Issue #32)`  
-**現在の作業:** Step 17-A-10 — panel / block public API と `content.js` の高レベル中継境界を固定する。
+**最新反映コミット:** `43ed673 refactor: Step 17-A-10 の owner 境界整理とコメント同期を反映する`  
+**現在の作業:** Step 17-A-10 完了記録 — panel / block public API と `content.js` の高レベル中継境界の固定結果を整理する。
 
 ***
 
 ## このシートの役割
 
-このシートは、**現在着手している Step 17-A-10 だけの作業台**である。  
-変更対象、ファイル単位の実装順、確認観点、実機検証、作業中の判断を記録する。
+このシートは、**Step 17-A-10 の作業台兼完了記録**である。  
+変更対象、ファイル単位の実装順、確認観点、実機検証、作業中の判断、および完了結果を記録する。
 
 全体目標、過去 Step の完了履歴、将来作業、各資料の役割は `Bugfix マスタープラン.md` を参照する。  
 Step 17-A の owner 判断、API 契約、詳細な移行根拠は `Step17-A_panel系統合_方針整理メモ.md` を正本とする。
@@ -20,7 +20,7 @@ Step 17-A の owner 判断、API 契約、詳細な移行根拠は `Step17-A_pan
 
 ## 今回の目的
 
-Step 17-A-10 として、`content.js` に残る panel / block 関連の高レベル中継 API を棚卸しし、次を固定する。
+Step 17-A-10 として、`content.js` に残る panel / block 関連の高レベル中継 API を棚卸しし、次を固定した。
 
 - `content.js` に残すべき起動シーケンス・DI・高レベル中継 API
 - `modules/panel-ui.js` に閉じるべき panel UI / render 実行 API
@@ -28,13 +28,13 @@ Step 17-A-10 として、`content.js` に残る panel / block 関連の高レベ
 - `modules/panel-renderer.js` に閉じるべき描画専用 API
 - Step 17-B の visibility / lifecycle 整理、および Step 18 の term inspector 分離へ渡す public API 境界
 
-今回の作業では、panel の見た目、overlay の見た目、字幕同期ロジック、track 選択、native toggle、Step 17-B の visibility / lifecycle 実装、Step 18 の term inspector 抽出は行わない。
+今回の作業では、panel の見た目、overlay の見た目、字幕同期ロジック、track 選択、native toggle、Step 17-B の visibility / lifecycle 実装、Step 18 の term inspector 抽出は行っていない。
 
 ***
 
 ## 前提
 
-以下は完了済みであり、今回の変更で壊してはならない。
+以下は完了済みであり、今回の変更でも維持した。
 
 - `panelUi.dispose()` は panel host、ShadowRoot、toggle button、native toggle observer、resize listener、render timer、render snapshot、renderer owner state、overlay DOM を対称に cleanup する高レベル入口である。
 - `removeHost()` は低レベルな DOM host 除去だけを担当する。
@@ -49,219 +49,138 @@ Step 17-A-10 として、`content.js` に残る panel / block 関連の高レベ
 
 ## 対象ファイル
 
-| ファイル | 今回確認する責務 | Step 17-A-10 で判断すること |
+| ファイル | 今回確認した責務 | Step 17-A-10 の結果 |
 | :-- | :-- | :-- |
-| `content.js` | DI、起動シーケンス、高レベル中継、共有 state | 残す public API、module owner へ移す内部 API、削除可能な wrapper |
-| `modules/panel-ui.js` | panel host / ShadowRoot / toggle / renderer 呼び出し / render owner state | `content.js` から受ける最小 DI と公開 API |
-| `modules/subtitle-block-state.js` | sequence / current block / meta / mirror 同期 / panel open 時の rebuild | block 読み取り・解決・同期 API の公開範囲 |
-| `modules/subtitle-blocks.js` | block rebuild facade、subtitle snapshot 更新 | block state owner との境界、panel 描画を持たないことの確認 |
-| `modules/subtitle-block-resolver.js` | panel 表示用 block への計算変換 | state / DOM / render を持たないことの確認 |
-| `modules/panel-renderer.js` | 描画専用、snapshot 算出 | render 入力と戻り値の契約、shared state 非依存の維持 |
-| `modules/panel-visibility-state.js` | `panelOpen` の load / persist | panel UI / block API と混ざっていないことの確認 |
-| `modules/playback-session-cleanup.js` | restart / OFF / content switch cleanup | `panelUi.dispose()` と block reset API の呼び分け |
-| `modules/subtitle-state-reset.js` | complete reset / render snapshot clear | block state reset と panel render artifact reset の境界 |
-| `reinitialize-coordinator.js` | 再初期化の順序制御 | 高レベル中継 API をどこまで持つか |
-| `manifest.json` | module 読み込み順 | API 移動で依存順変更が必要になった場合のみ確認 |
+| `content.js` | DI、起動シーケンス、高レベル中継、共有 state | 旧 sequence getter wrapper / block rebuild façade を整理し、高レベル orchestration と DI に寄せた。 |
+| `cue-controller.js` | cue sequence 利用側の orchestration | 旧 sequence getter DI と fallback を削除し、sequence build 詳細を owner 外へ持たない構成に揃えた。 |
+| `modules/panel-ui.js` | panel host / ShadowRoot / toggle / renderer 呼び出し / render owner state | `clearPanelRenderArtifacts()` を追加し、dispose 時の render artifact cleanup を owner 内 helper へ集約した。 |
+| `modules/subtitle-block-state.js` | sequence / current block / meta / mirror 同期 / panel open 時の rebuild | render callback DI を持たない block state owner として整理した。 |
+| `modules/subtitle-state-reset.js` | complete reset / render snapshot clear | panel snapshot reset と block runtime mirror reset を内部 helper に分離し、complete reset orchestration の責務を明瞭化した。 |
+| `reinitialize-coordinator.js` | 再初期化の順序制御 | `clearInternalSubtitleState` 呼び出しを options 契約に揃え、高レベル再初期化 coordinator に留めた。 |
 
 ***
 
-## API 棚卸し
+## API 棚卸し結果
 
-最初は**コード変更を行わず**、以下の表を実コードで埋める。
-
-| API / state | 現在の定義・保持先 | 利用元 | 本来の owner 候補 | Step 17-A-10 の判断 |
-| :-- | :-- | :-- | :-- | :-- |
-| `getSubtitleBlockSequence()` | 要確認 | 要確認 | `subtitleBlockState` | public API として残すか、内部呼び出しへ閉じるか |
-| `getCurrentSubtitleBlockFromSequence()` | 要確認 | 要確認 | `subtitleBlockState` | `content.js` wrapper を削除できるか |
-| `renderCurrentSnapshot()` | 要確認 | 要確認 | `panelUi` / panel render owner | 高レベル中継か、panel UI API に統合するか |
-| `applyPanelStateEffects()` | 要確認 | 要確認 | `content.js` または subtitle block owner | panel open 時の block rebuild をどこで調停するか |
-| `getPanelRenderInput()` | `content.js` の DI source | `panelUi` | `content.js` の高レベル入力組み立て | state 直接参照を増やさず維持できるか |
-| `panelUi.applyPanelState()` | `panelUi` | 要確認 | `panelUi` | state effects を伴う再適用専用として維持するか |
-| `panelUi.refreshPanel()` | `panelUi` | 要確認 | `panelUi` | render-only 専用として維持するか |
-| `panelUi.dispose()` | `panelUi` | cleanup / restart 系 | `panelUi` | 完全 cleanup 専用として維持するか |
-| `state.currentSubtitleBlock` | 共有 runtime mirror | renderer / overlay 等 | `subtitleBlockState` | 正本ではなく互換 mirror として維持するか |
-| `state.lastPanelRenderSnapshot` | 共有観測参照 | debug / 観測等 | panel render owner | owner state と共有互換参照の境界を確認する |
+| API / state | 変更前の扱い | Step 17-A-10 の判断 | 結果 |
+| :-- | :-- | :-- | :-- |
+| `getSubtitleBlockSequence()` | `content.js` / controller 側から参照される互換 getter として残っていた。 | block state owner 外へ sequence getter DI を広げない。 | cue-controller 側の旧 getter DI / fallback を削除した。 |
+| `getCurrentSubtitleBlockFromSequence()` | `content.js` 側の互換取得経路として残っていた。 | block current 解決は owner 側 API に寄せる。 | 旧 sequence getter 依存を縮小し、`content.js` 側の高レベル中継だけを残した。 |
+| `renderCurrentSnapshot()` | block state / panel 開閉処理から描画 callback 的に扱われていた。 | block state owner は描画 callback を持たない。 | `modules/subtitle-block-state.js` から render callback DI を削除した。 |
+| `applyPanelStateEffects()` / panel open effect | panel open 時の block rebuild と描画副作用が散っていた。 | panel open 時の高レベル effect は一本化する。 | `applyPanelOpenEffects()` へ集約した。 |
+| `panelUi.dispose()` | panel cleanup の高レベル入口として既に固定済みだった。 | render artifact cleanup も owner 内 helper へ寄せる。 | `clearPanelRenderArtifacts()` を追加し、dispose 内 cleanup を明示化した。 |
+| `state.currentSubtitleBlock` | runtime mirror として残っていた。 | 正本ではなく互換 mirror として維持する。 | reset 経路では mirror reset helper 分離により扱いを明確化した。 |
+| `state.lastPanelRenderSnapshot` | 観測用共有参照だった。 | panel render owner 管理を明確化する。 | reset / dispose 両経路で panel snapshot clear の owner 境界を明示した。 |
 
 ***
 
 ## 判断基準
 
-### `content.js` に残すもの
+### `content.js` に残したもの
 
 - module の生成と DI
 - 起動順序と再初期化の高レベル制御
 - 複数 owner にまたがる操作の調停
 - extension runtime と content script 全体に関わる入口
-- 既存 caller を保護するために必要な薄い互換 facade
+- 既存 caller を保護するために必要な薄い高レベル facade
 
-### `content.js` から外すもの
+### `content.js` から外したもの
 
-- panel host / ShadowRoot / toggle の DOM 操作
-- panel renderer の実行詳細、snapshot の保存・clear 詳細
-- sequence / current block / meta の取得・解決・mirror 同期詳細
-- panel list の直接描画
-- block resolver の計算詳細
-- `panelOpen` の storage read / write 詳細
-- cleanup の低レベル DOM / observer / timer 操作
+- cue-controller から見た旧 sequence getter 依存と fallback
+- panel open 時の block rebuild façade の分散定義
+- block state owner に渡していた render callback DI
+- panel render artifact cleanup の inline 実装
+- complete reset 内での panel snapshot / mirror state の直書き reset
 
-### API を残す条件
+### API を残した条件
 
-- 複数 module owner にまたがる調停が必要である
-- 呼び出し元が起動・再初期化・cleanup の高レベル文脈を持つ
-- API 名だけで副作用の範囲が理解できる
-- owner 内部の state shape や DOM 構造を外へ漏らさない
-
-### API を閉じる条件
-
-- 単一 owner の内部 state や DOM だけを操作する
-- caller が owner 内に集約できる
-- wrapper が引数をそのまま渡すだけで、調停や互換性を提供していない
-- API を通して共有 state の内部構造が露出している
+- 複数 module owner にまたがる調停が必要である。
+- 呼び出し元が起動・再初期化・cleanup の高レベル文脈を持つ。
+- API 名だけで副作用の範囲が理解できる。
+- owner 内部の state shape や DOM 構造を外部に漏らさない。
 
 ***
 
-## ファイル単位の作業順
+## 実装ステップ
 
-### `content.js`
-
-1. panel / block 関連の関数、state 参照、DI、callback を列挙する。  
-2. 各項目を「高レベル中継」「panel UI owner」「block state owner」「renderer owner」「不要 wrapper」に分類する。  
-3. `getSubtitleBlockSequence()`、`getCurrentSubtitleBlockFromSequence()`、`renderCurrentSnapshot()`、`applyPanelStateEffects()` の呼び出し元と副作用を確認する。  
-4. 残す API は高レベルの意味が分かる名称と最小引数に整理する。  
-5. owner へ移す API は、共有 state の直接参照を増やさず DI または既存 facade 経由へ寄せる。  
-
-### `modules/subtitle-block-state.js`
-
-1. sequence、current block、meta、mirror 同期、panel open 時の rebuild に関する公開 API を列挙する。  
-2. `content.js` に重複する wrapper または state 操作がないか確認する。  
-3. panel renderer / panel UI が block state の正本を直接変更していないことを確認する。  
-4. public API は読み取り・解決・同期・再構築の用途が分かる最小セットに絞る。  
-
-### `modules/panel-ui.js`
-
-1. `applyPanelState()`、`refreshPanel()`、`dispose()` の caller と副作用を列挙する。  
-2. panel open 時の state effects と render-only 更新の境界を確認する。  
-3. `getPanelRenderInput()`、`panelRenderer`、`applyPanelStateEffects` の DI 契約を確認する。  
-4. panel UI 内部の render owner state、timer、snapshot が外部 API へ漏れていないことを確認する。  
-5. `content.js` に残す必要のない UI / renderer helper があれば `panelUi` owner へ閉じる。  
-
-### `modules/panel-renderer.js`
-
-1. 描画入力、戻り値、snapshot、signature、scroll key の契約を確認する。  
-2. shared state、DOM host 生成、block state 更新、storage 操作を直接持たないことを確認する。  
-3. public API が描画専用のまま維持されることを確認する。  
-
-### `modules/subtitle-blocks.js`
-
-1. block rebuild と subtitle snapshot 更新だけを担当していることを確認する。  
-2. panel list 直接描画、panel host 操作、render snapshot 保存が残っていないことを確認する。  
-3. `subtitle-block-state.js` と責務が重なる API があれば整理対象として記録する。  
-
-### `modules/subtitle-block-resolver.js`
-
-1. panel 表示用の block 計算だけを担当していることを確認する。  
-2. state 保存、DOM 操作、render 実行、lifecycle cleanup が混在していないことを確認する。  
-3. 他 module に移す必要がある API があれば、実装前に owner 判断を記録する。  
-
-### `modules/playback-session-cleanup.js`
-
-1. restart、extension OFF、content switch から panel / block cleanup へ到達する経路を確認する。  
-2. panel UI の完全 cleanup は `panelUi.dispose()` だけを呼ぶことを維持する。  
-3. block state reset と panel render artifact reset の順序が API 境界に矛盾しないことを確認する。  
-
-### `modules/subtitle-state-reset.js`
-
-1. complete reset で clear する block state、mirror、render artifact を列挙する。  
-2. `panelUi.dispose()` が所有する UI resource と重複して clear していないことを確認する。  
-3. `state.lastPanelRenderSnapshot` など互換観測値の clear owner を明確にする。  
-
-### `reinitialize-coordinator.js`
-
-1. 再初期化時に呼ぶ panel / block API を列挙する。  
-2. UI mount、block rebuild、panel state apply、render refresh の順序を確認する。  
-3. owner 内部 API を直接呼んでいる箇所があれば、高レベル中継 API へ整理する。  
-
-### `manifest.json`
-
-module の追加・移動を行う場合だけ確認する。  
-今回の API 境界固定だけで module 依存順に変更がない場合は、変更しない。
+| Step | 対象ファイル | 状態 | 実装内容 | 確認結果 |
+| :-- | :-- | :-- | :-- | :-- |
+| 17-A-10-1 | `cue-controller.js` | 完了 | 旧 block getter DI と `sequenceApi` fallback を削除した。 | controller は orchestration に留まり、sequence build 詳細を持たない構成へ揃った。 |
+| 17-A-10-2 | `content.js` | 完了 | cue controller 向けの旧 block getter 注入を削除した。 | `content.js` は DI / orchestration 側へ寄せた。 |
+| 17-A-10-3 | `content.js` | 完了 | `subtitleBlockApi.rebuildForPanelOpen` の façade 公開を削除した。 | panel open effect の入口を `applyPanelOpenEffects()` に集約した。 |
+| 17-A-10-4 | `modules/subtitle-block-state.js` / `content.js` | 完了 | block state から描画 callback DI を外し、render 起動を高レベル側へ集約した。 | block state owner は state / resolve / sync に集中する形になった。 |
+| 17-A-10-5 | `content.js` | 完了 | `renderCurrentSnapshot()` から `currentSubtitleBlock` mirror の直接更新を外した。 | mirror 更新責務の散在を抑制した。 |
+| 17-A-10-6 | `modules/panel-ui.js` | 完了 | `dispose()` 内の render artifact reset 直書きを `clearPanelRenderArtifacts()` へ集約した。 | panel owner 内 cleanup helper として責務が明確化した。 |
+| 17-A-10-7 | `modules/subtitle-state-reset.js` | 完了 | reset module 内の panel snapshot / block mirror 直書きを内部 helper に分離した。 | complete reset orchestration と内部 reset helper 境界を整理した。 |
+| 17-A-10-8 | `reinitialize-coordinator.js` | 完了 | `clearInternalSubtitleState` 呼び出しを options 契約へ揃えた。 | coordinator は reset 詳細を抱え込まない構造になった。 |
+| 17-A-10-9 | docs 3 files | 未反映 | Step 17-A-10 完了と次フェーズ移行を docs へ同期する。 | この文書差し替えで反映する。 |
 
 ***
 
-## 実装完了条件
+## コメント同期の確認
 
-- `content.js` に残る panel / block API が、DI・起動シーケンス・高レベル中継に限定されている。
-- `content.js` に単純な block state wrapper、panel render wrapper、DOM helper が残っていない。
-- panel UI の DOM / render / snapshot / timer / observer の内部詳細が `content.js` から直接操作されない。
-- subtitle block state の正本が `subtitle-block-state.js` にあり、panel UI / renderer が正本を更新しない。
-- `applyPanelState()`、`refreshPanel()`、`dispose()` の使い分けが caller と JSDoc から判別できる。
-- restart、extension OFF、content switch、reinitialize における panel / block API の到達経路が明確である。
-- Step 17-B が visibility / lifecycle の実装を開始できる API 境界が確定している。
-- Step 18 が term inspector の抽出を開始しても panel / block 内部 API に依存しない。
+今回の Step 17-A-10 では、実装差分だけでなくコメント同期も確認対象に含めた。
 
-***
-
-## 実機確認
-
-### 基本再生
-
-1. 拡張 ON 後に panel と overlay の 2 言語字幕が表示されることを確認する。  
-2. panel の開閉後に block list、current block、scroll、render snapshot が整合することを確認する。  
-3. panel 内の block click による seek 後、current block、scroll、snapshot、overlay が正しく更新されることを確認する。  
-
-### lifecycle
-
-1. panel を開いた状態で再生を開始し、subtitle 更新時に `refreshPanel()` が state effects を重複実行しないことを確認する。  
-2. panel を開いた状態と閉じた状態で、作品・エピソード切替を確認する。  
-3. extension OFF → ON、手動再起動、content switch 後に panel / overlay / toggle が多重生成されないことを確認する。  
-4. hard seek 後に stale な snapshot、current block、scroll state が残らないことを確認する。  
-
-### 静的確認
-
-1. `npm run lint` を実行する。  
-2. `content.js` に panel renderer の shared state 直接依存が再導入されていないことを確認する。  
-3. `panel-ui.js`、`panel-renderer.js`、`subtitle-block-state.js`、`subtitle-blocks.js`、`subtitle-block-resolver.js` の役割を差分で再確認する。  
-4. `manifest.json` を変更した場合だけ、`docs/Bugfix/module-load-order.md` と整合することを確認する。  
+| ファイル | 確認結果 | 補足 |
+| :-- | :-- | :-- |
+| `cue-controller.js` | 良好 | ヘッダーと factory JSDoc が差分意図に整合した。 |
+| `modules/panel-ui.js` | 良好 | `clearPanelRenderArtifacts()` の JSDoc 追加まで反映済みである。 |
+| `modules/subtitle-block-state.js` | 良好 | 今回差分に対するコメント矛盾は見当たらない。 |
+| `reinitialize-coordinator.js` | 良好 | coordinator / orchestration の説明を維持できている。 |
+| `content.js` | 完了 | ヘッダー、JSDoc、区切りコメントを現状責務に合わせて同期した。 |
+| `modules/subtitle-state-reset.js` | 完了 | 新 helper の責務が分かるように JSDoc / 説明コメントを補った状態として扱う。 |
 
 ***
 
-## 作業メモ
+## 確認観点
 
-### 調査開始時に記録すること
+今回の完了確認では、次の観点を満たしていることを確認対象とした。
 
-- API 名
-- 定義ファイル
-- 呼び出し元
-- 参照・更新する state
-- DOM / render / lifecycle 副作用
-- owner 候補
-- 残す / 移す / 削除する判断
-- 判断理由
-- 回帰確認対象
-
-### 保留にする条件
-
-以下に該当する場合は、今回の変更に混ぜず、方針メモへ保留として記録する。
-
-- `panelOpen`、`panelDefaultOpen`、storage、通常開閉、SPA 遷移、extension ON/OFF の visibility / lifecycle 設計に踏み込むもの
-- term inspector の state / DOM / event listener の抽出が必要になるもの
-- 字幕同期 decision、track 選択、secondary recovery、native fallback の挙動変更を伴うもの
-- panel UI / overlay UI / layout の見た目変更を伴うもの
-- 別スコープの test failure 修正だけを目的とするもの
+- `content.js` が panel / block の内部実装詳細ではなく DI / orchestration に寄っていること。
+- block state owner が render callback や panel owner 詳細を持たないこと。
+- panel owner が render artifact cleanup を内包していること。
+- reset / reinitialize が owner 内部 state を直接いじるのではなく、契約化した API / options を通ること。
+- 変更した6ファイルでヘッダー、JSDoc、区切りコメントの整合が取れていること。
 
 ***
 
-## 次に開くファイル
+## 実機検証メモ
 
-調査は次の順で開始する。
+今回の Step 17-A-10 は owner 境界固定と API 整理が中心であり、見た目や字幕同期アルゴリズム自体の変更は行っていない。
+そのため、このシートでは「既存の panel dispose / refresh / block rebuild / reinitialize の到達経路を壊していないこと」を中心に確認すべき作業として扱う。
 
-1. `content.js`
-2. `modules/subtitle-block-state.js`
-3. `modules/panel-ui.js`
-4. `modules/panel-renderer.js`
-5. `modules/subtitle-blocks.js`
-6. `modules/subtitle-block-resolver.js`
-7. `modules/playback-session-cleanup.js`
-8. `modules/subtitle-state-reset.js`
-9. `reinitialize-coordinator.js`
-10. `manifest.json`（依存順変更の可能性が出た場合のみ）
+最低限の確認対象は次のとおりである。
+
+- 通常再生中の panel open / close が維持されること。
+- panel open 時に block rebuild と render が従来どおり成立すること。
+- reinitialize 経路で internal subtitle state clear が呼ばれても reset options 契約で破綻しないこと。
+- dispose / cleanup 経路で render snapshot と mirror state の掃除が重複せず成立すること。
+
+***
+
+## 作業中の判断メモ
+
+- Step 17-A-10 は Step 17-B の visibility / lifecycle owner 固定へ渡すための API 境界整理であり、UI 挙動そのものを変える Step ではない。
+- `content.js` をさらに薄くする場合でも、entry point / DI / orchestration の責務は残す前提で判断する。
+- `modules/subtitle-block-state.js` は正本 state owner であり、描画や panel UI owner の都合を持ち込まない。
+- `modules/panel-ui.js` は panel cleanup の高レベル owner として、dispose / render artifact clear の責務を明確に持つ。
+- Step 17-B では `panelOpen`、`panelDefaultOpen`、DOM visibility、cleanup、reinitialize、SPA 遷移、ON/OFF の owner と到達順を対象にする。
+
+***
+
+## 次にやること
+
+このシートで記録した Step 17-A-10 の完了を前提に、次の主作業は Step 17-B へ移る。
+
+- `docs/Bugfix/Step17-B_visibility-lifecycle_方針整理メモ.md` を正本にして visibility / lifecycle owner を整理する。
+- `panelOpen`、`panelDefaultOpen`、通常 open / close、reinitialize、SPA 遷移、拡張 ON/OFF の各経路を洗い出す。
+- `content.js`、`modules/panel-ui.js`、`modules/panel-visibility-state.js`、cleanup / reinitialize 系 module の責務境界を確認する。
+- Step 17-A-10 docs 更新として、マスタープラン・実装シート・Step17-A メモを同期する。
+
+***
+
+## 結果
+
+Step 17-A-10 のコード実装は `43ed673 refactor: Step 17-A-10 の owner 境界整理とコメント同期を反映する` で完了している。
+このシートは、その実装内容を file 単位・API 単位・確認観点単位で残し、次フェーズの Step 17-B へ渡すための完了記録として扱う。
+

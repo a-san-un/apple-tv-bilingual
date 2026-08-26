@@ -2,7 +2,7 @@
 
 **作成日:** 2026-08-13 ／ **最終更新:** 2026-08-26 ／ **ブランチ:** `issue-32-content-core-split`  
 **入口資料:** 新しいスレッドでもこの資料 1 枚を読めば、プロジェクトの目標・現在地・優先順位・次に着手する作業が分かる状態を保つ。  
-**反映済みの主な節目:** Step 15 の `lane-recovery-state` 命名整理、Step 16 の `cue-sequence-builder` への導出集約、Step 17-A-7 / 17-A-8 / 17-A-9 の panel 系整理を反映済みである。  
+**反映済みの主な節目:** Step 15 の `lane-recovery-state` 命名整理、Step 16 の `cue-sequence-builder` への導出集約、Step 17-A-7 / 17-A-8 / 17-A-9 / 17-A-10 の panel 系整理を反映済みである。
 
 ***
 
@@ -12,7 +12,7 @@
 ここでは、全体目標、現在地、優先順位、正本の所在、次スレッドで最初に着手すべき作業だけを示す。  
 
 この資料では、個別ファイルの詳細実装手順、JSDoc 案、調査メモ、実機ログの細部は持たない。  
-それらは `Bugfix 実装シート.md`、各 Step 方針整理メモ、または専用資料を正本とする。  
+それらは `Bugfix 実装シート.md`、各 Step 方針整理メモ、または専用資料を正本とする。
 
 ***
 
@@ -55,7 +55,7 @@
 | `state.lastPanelRenderSnapshot` | 観測用ランタイム情報 | panel 最終描画 snapshot | debug / 観測用途。保存・clear は panel owner 側で扱う。 |
 
 **補足**  
-`panelOpen` は現在、`chrome.storage.local` に保存する設計で実装されている。
+`panelOpen` は現在、`chrome.storage.local` に保存する設計で実装されている。  
 `panelDefaultOpen` は未保存時の初期値であり、`panelOpen` と混同しない。
 
 ***
@@ -87,10 +87,10 @@
 - Step 17-A-7 として、`content.js` から panel renderer の直接依存を外し、`panelRenderer` と `getPanelRenderInput()` を `createPanelUi()` へ DI する構成へ整理済みである。
 - Step 17-A-8 として、`panelUi.dispose()` を panel 系 cleanup の高レベル入口として固定し、`removeHost()` との責務境界、cleanup 到達経路、`applyPanelState()` / `refreshPanel()` の API 境界を明文化済みである。
 - Step 17-A-9 として、`panel-ui.js`、`panel-renderer.js`、`subtitle-blocks.js`、`subtitle-block-resolver.js` を `modules/` 配下へ移動し、`manifest.json` の参照を更新済みである。
+- Step 17-A-10 として、`content.js` に残っていた panel / block public API と高レベル中継境界を整理し、owner ごとの責務を固定済みである。具体的には、旧 sequence getter DI / fallback の削除、`applyPanelOpenEffects()` への panel open effect 集約、`modules/subtitle-block-state.js` からの描画 callback DI 削除、`modules/panel-ui.js` の render artifact cleanup 集約、`modules/subtitle-state-reset.js` の mirror / snapshot reset helper 分離、`reinitialize-coordinator.js` の reset options 契約化、関連コメント同期まで反映済みである。
 
 ### 現在の残課題
 
-- **Step 17-A-10:** `content.js` に残る panel / block public API と高レベル中継境界を棚卸しし、owner ごとの責務を固定する。
 - **Step 17-B:** Step 17-A-10 で確定した API 境界を前提に、`panelOpen`、`panelDefaultOpen`、通常 open / close、reinitialize、SPA 遷移、拡張 ON/OFF を含む visibility / lifecycle の owner を固定する。
 - **Step 18:** term inspector 関連 state / shell を `content.js` から切り離す。
 
@@ -109,7 +109,7 @@
 | 17-A-7 | `content.js` の薄化 | 完了 | renderer 直接依存と panel list 直接描画を外し、DI・高レベル中継へ縮小した。 |
 | 17-A-8 | dispose 契約の固定 | 完了 | `panelUi.dispose()` を panel cleanup の高レベル入口として固定した。 |
 | 17-A-9 | `modules/` 統合と manifest 整合 | 完了 | panel / block 系 4 ファイルを `modules/` へ移動し、`manifest.json` を更新した。 |
-| 17-A-10 | Step 17-B / 18 へつなぐ API 固定 | 未完了 | panel / block public API と `content.js` の高レベル中継範囲を確定する。 |
+| 17-A-10 | Step 17-B / 18 へつなぐ API 固定 | 完了 | `content.js` に残る panel / block public API と高レベル中継範囲を確定し、旧 sequence getter DI / fallback 削除、`applyPanelOpenEffects()` 集約、block state の描画 callback DI 削除、panel render artifact cleanup 集約、subtitle reset helper 分離、reinitialize reset options 契約化、関連コメント同期まで反映済みである。 |
 
 詳細は `docs/Bugfix/Step17-A_panel系統合_方針整理メモ.md` を正本とする。
 
@@ -119,42 +119,26 @@
 
 | 優先度 | ステップ | 目的 | 着手条件 |
 | :-- | :-- | :-- | :-- |
-| 最優先 | 17-A-10 | panel / block public API と `content.js` の高レベル中継境界を確定する | 17-A-8 / 17-A-9 完了済み |
-| 次 | 17-B | visibility / lifecycle の owner と cleanup 境界を固定する | 17-A-10 の API 固定後 |
-| その次 | 18 | term inspector 関連 state / shell を `content.js` から分離する | 17-A / 17-B の panel 系境界確定後 |
-| 継続観測 | F-4 / F-5 / F-8 / F-9 / F-10 / M-1 | message channel error、cleanup / mode restore、ログ整理、完全リセット、seek 後の track 参照消失、長時間メモリ観測 | 主作業と混線しない範囲で継続 |
+| 最優先 | 17-B | visibility / lifecycle の owner と cleanup 境界を固定する | 17-A-10 の API 固定完了後。 |
+| 次 | 18 | term inspector 関連 state / shell を `content.js` から分離する | 17-A / 17-B の panel 系境界確定後。 |
+| 継続観測 | F-4 / F-5 / F-8 / F-9 / F-10 / M-1 | message channel error、cleanup / mode restore、ログ整理、完全リセット、seek 後の track 参照消失、長時間メモリ観測 | 主作業と混線しない範囲で継続。 |
 
 ***
 
 ## 次スレッドの入口
 
-新しいスレッドでは、まず次の資料だけを確認すればよい。
+次スレッドでは、まず **Step 17-B の visibility / lifecycle owner 固定** に着手する。  
+開始時は次の順で確認するとよい。
 
-- `docs/Bugfix/Bugfix マスタープラン.md`
-- `docs/Bugfix/Bugfix 実装シート.md`
-- `docs/Bugfix/Step17-A_panel系統合_方針整理メモ.md`
+1. `docs/Bugfix/Step17-B_visibility-lifecycle_方針整理メモ.md` を開き、visibility / lifecycle の論点と対象 state を確認する。
+2. `docs/Bugfix/Step17-A_panel系統合_方針整理メモ.md` を参照し、17-A-10 で固定済みの API 境界を前提として扱う。
+3. `content.js`、`modules/panel-ui.js`、`modules/panel-visibility-state.js`、`reinitialize-coordinator.js`、cleanup 系モジュールを対象に、open / close / reinitialize / SPA 遷移 / ON-OFF の到達経路を洗い出す。
+4. `panelOpen` と `panelDefaultOpen` の役割差、および storage / runtime / DOM 表示切り替えの owner を切り分ける。
 
-Step 17-B に着手する段階になったら、追加で次を確認する。
+**この資料で扱わないこと**
 
-- `docs/Bugfix/Step17-B_visibility-lifecycle_方針整理メモ.md`
-
-`docs/Bugfix/module-load-order.md` は manifest / module 依存順を変更しそうなときだけ確認する補助資料とする。  
-`docs/Bugfix/字幕同期・切り替え条件統合と責務再設計メモ.md` は字幕同期・decision・monitor・recovery 設計を触るときの補助資料とする。  
-
-***
-
-## 実機確認の最小セット
-
-- 拡張 ON で panel と overlay の 2 言語字幕が表示されること。
-- 拡張 OFF で拡張 UI が破棄され、Apple TV+ 本来の字幕動作へ戻ること。
-- OFF→ON で panel / overlay / listener / observer / timer が多重化せず復帰すること。
-- hard seek、SPA 遷移、content switch 後に cleanup 多重実行や表示破綻が起きないこと。
-- panel 内 block click 後に current block、scroll、snapshot、overlay が正しく更新されること。
-
-***
-
-## 今回と混ぜない論点
-
+- 個別ファイルへの置換手順や JSDoc 差し替え案
+- 実機ログや検証ログの詳細
 - panel UI / overlay UI / layout の見た目調整
 - track / toggle / lifecycle の別スコープ修正
 - 別スコープの test failure 修正
@@ -165,7 +149,6 @@ Step 17-B に着手する段階になったら、追加で次を確認する。
 
 ## 結論
 
-現在の最優先は **Step 17-A-10** であり、`content.js` に残る panel / block public API と高レベル中継の境界を固定することである。  
-Step 17-B はその次に、確定した API 境界を前提として visibility / lifecycle の owner を整理する段階である。  
-
+現在の最優先は **Step 17-B** であり、Step 17-A-10 で確定した panel / block API 境界を前提に visibility / lifecycle の owner を固定することである。
+Step 18 はその次に、panel 系境界と lifecycle 境界の整理後、term inspector 関連 state / shell を `content.js` から切り離す段階である。
 
