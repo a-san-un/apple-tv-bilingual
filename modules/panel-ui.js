@@ -391,6 +391,18 @@
     }
 
     /**
+     * panel renderer owner state / snapshot / signature を初期化する。
+     * panel UI owner が持つ描画アーティファクトの cleanup だけを担当する。
+     *
+     * @returns {void}
+     */
+    function clearPanelRenderArtifacts() {
+      state.lastPanelRenderSnapshot = null;
+      state.lastPanelBlockSignature = "";
+      resetPanelRenderOwnerState();
+    }
+
+    /**
      * panel UI 一式を破棄する。
      * panel host / toggle button / native observer / resize listener / render timer /
      * render snapshot / renderer owner state / overlay DOM を対称に cleanup する。
@@ -439,9 +451,7 @@
       removeHost("atv-toggle-btn");
 
       state.panelShadowRoot = null;
-      state.lastPanelRenderSnapshot = null;
-      state.lastPanelBlockSignature = "";
-      resetPanelRenderOwnerState();
+      clearPanelRenderArtifacts();
 
       if (typeof destroyOverlay === "function") {
         destroyOverlay();

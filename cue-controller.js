@@ -47,10 +47,6 @@
     cleanCueText,
     getCurrentTime,
     getVideoElement,
-    // Step 16-B 以降は builder 正本へ移行済み。
-    // ここでは current subtitle / hold view の互換参照が残るため一時的に受け取る。
-    getSubtitleBlockSequence,
-    getCurrentSubtitleBlockFromSequence: _getCurrentSubtitleBlockFromSequence,
     DEBUG_PANEL_PROBE: _DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
     renderCurrentSnapshot,
@@ -1222,21 +1218,13 @@
 
       const primaryText = cleanCueText(primaryCue);
       const secondaryText = cleanCueText(secondaryCue);
-      // sequence の正本は rebuildCurrentSceneSubtitleBlocks() -> cueSequenceBuilder 側。
-      // ここでの sequenceApi 参照は nearby hold view / 互換処理のためだけに残している。
-      const sequenceApi =
-        (typeof getSubtitleBlockSequence === "function" && getSubtitleBlockSequence()) ||
-        null;
 
       const rebuildResult = rebuildCurrentSceneSubtitleBlocks();
 
       renderCurrentSnapshot?.();
       renderPanel?.();
 
-      const sequenceHealth =
-        rebuildResult?.sequenceHealth ||
-        sequenceApi?.getHealth?.() ||
-        null;
+      const sequenceHealth = rebuildResult?.sequenceHealth || null;
 
       const mergedHealth = buildMergedSubtitleHealth({
         primaryTrack,

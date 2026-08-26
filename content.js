@@ -1,14 +1,19 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - content.js
-// version: 2.6.3
-// Issue #4: Debug 配置修正と再生ページ限定 build、初回字幕回復導線を最小差分で整理
-// 既存の起動導線は維持し、layout/observer/retry/polling は変更しない
-/* global createSubtitleHistoryStore */
-// Phase A: VTT 正規化と logger を外部モジュールへ分離し、ここでは橋渡しを担当する。
-// =============================================================
-// Phase D/#19: current 行の primary 非対称を最小差分で補正する。
-// secondary cue の短いギャップ時のみ panel primary を一時補完する。
+// version: 2.6.4
 //
+// 役割:
+// - playback page の高レベル coordinator / bridge として、settings・observer・UI・
+//   subtitle pipeline の接続点を束ねる。
+// - subtitle block / panel UI / reinitialize の実装詳細は各 owner module へ委譲し、
+//   content.js は entry point と orchestration に寄せる。
+// - VTT 正規化・logger・panel UI・subtitle block・reinitialize などの個別実装をつなぎ、
+//   再生画面で必要な初期化順序とイベント入口を管理する。
+// - current subtitle view を panel / overlay 向けに組み立て、
+//   primary / secondary の表示更新を高レベル側から調停する。
+// =============================================================
+/* global createSubtitleHistoryStore */
+
 
 (function () {
   ("use strict");
@@ -1848,7 +1853,6 @@ function forwardContentLog(...args) {
     state,
     now: () => Date.now(),
     logSubtitle: logContentSubtitle,
-    renderCurrentSnapshot,
   });
 
   // -----------------------------------------------------------
@@ -1876,15 +1880,14 @@ function forwardContentLog(...args) {
   // -----------------------------------------------------------
 
   /**
-   * subtitle block state の読み取り・書き込みを集約する facade。
+   * subtitle block state owner への高レベル facade を生成する。
    *
-   * - `modules/subtitle-block-state.js` を block state の正本とする。
-   * - content.js 内の block state 参照は、この facade 経由に統一する。
-   * - panel list の描画は panel-ui.js owner の責務であり、この facade は実行しない。
-   * - panel open 時の effect は block 再構築と subtitle snapshot 更新までに留める。
+   * content.js は subtitleBlockState の内部実装や rebuild 手順を直接扱わない。
+   * panel open 時に必要な rebuild と current snapshot 再描画は
+   * applyPanelOpenEffects() に束ね、callsite 側の責務を高レベル操作に揃える。
    *
-   * @param {object} deps - 依存注入オブジェクト。
-   * @param {object} deps.subtitleBlockState - block state の正本。
+   * @param {object} deps - 依存オブジェクト。
+   * @param {object} deps.subtitleBlockState - block state owner。
    * @param {() => void} deps.renderCurrentSnapshot - 現在字幕 snapshot の高レベル描画関数。
    * @returns {object} subtitle-block-api の公開 API。
    */
@@ -1897,8 +1900,6 @@ function forwardContentLog(...args) {
       getCurrentBlock: () => subtitleBlockState.getCurrentBlock(),
       syncCurrentBlock: (block, meta = null) =>
         subtitleBlockState.syncCurrentBlock(block, meta),
-      rebuildForPanelOpen: (reason = "panel_open") =>
-        subtitleBlockState.rebuildForPanelOpen(reason),
       applyPanelOpenEffects: (reason = "panel_open") => {
         subtitleBlockState.rebuildForPanelOpen(reason);
         renderCurrentSnapshot?.();
@@ -1907,6 +1908,7 @@ function forwardContentLog(...args) {
   }
 
   // content.js は subtitleBlockState の内部実装を直接扱わない。
+  // panel open 時の rebuild entry も applyPanelOpenEffects() に寄せ、
   // panel list の render 実行は panelUi.applyPanelState() / refreshPanel() へ委譲する。
   const subtitleBlockApi = createSubtitleBlockApi({
     subtitleBlockState,
@@ -2084,15 +2086,12 @@ function forwardContentLog(...args) {
     getSecondaryTrackCues: () => state.secondaryTrack?.cues || [],
 
     // cue-controller へ渡す block state の参照は facade に統一する。
-    // DI key は既存 cue-controller の契約を維持し、取得実装だけを差し替える。
+    // Step 17-A-10 で旧 sequence getter DI は削除し、
+    // cue-controller には orchestration に必要な entry だけを渡す。
     getPreviousSubtitleBlocks: () => subtitleBlockApi.getSequence(),
 
     buildSubtitleBlockSequence,
     setSubtitleBlocks,
-
-    getSubtitleBlockSequence: () => subtitleBlockApi.getSequence(),
-    getCurrentSubtitleBlockFromSequence: () =>
-      subtitleBlockApi.getCurrentBlock(),
 
     DEBUG_PANEL_PROBE,
     renderSecondarySubtitle,
@@ -2887,15 +2886,9 @@ function forwardContentLog(...args) {
     state.lastPrimaryText = primaryText;
     state.lastSecondaryText = secondaryText;
 
-    // currentSubtitleBlock は sequence 正本優先の mirror として同期する。
-    state.currentSubtitleBlock =
-      view?.currentBlock ||
-      sequenceCurrentBlock ||
-      null;
-
-    if (state.currentSubtitleBlock) {
-      state.lastCurrentSubtitleBlockAt = Date.now();
-    }
+    // currentSubtitleBlock / lastCurrentSubtitleBlockAt の mirror 同期は
+    // subtitle-block-state.js owner に委譲する。
+    // ここでは panel / overlay 描画用の current view だけを更新する。
 
     // 空 view は異常ではなく「まだ現在位置の cue が来ていない待機状態」。
     // 起動直後の観測で waiting / ready を見分けやすいよう snapshot ログを残す。

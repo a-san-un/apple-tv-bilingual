@@ -35,7 +35,6 @@
     state,
     now = () => Date.now(),
     logSubtitle = () => {},
-    renderCurrentSnapshot = null,
   }) {
     if (!state || typeof state !== "object") {
       throw new Error("ATVB createSubtitleBlockState requires state");
@@ -98,8 +97,6 @@
       if (state.currentSubtitleBlock) {
         state.lastCurrentSubtitleBlockAt = now();
       }
-
-      renderCurrentSnapshot?.();
     }
 
     return {

@@ -42,7 +42,10 @@
     // -----------------------------------------------------------------------------
     async function reinitializeSubtitlePipeline(reason = "unknown") {
       const switched = syncHistoryContextWithPlayback(reason);
-      clearInternalSubtitleState(reason);
+      clearInternalSubtitleState({
+        reason,
+        preserveSecondaryDom: true,
+      });
 
       const effectiveSecondaryLanguage =
         state.requestedSecondaryLang || state.contentSettings.secondaryLang;
