@@ -4,7 +4,7 @@
 **入口資料：** 新しいスレッドでもこの資料 1 枚を読めば、プロジェクトの目標・現在地・優先順位・次に着手する作業が分かる状態を保つ。  
 **Step 15 更新:** `secondary-track-recovery` 系を `lane-recovery-state` へ改名する命名整理コミット `967b326` を反映済みである。  
 **Step 16 更新:** `cue-controller.js` と `modules/cue-sequence-builder.js` の責務境界整理コミット `3afcedc` を反映済みである。  
-**Step 17-A 更新:** panel renderer の直接依存を `content.js` から外し、panel/block 系4ファイルを `modules/` 配下へ移動するコミット `3f33804` を反映済みである。Step 17-A は継続中であり、残作業は dispose 契約の固定と Step 17-B / 18 へ送る API 境界の固定である。
+**Step 17-A 更新:** panel renderer の直接依存を `content.js` から外し、panel/block 系4ファイルを `modules/` 配下へ移動するコミット `3f33804` と、`panelUi.dispose()` の cleanup 契約および `applyPanelState()` / `refreshPanel()` の API 境界を固定するコミット `6977bab` を反映済みである。Step 17-A は継続中であり、残作業は Step 17-A-10 の API 境界固定である。
 
 ***
 
@@ -88,15 +88,15 @@
 - Step 17-A-9 として、`panel-ui.js`、`panel-renderer.js`、`subtitle-blocks.js`、`subtitle-block-resolver.js` を `modules/` 配下へ移動し、`manifest.json` の `content_scripts` 参照を更新した。
 - `manifest.json` の読み込み順は維持しており、panel/block 系モジュールは `content.js` より前に読み込まれる。
 - `panel.css` は `modules/panel-ui.js` の ShadowRoot 内から `chrome.runtime.getURL("panel.css")` で参照される web accessible resource であるため、root 配置を維持する。
+- Step 17-A-8 として、`panelUi.dispose()` を panel 系 cleanup の高レベル入口として固定した。panel host、ShadowRoot、toggle button、native toggle observer、resize listener、render timer、render snapshot、renderer owner state、overlay DOM の破棄責務を `modules/panel-ui.js` に明文化した。
+- `removeHost()` は低レベルな host 除去だけを担当し、observer / timer / render state / overlay cleanup は `panelUi.dispose()` 側に集約した。`content.js` に `destroyUiHosts()` / `destroyFeatureUiHosts()` は残っていないことを確認済みである。
+- 再起動・拡張機能 OFF・content switch は `playback-session-cleanup.js` 経由で、手動再起動 cleanup は `content.js` から、いずれも `panelUi.dispose()` に到達する経路として固定した。
+- `applyPanelState()` は state effects を含む panel 状態の再適用、`refreshPanel()` は既存 state に基づく描画のみ、という API 境界を明文化した。
 
 ### 現在の残課題
 
-- Step 17-A-8 として、`panelUi.dispose()` を panel 系 cleanup の中心入口として固定する。host、ShadowRoot、toggle、observer、listener、timer、overlay、render snapshot、block state の各破棄責務と順序を明文化する。
-- `destroyUiHosts()`、`destroyFeatureUiHosts()`、`removeHost()`、`panelUi.dispose()` の cleanup 範囲を照合し、責務重複を解消する。
-- playback detach、SPA 遷移、拡張機能無効化、再起動の各経路が同じ panel dispose 契約を通ることを確認する。
 - Step 17-A-10 として、`content.js` に残る `getSubtitleBlockSequence`、`getCurrentSubtitleBlockFromSequence`、`renderCurrentSnapshot`、`applyPanelStateEffects` の利用元を棚卸しする。
 - `content.js` に残す高レベル中継 API と、panel owner / block state owner に閉じる API を固定する。
-- `panelUi.applyPanelState()` と `panelUi.refreshPanel()` の使い分けを API 契約として明文化する。
 - Step 17-B の visibility cleanup owner 固定と、Step 18 の term inspector 抽出へ渡す API 境界を確定する。
 
 ***
@@ -107,12 +107,12 @@
 | :-- | :-- | :-- | :-- |
 | 17-A-1 | panel / blocks の依存棚卸し | 完了 | 方針整理メモに owner、依存、関数マッピングを記録済み。 |
 | 17-A-2 | visibility 正本の固定 | 完了 | `modules/panel-visibility-state.js` を開閉 state の load / persist 専用に維持する。 |
-| 17-A-3 | panel owner の再整理 | 概ね完了 | `modules/panel-ui.js` に host、ShadowRoot、toggle、observer、render 更新の owner を寄せた。dispose 契約の固定は 17-A-8 で行う。 |
+| 17-A-3 | panel owner の再整理 | 概ね完了 | `modules/panel-ui.js` に host、ShadowRoot、toggle、observer、render 更新の owner を寄せた。dispose 契約の固定は 17-A-8 で完了した。 |
 | 17-A-4 | renderer 専用化 | 完了 | `modules/panel-renderer.js` は state を直接読まず、入力から描画結果・snapshot を返す。 |
 | 17-A-5 | resolver の計算責務化 | 完了 | `modules/subtitle-block-resolver.js` は panel 表示用 block への計算変換に留める。 |
-| 17-A-6 | block state owner の統合 | 概ね完了 | `modules/subtitle-block-state.js` を正本とした。clear / dispose 経路の固定は 17-A-8 で確認する。 |
+| 17-A-6 | block state owner の統合 | 概ね完了 | `modules/subtitle-block-state.js` を正本とした。clear / dispose 経路の固定は 17-A-8 で確認済み。 |
 | 17-A-7 | `content.js` の薄化 | 完了 | renderer 直接依存と panel list 直接描画を外し、DI・高レベル中継へ縮小した。 |
-| 17-A-8 | dispose 契約の固定 | 未完了 | cleanup の単一入口、責務範囲、各 lifecycle 経路の接続を固定する。 |
+| 17-A-8 | dispose 契約の固定 | 完了 | `panelUi.dispose()` を panel cleanup の高レベル入口として固定し、`removeHost()` との責務境界、cleanup 到達経路、`applyPanelState()` / `refreshPanel()` の API 境界を明文化した。 |
 | 17-A-9 | `modules/` 統合と manifest 整合 | 完了 | panel/block 系4ファイルを `modules/` へ移動し、`manifest.json` を更新した。 |
 | 17-A-10 | Step 17-B / 18 へつなぐ API 固定 | 未完了 | panel / block public API と `content.js` の高レベル中継範囲を確定する。 |
 
@@ -124,9 +124,8 @@
 
 | 優先度 | ステップ | 目的 | 着手条件 |
 | :-- | :-- | :-- | :-- |
-| 最優先 | 17-A-8 | panel dispose 契約を固定する | 17-A-7 / 17-A-9 完了 |
-| 高 | 17-A-10 | panel / block API 境界を固定する | 17-A-8 の owner / cleanup 確定後 |
-| 高 | 17-B | visibility cleanup owner と lifecycle 接続を整理する | 17-A-8 / 17-A-10 完了 |
+| 最優先 | 17-A-10 | panel / block API 境界を固定する | 17-A-8 完了済み |
+| 高 | 17-B | visibility cleanup owner と lifecycle 接続を整理する | 17-A-10 完了 |
 | 中 | 18 | term inspector を抽出する | panel cleanup / API 境界確定後 |
 | 継続 | 実機回帰確認 | ON/OFF、seek、SPA 遷移、再入場、字幕切替を確認する | 各変更後 |
 
@@ -156,7 +155,6 @@
 
 ## 結論
 
-現在は Step 17-A の仕上げ段階である。  
-`content.js` の panel renderer 直接依存除去と panel/block 系 `modules/` 統合は完了しており、次の最優先は `panelUi.dispose()` を中心にした cleanup 契約の固定である。  
-dispose 経路と API 境界を先に確定してから Step 17-B と Step 18 へ進む。
-
+Step 17-A の cleanup 契約固定（17-A-8）は完了した。  
+`content.js` の panel renderer 直接依存除去、panel/block 系 `modules/` 統合、`panelUi.dispose()` を中心にした cleanup 契約の固定は完了している。  
+次の最優先は Step 17-A-10 の panel / block API 境界固定であり、これを確定してから Step 17-B と Step 18 へ進む。

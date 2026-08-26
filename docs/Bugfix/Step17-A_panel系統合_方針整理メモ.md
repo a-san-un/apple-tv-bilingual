@@ -13,6 +13,8 @@ Step 17-A の目的は、panel に関する DOM参照・listener・observer・re
 - `modules/panel-visibility-state.js` は panel 開閉 state の正本として維持し、DOM / render owner と混ぜない。
 - panel host、shadow root、listener、observer、render snapshot、block state の owner と `dispose()` 経路を明確にする。
 - Step 16 の builder 正本化、selection 共通化、decision 統合、pending task cancel、lane recovery state 命名整理を壊さない。
+- `panelUi.dispose()` を panel 系 cleanup の高レベル入口として固定し、block state は subtitle 側 owner の責務として切り分ける。
+- `applyPanelState()` と `refreshPanel()` の API 境界を固定し、Step 17-B / Step 18 へ渡す public surface を明確にする。
 
 ## 2. 現状整理
 
@@ -89,18 +91,15 @@ Step 17-A の目的は、panel に関する DOM参照・listener・observer・re
 
 ### content.js の Step 17-A 関連主要関数
 
-- `_ensurePanelSlotLayerStyle`
 - `renderSecondarySubtitle`
 - `logSubtitlePanelState`
 - `applyLayout`
-- `createDebugPanel`
-- `rebuildSubtitleBlocksForPanelOpen`
 - `persistPanelVisibility`
 - `_refreshSettingsOnPanelOpen`
 - `renderCurrentSnapshot`
 - `getSubtitleBlockSequence`
 - `getCurrentSubtitleBlockFromSequence`
-- `setCurrentSubtitleBlock`
+- `applyPanelStateEffects`
 
 ## 3. 修正方針
 
@@ -152,13 +151,13 @@ Step 17-A では、panel 系責務を次の 4 層に分けて扱う。
 
 メモリーリーク対策として、panel 系 cleanup の入口を panel owner 側へまとめる。
 
-想定契約:
+固定した契約:
 
 - `panel-visibility-state`
   - state の load / persist のみ
   - DOM cleanup は行わない。
 - panel owner（`modules/panel-ui.js`）
-  - `panelUi.dispose()` を panel 系 cleanup の高レベル入口とする。
+  - `panelUi.dispose()` を panel 系 cleanup の高レベル入口として固定した。
   - panel host / ShadowRoot / toggle button / native toggle observer /
     resize listener / render timer / renderer owner state / render snapshot /
     overlay DOM を対称に破棄する。
@@ -180,6 +179,8 @@ Step 17-A では、panel 系責務を次の 4 層に分けて扱う。
 
 ### 3-4. panel API 境界
 
+Step 17-A-8 では、panel owner から外へ見せる高レベル API を次の 2 本に整理した。
+
 - `panelUi.applyPanelState(reason)`
   - panel open 直後、mount 直後、再初期化完了後などに使う。
   - block 再構築を含む state effects を実行した後、panel renderer を反映する。
@@ -191,22 +192,24 @@ Step 17-A では、panel 系責務を次の 4 層に分けて扱う。
 
 ## 4. 実装順序
 
-Step 17-A は次の順序で進める。
+Step 17-A は次の順序で進めており、17-A-8 と 17-A-9 まで完了済みである。現在の主作業は 17-A-10 である。
 
-| 順序 | 枝番 | 目的 | 前提 |
-|---|---|---|---|
-| 1 | 17-A-1 | panel / blocks の依存棚卸し | なし |
-| 2 | 17-A-2 | visibility 正本の固定 | 17-A-1 |
-| 3 | 17-A-3 | panel owner の再整理 | 17-A-1, 17-A-2 |
-| 4 | 17-A-4 | renderer 専用化 | 17-A-3 |
-| 5 | 17-A-5 | resolver の計算責務化 | 17-A-1, 17-A-4 |
-| 6 | 17-A-6 | block state owner の統合 | 17-A-5 |
-| 7 | 17-A-7 | `content.js` の薄化 | 17-A-2, 17-A-3, 17-A-4, 17-A-5, 17-A-6 |
-| 8 | 17-A-8 | dispose 契約の固定 | 17-A-3, 17-A-4, 17-A-6, 17-A-7 |
-| 9 | 17-A-9 | `modules/` 統合と `manifest.json` 整合 | 17-A-7, 17-A-8 |
-| 10 | 17-A-10 | Step 17-B / 18 へつなぐ API 固定 | 17-A-8, 17-A-9 |
+| 順序 | 枝番 | 目的 | 前提 | 状態 |
+|---|---|---|---|---|
+| 1 | 17-A-1 | panel / blocks の依存棚卸し | なし | 完了 |
+| 2 | 17-A-2 | visibility 正本の固定 | 17-A-1 | 完了 |
+| 3 | 17-A-3 | panel owner の再整理 | 17-A-1, 17-A-2 | 完了 |
+| 4 | 17-A-4 | renderer 専用化 | 17-A-3 | 完了 |
+| 5 | 17-A-5 | resolver の計算責務化 | 17-A-1, 17-A-4 | 完了 |
+| 6 | 17-A-6 | block state owner の統合 | 17-A-5 | 完了 |
+| 7 | 17-A-7 | `content.js` の薄化 | 17-A-2, 17-A-3, 17-A-4, 17-A-5, 17-A-6 | 完了 |
+| 8 | 17-A-8 | dispose 契約の固定 | 17-A-3, 17-A-4, 17-A-6, 17-A-7 | 完了 |
+| 9 | 17-A-9 | `modules/` 統合と `manifest.json` 整合 | 17-A-7, 17-A-8 | 完了 |
+| 10 | 17-A-10 | Step 17-B / 18 へつなぐ API 固定 | 17-A-8, 17-A-9 | 進行中 |
 
 ## 5. 依存関係図
+
+現在地は `17-A-10 API 境界固定` であり、dispose 契約固定と `modules/` 統合は完了済みである。
 
 ```text
 17-A-1 依存棚卸し
@@ -293,200 +296,110 @@ Step 17-A は次の順序で進める。
 
 - `subtitle-block-resolver.js`
   - `resolvePanelBlocksForRender`
-  - `normalizePanelBlocks`
   - `buildDisplayBlocksFromGroups`
-- `subtitle-blocks.js`
-  - `buildSubtitleBlockSequence`
+  - `applyPanelCurrentFlags`
+- `panel-renderer.js`
+  - `renderPanel`
 - `content.js`
   - `renderCurrentSnapshot`
-  - `rebuildSubtitleBlocksForPanelOpen`
 
-### 17-A-6 block state 統合
+### 17-A-6 block state owner 統合
 
+- `modules/subtitle-block-state.js`
+  - `getSequence`
+  - `setSequence`
+  - `resolveCurrentBlock`
+  - `syncCurrentBlockMirror`
+  - `rebuildForPanelOpen`
 - `subtitle-blocks.js`
   - `buildSubtitleBlockSequence`
-  - `resolveCurrentIndex`
-  - `analyzeSequenceHealth`
 - `content.js`
-  - `rebuildSubtitleBlocksForPanelOpen`
   - `getSubtitleBlockSequence`
   - `getCurrentSubtitleBlockFromSequence`
   - `setCurrentSubtitleBlock`
-- `panel-renderer.js`
-  - `getAllPanelBlocks`
-  - `renderPanel`
+  - `rebuildSubtitleBlocksForPanelOpen`
 
-### 17-A-7 content.js 薄化
+### 17-A-7 `content.js` の薄化
 
 - `content.js`
+  - `renderCurrentSnapshot`
   - `renderSecondarySubtitle`
   - `applyLayout`
-  - `createDebugPanel`
-  - `rebuildSubtitleBlocksForPanelOpen`
-  - `renderCurrentSnapshot`
-  - `persistPanelVisibility`
+  - `logSubtitlePanelState`
 - `panel-ui.js`
   - `createPanelUi`
   - `applyPanelState`
-  - `togglePanel`
-- `panel-renderer.js`
-  - `renderPanel`
-- `subtitle-block-resolver.js`
-  - `resolvePanelBlocksForRender`
-
-### 17-A-8 dispose 契約固定
-
-- `panel-ui.js`
-  - `destroyFeatureUiHosts`
-  - `destroyUiHosts`
-  - `removeHost`
-  - `applyPanelVisibility`
-- `panel-renderer.js`
-  - `updatePanelRenderSnapshot`
-  - `renderPanel`
-- `content.js`
-  - `createDebugPanel`
-  - `renderCurrentSnapshot`
-  - `persistPanelVisibility`
-- `modules/panel-visibility-state.js`
-  - `persist`
-
-### 17-A-9 modules 統合 / manifest 整合
-
-- `panel-ui.js`
-  - `createPanelUi`
 - `panel-renderer.js`
   - `createPanelRenderer`
-- `subtitle-blocks.js`
-  - `buildSubtitleBlockSequence`
-- `subtitle-block-resolver.js`
-  - `resolvePanelBlocksForRender`
-- `content.js`
-  - `renderCurrentSnapshot`
-  - `rebuildSubtitleBlocksForPanelOpen`
 
-### 17-A-10 API 境界固定
+### 17-A-8 dispose 契約の固定
 
-- `panel-ui.js`
-  - `createPanelUi`
-  - `togglePanel`
+- `modules/panel-ui.js`
+  - `dispose`
+  - `removeHost`
   - `applyPanelState`
-  - `applyPanelVisibility`
-- `panel-renderer.js`
-  - `renderPanel`
-- `modules/panel-visibility-state.js`
-  - `load`
-  - `persist`
+  - `refreshPanel`
+- `content.js`
+  - restart cleanup 入口
+  - panel cleanup 呼び出し
+- `modules/playback-session-cleanup.js`
+  - playback detach / content switch cleanup
+- `modules/subtitle-state-reset.js`
+  - complete reset / snapshot clear
+- `reinitialize-coordinator.js`
+  - 再初期化シーケンスと dispose 呼び出し順
+
+### 17-A-9 `modules/` 統合と `manifest.json` 整合
+
+- `manifest.json`
+  - `content_scripts`
+- `modules/panel-ui.js`
+- `modules/panel-renderer.js`
+- `modules/subtitle-blocks.js`
+- `modules/subtitle-block-resolver.js`
+
+### 17-A-10 Step 17-B / 18 へつなぐ API 固定
+
 - `content.js`
   - `renderCurrentSnapshot`
-  - `persistPanelVisibility`
+  - `getSubtitleBlockSequence`
+  - `getCurrentSubtitleBlockFromSequence`
+  - `applyPanelStateEffects`
+- `modules/panel-ui.js`
+  - `applyPanelState`
+  - `refreshPanel`
+- `modules/subtitle-block-state.js`
+  - sequence / current block API
+- `docs/Bugfix/Step17-A_panel系統合_方針整理メモ.md`
+  - visibility / lifecycle / term inspector への引き渡し条件
 
-## 7. 枝番ごとのレビュー観点チェックリスト
+## 7. 進捗メモ（2026-08-26 更新）
 
-### 17-A-1 依存棚卸し
+### 17-A-8 で固定したこと
 
-- `content.js` にある panel / blocks state の read / write 箇所を列挙できているか。
-- `renderSecondarySubtitle()`、`renderCurrentSnapshot()`、`rebuildSubtitleBlocksForPanelOpen()` の呼び出し経路を追跡できているか。
-- `createPanelUi()` の deps を、DOM / render / block state / settings / debug に分類できているか。
-- `subtitle-blocks.js` と `subtitle-block-resolver.js` の責務差を明文化できているか。
-- Step 16 の builder 正本化済み sequence / scene / snapshot を panel 側で再導出していないか。
+- `panelUi.dispose()` を panel 系 cleanup の高レベル入口として固定した。
+- panel host、ShadowRoot、toggle button、native toggle observer、resize listener、render timer、render snapshot、renderer owner state、overlay DOM の cleanup owner を `modules/panel-ui.js` に寄せた。
+- `removeHost()` は低レベルな DOM host 除去のみを担当し、`destroyUiHosts()` / `destroyFeatureUiHosts()` は `content.js` に残っていないことを確認した。
+- 再起動・拡張機能 OFF・content switch は `modules/playback-session-cleanup.js` 経由、手動再起動 cleanup は `content.js` から、いずれも `panelUi.dispose()` に到達する経路として固定した。
+- subtitle block sequence / current block / block meta などの block state は subtitle 側 owner の責務として残し、`panelUi.dispose()` では破棄しないことを明確にした。
+- `applyPanelState()` は state effects を含む panel 状態再適用、`refreshPanel()` は既存 state に基づく render のみ、と API 契約を固定した。
 
-### 17-A-2 visibility 正本
+### 17-A-10 で確認すること
 
-- `panelOpen` と `panelDefaultOpen` を混同していないか。
-- `load()` は fallback 用、`persist()` は panelOpen 保存専用になっているか。
-- visibility state モジュールへ DOM / render / block state を追加していないか。
-- `loadPanelVisibility()`、`togglePanel()`、`applyPanelState()`、`persistPanelVisibility()` の state 更新が二重化していないか。
+- `content.js` に残る `getSubtitleBlockSequence`、`getCurrentSubtitleBlockFromSequence`、`renderCurrentSnapshot`、`applyPanelStateEffects` の利用元と呼び出し目的を棚卸しする。
+- panel owner / block state owner に閉じる API と、`content.js` に残す高レベル中継 API を切り分ける。
+- Step 17-B の visibility cleanup owner と、Step 18 の term inspector 抽出へ渡す API 前提を明文化する。
 
-### 17-A-3 panel owner 再整理
+## 8. Step 17-B への引き渡し
 
-- panel host 作成 owner が `createRightPanel()` に収束しているか。
-- `content.js` が `panelShadowRoot` を直接保持し続けていないか。
-- header actions、toggle button、native toggle の listener owner が明確か。
-- panel host と overlay / term inspector host の cleanup 範囲を混ぜていないか。
+Step 17-A では、`panelUi.dispose()` を panel UI の完全 cleanup 入口として固定した。
 
-### 17-A-4 renderer 専用化
+Step 17-B では、次を別途整理する。
 
-- `renderPanel()` が描画責務だけを持つか。
-- `createPanelRenderer()` が host 作成や visibility 保存を持っていないか。
-- `updatePanelRenderSnapshot()` が stale DOM を retain しないか。
-- render ごとの listener 重複がないか。
+- `panelOpen` と `panelDefaultOpen` の state / storage 契約
+- 通常の panel open / close と完全 `dispose()` の境界
+- playback restart、SPA 遷移、拡張機能 ON/OFF の visibility lifecycle
+- visibility 更新時の layout / render / snapshot 更新順序
+- `content.js` に残す visibility の高レベル中継 API
 
-### 17-A-5 resolver 計算責務化
-
-- `resolvePanelBlocksForRender()` が DOM を触らないか。
-- `normalizePanelBlocks()` などが state mutation を持たないか。
-- current 判定を builder 正本と二重実装していないか。
-- resolver の返り値が render 用の shape に留まっているか。
-
-### 17-A-6 block state 統合
-
-- `buildSubtitleBlockSequence()` の出力を panel owner 側で受ける形に寄せられているか。
-- `content.js` が block array を直接保持しない方向になっているか。
-- `rebuildSubtitleBlocksForPanelOpen()` を panel open 専用副作用の塊にしすぎていないか。
-- block state clear 時に past / current / meta / snapshot を一括破棄できるか。
-
-### 17-A-7 content.js 薄化
-
-- `content.js` に残るのが生成・DI・入力転送・dispose 呼び出しだけに近づいているか。
-- panel DOM 組み立てや debug mount の詳細が panel owner 側へ移っているか。
-- panel 描画条件の解釈を `content.js` に増やしていないか。
-- popup / term inspector の実装に今回の変更を混ぜていないか。
-
-### 17-A-8 dispose 契約固定
-
-- panel owner に冪等な `dispose()` があるか。
-- `destroyUiHosts()` / `destroyFeatureUiHosts()` / `removeHost()` の責務重複がないか。
-- observer / listener / timer / scheduled task の停止順が明確か。
-- snapshot clear と block state clear が同じ cleanup 経路に乗っているか。
-- lane recovery state や cue binding cleanup に panel 都合の副作用を足していないか。
-
-### 17-A-9 modules 統合 / manifest 整合
-
-- `manifest.json` の読み込み順が依存順を守っているか。
-- `window.ATVB` / `globalThis` 公開名が移動後も一致するか。
-- duplicate load が起きないか。
-- `panel.css` や既存 debug / test 参照が壊れないか。
-
-### 17-A-10 API 境界固定
-
-- panel public API を mount / setOpen / update / dispose 程度に絞れているか。
-- `content.js` が renderer 内部や block internals を読まないか。
-- `panel-visibility-state` は load / persist 専用のままか。
-- Step 17-B の visibility cleanup owner 固定と Step 18 の term inspector 抽出に接続できる形か。
-
-## 8. 実施状況と残作業
-
-### 完了済み
-
-- 17-A-7: `content.js` の panel renderer 直接依存を外し、`panelRenderer` と `getPanelRenderInput()` を panel owner へ DI する形に整理した。
-- 17-A-7: subtitle block facade から panel list の直接描画を外し、block rebuild と subtitle snapshot 更新までに縮小した。
-- 17-A-9: `panel-ui.js`、`panel-renderer.js`、`subtitle-blocks.js`、`subtitle-block-resolver.js` を `modules/` 配下へ移動した。
-- 17-A-9: `manifest.json` の content_scripts 参照を `modules/` 配下のパスへ更新し、既存の依存順を維持した。
-- panel.css は ShadowRoot 内から `chrome.runtime.getURL("panel.css")` で参照する web accessible resource であるため、Step 17-A の JS module 移行対象から除外した。
-
-### 残作業
-
-#### 17-A-8: dispose 契約の固定
-
-- `panelUi.dispose()` が host、toggle、observer、listener、timer、overlay、render snapshot、block state をどこまで破棄するかをコードと JSDoc で確定する。
-- `destroyUiHosts()`、`destroyFeatureUiHosts()`、`removeHost()`、`dispose()` の責務重複を確認し、cleanup の入口を `panelUi.dispose()` に寄せる。
-- playback detach、SPA 遷移、拡張機能無効化、再起動時に同じ dispose 経路が使われるか確認する。
-- dispose 後に stale な ShadowRoot、DOM node、listener、observer、timer、render snapshot、block state が残らないことを確認する。
-
-#### 17-A-10: Step 17-B / 18 向け API 境界の固定
-
-- `content.js` に残る `getSubtitleBlockSequence`、`getCurrentSubtitleBlockFromSequence`、`renderCurrentSnapshot`、`applyPanelStateEffects` の利用元を棚卸しする。
-- content.js に残す高レベル中継 API と、panel owner / block state owner に閉じる API を確定する。
-- `panelUi.applyPanelState()` と `panelUi.refreshPanel()` の使い分けを API 契約として明文化する。
-- Step 17-B で扱う UI / lifecycle / popup / overlay の論点と、Step 17-A で閉じる panel/block owner 論点を分離する。
-- `content.js` の `logSubtitlePanelState()` が `state.lastPanelRenderSnapshot` と panel host DOM を直接読んでいる点を棚卸しし、panel owner 側への移行可否を検討する（17-A-8 では dispose 契約固定に限定し対象外とした）。
-- `content.js` の `createDebugPanel()` が `state.panelShadowRoot` へ直接デバッグパネルをマウントしている点を棚卸しし、panel owner 側への移行可否を検討する（17-A-8 では dispose 契約固定に限定し対象外とした）。
-
-### 完了判定
-
-- `content.js` が panel DOM、ShadowRoot、listener、observer、render snapshot、block state の実装詳細を持たない。
-- `panelUi.dispose()` を単一入口として panel 系の cleanup 経路を追跡できる。
-- `modules/` 移行後の manifest 読み込み順、panel open/close、seek、SPA 遷移、再入場を実機確認する。
-- Step 17-B / 18 に渡す API と未解決論点が文書化されている。
-
+詳細は `docs/Bugfix/Step17-B_visibility-lifecycle_方針整理メモ.md` を正本とする。
