@@ -157,15 +157,37 @@ Step 17-A では、panel 系責務を次の 4 層に分けて扱う。
 - `panel-visibility-state`
   - state の load / persist のみ
   - DOM cleanup は行わない。
-- panel owner
-  - host detach
-  - listener 解放
-  - observer disconnect
-  - render snapshot clear
-  - block state clear
-  - shadow root / debug UI / toggle 参照の解放
+- panel owner（`modules/panel-ui.js`）
+  - `panelUi.dispose()` を panel 系 cleanup の高レベル入口とする。
+  - panel host / ShadowRoot / toggle button / native toggle observer /
+    resize listener / render timer / renderer owner state / render snapshot /
+    overlay DOM を対称に破棄する。
+  - 低レベルな DOM host 除去だけは `removeHost()` を内部利用して行う。
+  - 再起動・拡張機能 OFF・content switch は
+    `playback-session-cleanup.js` 経由で `panelUi.dispose()` に到達させる。
+  - 手動再起動 cleanup は `content.js` から `panelUi.dispose()` を直接呼ぶ。
+  - 冪等であり、host・observer・timer が未生成または既に破棄済みでも安全に完了する。
+  - subtitle block sequence / current block / block meta などの block state は
+    subtitle 側 owner の責務であり、`panelUi.dispose()` では破棄しない。
+- subtitle state owner
+  - complete reset では block state と対応する render snapshot を同時に clear する。
+  - restart 前の軽量整理では、panel DOM を維持する経路でも古い render snapshot を
+    再利用しないよう `prepareForRestart()` で snapshot を明示的に clear する。
 - `content.js`
-  - 個別 cleanup を持たず `panel.dispose()` を呼ぶだけに寄せる
+  - DI・起動シーケンス・高レベルイベント中継に留める。
+  - 個別の panel host / observer / timer / overlay cleanup を持たず、
+    必要な入口から `panelUi.dispose()` を呼ぶ。
+
+### 3-4. panel API 境界
+
+- `panelUi.applyPanelState(reason)`
+  - panel open 直後、mount 直後、再初期化完了後などに使う。
+  - block 再構築を含む state effects を実行した後、panel renderer を反映する。
+- `panelUi.refreshPanel(reason)`
+  - 既存 state を前提に panel list を再描画するだけの API とする。
+  - block 再構築や外部 effects は実行しない。
+- `content.js`
+  - renderer 実装を直接呼ばず、上記 panel API を高レベル中継として利用する。
 
 ## 4. 実装順序
 
@@ -458,6 +480,8 @@ Step 17-A は次の順序で進める。
 - content.js に残す高レベル中継 API と、panel owner / block state owner に閉じる API を確定する。
 - `panelUi.applyPanelState()` と `panelUi.refreshPanel()` の使い分けを API 契約として明文化する。
 - Step 17-B で扱う UI / lifecycle / popup / overlay の論点と、Step 17-A で閉じる panel/block owner 論点を分離する。
+- `content.js` の `logSubtitlePanelState()` が `state.lastPanelRenderSnapshot` と panel host DOM を直接読んでいる点を棚卸しし、panel owner 側への移行可否を検討する（17-A-8 では dispose 契約固定に限定し対象外とした）。
+- `content.js` の `createDebugPanel()` が `state.panelShadowRoot` へ直接デバッグパネルをマウントしている点を棚卸しし、panel owner 側への移行可否を検討する（17-A-8 では dispose 契約固定に限定し対象外とした）。
 
 ### 完了判定
 

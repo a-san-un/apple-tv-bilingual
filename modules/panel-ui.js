@@ -5,7 +5,7 @@
 // - 右側字幕パネルの UI host / ShadowRoot を作る
 // - 字幕パネル開閉ボタンを作る
 // - ネイティブトグルを再生画面へ差し込む
-// - panel host / shadow root / renderer 入力組み立て / render state の owner を担う
+// - panel host / ShadowRoot / renderer 入力組み立て / render state の owner を担う
 //
 // 位置づけ:
 // - `content.js` から panel build の「順序知識」と panel render 実行知識を引き受ける owner。
@@ -15,6 +15,10 @@
 // - visibility の正本は `modules/panel-visibility-state.js` 側にあり、
 //   このファイルは DOM 表示切り替え・render state 所有・renderer 呼び出し owner に留める。
 // - panel-renderer.js は描画専用とし、state 収集・snapshot 保持・seek 後再描画予約はこのファイルが担う。
+// - subtitle block sequence / current block / meta などの block state は subtitle 側 owner が持ち、
+//   このファイルは panel 描画入力として読み取るだけに留める。
+// - overlay には「表示状態を空にして隠す」軽量 cleanup と「DOM / layout tracking を完全に破棄する」
+//   完全 cleanup の 2 段階があり、このファイルは後者の破棄入口を担う。
 // =============================================================
 
 (function () {
@@ -30,7 +34,9 @@
    * @param {(...args: any[]) => void} [deps.logContent] - content ログを記録する関数。
    * @param {(reason: string) => void} [deps.applyPanelStateEffects] - panel open 時の補助 effects。
    *   panel block 再構築や外部副作用が必要な場合に owner 外から注入する。
-   * @param {() => void} deps.destroyOverlay - overlay UI を破棄する関数。
+   * @param {() => void} deps.destroyOverlay - overlay UI を完全破棄する関数。
+   *   overlay text / visibility を一時的に空にする軽量 cleanup ではなく、
+   *   DOM と layout tracking を取り除く完全 cleanup の入口を受け取る。
    * @param {() => void} [deps.mountPopupHost] - popup host（単語ポップアップ等）を mount する関数。
    * @param {() => void} [deps.mountDebugPanel] - debug panel を mount する関数。
    * @param {object} [deps.panelRenderer] - createPanelRenderer() が返した renderer API。
@@ -110,6 +116,8 @@
     /**
      * renderer 実行結果を owner 状態と共有 state へ反映する。
      * snapshot の正本保持は owner 内で行い、既存観測点との互換として共有 state にも同期する。
+     * `state.lastPanelRenderSnapshot` は panel render artifact の共有参照であり、
+     * block state の正本化や subtitle lifecycle の判断には使わない。
      *
      * @param {object|null} result
      * @param {string} reason
@@ -370,6 +378,8 @@
 
     /**
      * 指定 id の host を target 配下から削除する。
+     * 低レベルな DOM host 除去だけを担当し、observer / timer / render state / overlay の
+     * cleanup は行わない。
      *
      * @param {string} id
      * @returns {void}
@@ -382,7 +392,23 @@
 
     /**
      * panel UI 一式を破棄する。
-     * panel host / toggle button / native observer / render timer / overlay を対称に cleanup する。
+     * panel host / toggle button / native observer / resize listener / render timer /
+     * render snapshot / renderer owner state / overlay DOM を対称に cleanup する。
+     *
+     * panel 系 cleanup の入口はこの関数に寄せる。
+     * 再起動・拡張 OFF・content switch は playback-session-cleanup.js 経由でここへ到達し、
+     * 手動再起動 cleanup は content.js から直接ここを呼ぶ。
+     *
+     * この関数は panel 系 cleanup の高レベル入口であり、低レベルな host 除去は
+     * `removeHost()` を内部利用して行う。
+     *
+     * overlay については、表示テキストや visible state を空にして隠す軽量 cleanup
+     * ではなく、DOM と layout tracking を取り除く完全破棄を担当する。
+     *
+     * 一方で subtitle block sequence / current block / block meta などの block state は
+     * subtitle 側 owner の責務であり、この関数では破棄しない。
+     *
+     * 冪等に呼べることを前提とし、対象が未生成・未接続でも安全に復帰する。
      *
      * @param {{ reason?: string }} [options]
      * @returns {void}
@@ -483,6 +509,12 @@
     /**
      * panel open 時に必要な state effects と renderer 反映をまとめて適用する。
      * block 再構築・外部 effects・panel render をこの owner で順序制御する。
+     *
+     * panel open 直後、mount 直後、再初期化完了後など、
+     * 現在の subtitle / block / visibility state を panel 表示へ再適用したい場面で使う。
+     * 単なる再描画 API ではなく、applyPanelStateEffects() を通した state effects を含む。
+     *
+     * 既存 state を前提に panel list だけを描き直したい場合は refreshPanel() を使う。
      *
      * @param {string} reason
      * @returns {void}
@@ -721,6 +753,12 @@
     /**
      * panel renderer の再描画だけを外部から要求する。
      * content.js は renderer 実装詳細を知らず、この高レベル API のみを使う。
+     *
+     * 既存 state を前提に panel list を描き直したいだけの場面で使う。
+     * block 再構築や外部 effects の再実行は行わず、renderCurrentPanel() だけを呼ぶ。
+     *
+     * panel open 時の state 再適用や、mount / 再初期化後の effects を伴う反映には
+     * applyPanelState() を使う。
      *
      * @param {string} [reason="external-refresh"]
      * @returns {object|null}

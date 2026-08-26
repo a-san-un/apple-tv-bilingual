@@ -77,7 +77,9 @@
     }
 
     // block / panel render / seek 観測系の state を初期化する。
-    // 古い字幕 block や render snapshot を次回 session へ持ち越さないために使う。
+    // complete reset では block 系正本をここで切り替えるため、
+    // current block / meta / history と対応する panel render snapshot も同時に破棄する。
+    // これにより、次回 session で古い block 系参照に基づく debug / render 判定を持ち越さない。
     function resetSubtitleBlockState() {
       state.subtitleHistory = [];
       state.panelPastBlocks = [];

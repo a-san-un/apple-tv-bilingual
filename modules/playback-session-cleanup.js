@@ -294,10 +294,15 @@
         toggleOpId,
       });
 
+      // prepareForRestart() は complete reset ではなく、restart 前の軽量な参照整理である。
+      // clearInternalSubtitleState({ preserveSecondaryDom: true }) だけでは
+      // panel render snapshot は消えないため、panel DOM を残す経路でも
+      // 次回起動で古い描画結果を再利用しないようここで明示的に無効化する。
       state.primaryTrack = null;
       state.secondaryTrack = null;
       state.currentSubtitleBlock = null;
       state.subtitleBlockMeta = null;
+      // panel render snapshot は restart 後に再計算させる。
       state.lastPanelRenderSnapshot = null;
       state.lastSecondarySyncContext = null;
       state.subtitleHistory = [];
