@@ -274,6 +274,19 @@
     return filterDebugLogs(debugLogs, filter).map(formatDebugLine).join("\n");
   }
 
+  /**
+   * filter 済みログを Copy / Download 共通のエクスポート用テキストとして返す。
+   *
+   * UI ごとの clipboard / downloads 副作用は caller 側が担い、
+   * logger はログの抽出・整形だけを担当する。
+   *
+   * @param {object} [filter={}]
+   * @returns {Promise<string>}
+   */
+  async function exportDebugLogsText(filter = {}) {
+    return getDebugLogText(filter);
+  }
+
   // 保存済みログを全削除して更新 callback を通知する。
   async function clearDebugLogs() {
     await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: [] });
@@ -293,6 +306,7 @@
     formatDebugLine,
     filterDebugLogs,
     getDebugLogText,
+    exportDebugLogsText,
     clearDebugLogs,
     LOG_CATEGORIES,
     RETAINED_DEBUG_LOGS_LIMIT,

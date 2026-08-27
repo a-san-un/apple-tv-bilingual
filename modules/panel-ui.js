@@ -41,6 +41,8 @@
    * @param {() => void} [deps.mountDebugPanel] - debug panel を mount する関数。
    * @param {object} [deps.panelRenderer] - createPanelRenderer() が返した renderer API。
    * @param {() => object|null} [deps.getPanelRenderInput] - renderer に渡す描画入力を組み立てる関数。
+   * @param {() => void} [deps.onPanelOpen] - panel open 時の高レベル副作用を呼ぶ関数。
+   * @param {() => void} [deps.onPanelClose] - panel close 時の高レベル cleanup を呼ぶ関数。
    * @returns {object} panel-ui の公開 API。
    */
   function createPanelUi(deps) {
@@ -55,6 +57,8 @@
       mountDebugPanel,
       panelRenderer,
       getPanelRenderInput,
+      onPanelOpen,
+      onPanelClose,
     } = deps;
 
     const PANEL_SLOT_LAYER_STYLE_ID = "atv-panel-slot-layer-style";
@@ -529,14 +533,20 @@
      * @returns {boolean} 新しい panelOpen 状態
      */
     function togglePanel(force) {
+      const prevOpen = Boolean(state.panelOpen);
       const nextOpen =
-        typeof force === "boolean" ? force : !Boolean(state.panelOpen);
+        typeof force === "boolean" ? force : !prevOpen;
 
       state.panelOpen = nextOpen;
       applyPanelVisibility(nextOpen);
 
       if (nextOpen) {
         applyPanelState("toggle-open");
+        if (!prevOpen && typeof onPanelOpen === "function") {
+          onPanelOpen();
+        }
+      } else if (prevOpen && typeof onPanelClose === "function") {
+        onPanelClose();
       }
 
       return nextOpen;
@@ -608,9 +618,20 @@
       button.style.zIndex = "2147483647";
       button.style.display = "";
 
+      button.style.background = "rgba(0,0,0,0.7)";
+      button.style.color = "white";
+      button.style.border = "1px solid rgba(255,255,255,0.25)";
+      button.style.borderRadius = "8px";
+      button.style.padding = "4px 10px";
+      button.style.fontSize = "16px";
+      button.style.lineHeight = "1";
+      button.style.cursor = "pointer";
+      button.style.backdropFilter = "blur(4px)";
+      button.style.webkitBackdropFilter = "blur(4px)";
+      button.style.boxShadow = "0 2px 8px rgba(0,0,0,0.25)";
+
       button.textContent = isOpen ? "‹" : "›";
       button.title = isOpen ? "字幕パネルを閉じる" : "字幕パネルを開く";
-
     }
 
     /**

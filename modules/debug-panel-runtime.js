@@ -387,9 +387,9 @@
    * panel deps:
    * - getFilter(): object
    * - getLogText(filter): Promise<string>|string
-   * - copyLogs(): Promise<void>|void
-   * - downloadLogs(): Promise<void>|void
-   * - clearLogs(filter): Promise<void>|void
+   * - copyLogs(uiFilter): Promise<void>|void
+   * - downloadLogs(uiFilter): Promise<void>|void
+   * - clearLogs(uiFilter): Promise<void>|void
    *
    * options deps:
    * - getLogs(): Promise<Array>|Array

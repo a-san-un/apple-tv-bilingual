@@ -308,6 +308,12 @@ function forwardContentLog(...args) {
   // logger API の getDebugLogText へ橋渡しする。
   const getDebugLogText = async (...args) =>
     (await window.ATVB?.logger?.getDebugLogText?.(...args)) ?? "";
+
+  // logger API の exportDebugLogsText へ橋渡しする。
+  // Copy / Download で共有する filter 済みログ文字列を取得する。
+  const exportDebugLogsText = async (...args) =>
+    (await window.ATVB?.logger?.exportDebugLogsText?.(...args)) ?? "";
+
   // logger API の clearDebugLogs へ橋渡しする。
   const clearDebugLogs = async (...args) =>
     (await window.ATVB?.logger?.clearDebugLogs?.(...args)) ?? undefined;
@@ -704,26 +710,73 @@ function forwardContentLog(...args) {
     }
   }
 
+  let isSecondaryTrackSyncIntervalRunning = false;
+
+  /**
+   * secondary subtitle recovery 用 interval を停止する。
+   *
+   * panel close / playback cleanup / 再初期化前後で共通利用し、
+   * clearInterval と null 化をこの関数へ集約する。
+   *
+   * @param {string} [reason="unknown"]
+   * @returns {void}
+   */
+  function stopSecondaryTrackSyncInterval(reason = "unknown") {
+    if (!secondaryTrackSyncInterval) return;
+
+    window.clearInterval(secondaryTrackSyncInterval);
+    secondaryTrackSyncInterval = null;
+    isSecondaryTrackSyncIntervalRunning = false;
+
+    logContent("secondaryTrackSyncInterval stopped", {
+      reason,
+    });
+  }
+
+  /**
+   * secondary subtitle recovery 用 interval を未起動時のみ開始する。
+   *
+   * - restarting 中は何もしない
+   * - orchestrator pause 中は何もしない
+   * - 前回 tick 実行中は重複実行しない
+   *
+   * @returns {void}
+   */
   function ensureSecondaryTrackSyncInterval() {
     if (secondaryTrackSyncInterval) return;
 
     secondaryTrackSyncInterval = window.setInterval(async () => {
+      if (isSecondaryTrackSyncIntervalRunning) return;
       if (state.restarting) return;
       if (syncIntervalOrchestrator?.isPaused?.()) return;
 
-      syncIntervalOrchestrator?.refreshPlaybackContext?.();
+      isSecondaryTrackSyncIntervalRunning = true;
 
-      const effectiveSecondaryLanguage =
-        getResolverRequestedSecondaryLanguage();
+      try {
+        syncIntervalOrchestrator?.refreshPlaybackContext?.();
 
-      syncIntervalOrchestrator?.detectLargeSeek?.();
+        const effectiveSecondaryLanguage =
+          getResolverRequestedSecondaryLanguage();
 
-      if (!state.video || !effectiveSecondaryLanguage) return;
+        syncIntervalOrchestrator?.detectLargeSeek?.();
 
-      await syncIntervalOrchestrator?.runSecondaryRecoveryPass?.(
-        effectiveSecondaryLanguage,
-      );
+        if (!state.video || !effectiveSecondaryLanguage) return;
+
+        await syncIntervalOrchestrator?.runSecondaryRecoveryPass?.(
+          effectiveSecondaryLanguage,
+        );
+      } catch (error) {
+        logContent("secondaryTrackSyncInterval tick failed", {
+          message: error?.message || String(error),
+        });
+      } finally {
+        isSecondaryTrackSyncIntervalRunning = false;
+      }
     }, 1000);
+
+    logContent("secondaryTrackSyncInterval started", {
+      intervalMs: 1000,
+    });
   }
 
   function _getShadowProgressTargets() {
@@ -1167,8 +1220,30 @@ function forwardContentLog(...args) {
       variant: "panel",
       getFilter: getLiveDebugLogFilter,
       getLogText: getDebugLogText,
+
+      // clipboard 書き込みは content script の UI side effect として行う。
+      // filter 済みテキストの抽出・整形は logger に委譲する。
+      copyLogs: async (filter) => {
+        const text = await exportDebugLogsText(filter);
+
+        try {
+          await navigator.clipboard.writeText(text);
+          logContentUi("debug log copied", {
+            textLength: text.length,
+          });
+        } catch (error) {
+          logContentError("debug log copy failed", {
+            message: error?.message || String(error),
+          });
+        }
+      },
+
       clearLogs: clearDebugLogs,
-      downloadLogs: async (text) => {
+
+      // download も Copy と同じ filter 済みエクスポート文字列を使用する。
+      downloadLogs: async (filter) => {
+        const text = await exportDebugLogsText(filter);
+
         const result = await new Promise((resolve) => {
           // 保存先ダイアログは background 側の downloads API で開く。
           sendToBackground({ type: "DOWNLOAD_DEBUG_LOG", text }, (res) => {
@@ -1189,8 +1264,10 @@ function forwardContentLog(...args) {
 
         logContentUi("debug log downloaded", {
           downloadId: result.downloadId,
+          textLength: text.length,
         });
       },
+
       logInfo: logContentUi,
       logError: logContentError,
     });
@@ -2299,6 +2376,17 @@ function forwardContentLog(...args) {
 
       logContent("panel opened: extension resumed");
     },
+
+    onPanelClose: () => {
+      // 1. secondary track recovery polling を停止
+      stopSecondaryTrackSyncInterval("panel-close");
+      // 2. sync orchestrator を停止/休止
+      syncIntervalOrchestrator?.pause?.();
+      // 3. overlay は panel close 中は非表示へ寄せる
+      setOverlayVisible(false);
+
+      logContent("panel closed: extension paused");
+    },
   });
 
   const { createRuntimeObservers } = root.runtimeObservers;
@@ -2986,6 +3074,7 @@ function forwardContentLog(...args) {
     // 言語設定が未完了なら panelOpen=false に寄せて UI を閉じる
     if (!isLanguageSelectionReady(requestedSettings)) {
       state.panelOpen = false;
+      stopSecondaryTrackSyncInterval("manual-restart-cleanup");
       panelUi.dispose({ reason: "manual-restart-cleanup" });
       applyLayout(false);
       showLanguageSetupNotice();
