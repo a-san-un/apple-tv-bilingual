@@ -6,17 +6,21 @@
 // - Options 画面の設定 UI を初期化し、保存・再読込・即時反映を担当する
 // - popup と同じ共通言語定義を使って primary / secondary 言語一覧を表示する
 // - 一般設定(sync)とローカル設定(local)を分けて保存する
-// - 保存後、拡張が有効なら Apple TV+ タブへ設定を即時送信する
+// - 保存後、現在の Apple TV+ タブへ設定変更を即時送信する
 // - デバッグログの表示・絞り込み・コピー・保存・削除を扱う
 // - storage 変更を監視し、デバッグログをリアルタイム更新する
 // - settings 用 debug panel shell を shared builder から差し込む
 //
 // 補足:
+// - extensionEnabled は永続設定ではなく runtime state として扱うため、この画面では保存しない
 // - 設定キー・デフォルト値の正本は settings-schema.js を参照する
 // - 言語一覧の正本は language-definitions.js とする
 // - Debug Download は background 経由(saveAs)に統一する
 // =============================================================
 
+// =============================================================
+// 共通設定・DOM 参照
+// =============================================================
 
 // popup と同じ共通言語定義を使う。
 // 取得できない場合でも壊れにくいよう空配列 fallback を置く。
@@ -24,10 +28,10 @@ const SUPPORTED_LANGS =
   globalThis.ATVB?.languageDefinitions?.getSupportedLanguages?.() ?? [];
 
 // 設定キー・デフォルト値は settings-schema.js の正本を参照する。
+// extensionEnabled は runtime state のため、sync default へ含めない。
 const DEFAULT_GENERAL_SETTINGS = globalThis.ATVB_SCHEMA
   ? { ...globalThis.ATVB_SCHEMA.DEFAULT_SYNC_SETTINGS }
   : {
-      extensionEnabled: false,
       primaryLang: "en",
       secondaryLang: "",
       panelDefaultOpen: true,
@@ -88,7 +92,16 @@ const els = {
   debugRealtimeBadge: document.getElementById("debugRealtimeBadge"),
 };
 
-// API キーなどの機微値をログにそのまま出さない。
+// =============================================================
+// ログ補助
+// =============================================================
+
+/**
+ * API キーなどの機微値をログ出力用にマスクする。
+ *
+ * @param {unknown} value
+ * @returns {unknown}
+ */
 function maskSensitive(value) {
   if (typeof value !== "string") return value;
   if (!value) return "";
@@ -96,7 +109,12 @@ function maskSensitive(value) {
   return `${value.slice(0, 4)}...${value.slice(-2)}`;
 }
 
-// ログ保存前に payload を安全化する。
+/**
+ * ログ保存前に payload を安全化する。
+ *
+ * @param {unknown} payload
+ * @returns {unknown}
+ */
 function sanitizeForLog(payload) {
   if (payload == null) return payload;
 
@@ -109,32 +127,50 @@ function sanitizeForLog(payload) {
 
   function walk(obj) {
     if (!obj || typeof obj !== "object") return obj;
+
     for (const key of Object.keys(obj)) {
       const value = obj[key];
+
       if (key === "googleAiStudioApiKey" || key === "groqApiKey") {
         obj[key] = value ? maskSensitive(value) : "";
         continue;
       }
+
       if (typeof value === "object" && value !== null) {
         walk(value);
       }
     }
+
     return obj;
   }
 
   return walk(cloned);
 }
 
-// 未知カテゴリは ui 扱いへ寄せる。
+/**
+ * 未知カテゴリを ui 扱いへ寄せる。
+ *
+ * @param {unknown} category
+ * @returns {string}
+ */
 function normalizeCategory(category) {
   const normalized = String(category || "")
     .trim()
     .toLowerCase();
+
   if (KNOWN_CATEGORIES.has(normalized)) return normalized;
   return LOG_CATEGORIES.UI;
 }
 
-// 共通的なログ構造を組み立てる。
+/**
+ * 共通的なログ構造を組み立てる。
+ *
+ * @param {string} scope
+ * @param {string} categoryOrMessage
+ * @param {unknown} [messageOrPayload]
+ * @param {unknown} [payloadMaybe]
+ * @returns {{time: string, source: string, category: string, message: string, payload: unknown}}
+ */
 function debugLog(scope, categoryOrMessage, messageOrPayload, payloadMaybe) {
   const source = String(scope || "options");
   let category = LOG_CATEGORIES.UI;
@@ -153,108 +189,229 @@ function debugLog(scope, categoryOrMessage, messageOrPayload, payloadMaybe) {
     payload = messageOrPayload ?? null;
   }
 
-  const time = new Date().toISOString();
-  const safePayload = sanitizeForLog(payload);
   return {
-    time,
-    scope: source,
+    time: new Date().toISOString(),
     source,
     category,
     message,
-    payload: safePayload,
+    payload: sanitizeForLog(payload),
   };
 }
 
-// ログの shape を揃えて後段処理を簡単にする。
-function ensureLogShape(line) {
-  if (!line || typeof line !== "object") return null;
-  const source = String(line.source || line.scope || "unknown");
-  return {
-    time: line.time || new Date().toISOString(),
-    scope: source,
-    source,
-    category: normalizeCategory(line.category),
-    message: String(line.message || ""),
-    payload: sanitizeForLog(line.payload ?? null),
-  };
-}
-
-// 日時表示用のゼロ埋め。
-function padNumber(value, width = 2) {
-  return String(value).padStart(width, "0");
-}
-
-// ローカルタイム文字列へ変換する。
-function formatLocalTimestamp(timestamp) {
-  const date = timestamp ? new Date(timestamp) : new Date();
-  if (Number.isNaN(date.getTime())) return String(timestamp || "");
-
-  const year = date.getFullYear();
-  const month = padNumber(date.getMonth() + 1);
-  const day = padNumber(date.getDate());
-  const hours = padNumber(date.getHours());
-  const minutes = padNumber(date.getMinutes());
-  const seconds = padNumber(date.getSeconds());
-  const milliseconds = padNumber(date.getMilliseconds(), 3);
-
-  const offsetMinutes = -date.getTimezoneOffset();
-  const sign = offsetMinutes >= 0 ? "+" : "-";
-  const absOffsetMinutes = Math.abs(offsetMinutes);
-  const offsetHours = padNumber(Math.floor(absOffsetMinutes / 60));
-  const offsetRemainder = padNumber(absOffsetMinutes % 60);
-
-  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${milliseconds}${sign}${offsetHours}:${offsetRemainder}`;
-}
-
-// debugLogs 配列へ1行追加し、上限を超えたら古いものを削る。
+/**
+ * ローカルデバッグログを末尾へ追加し、上限を超えた古い分を捨てる。
+ *
+ * @param {{time: string, source: string, category: string, message: string, payload: unknown}} line
+ * @returns {Promise<void>}
+ */
 async function appendDebugLog(line) {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
+
   debugLogs.push(line);
+
   if (debugLogs.length > DEBUG_LOGS_MAX) {
     debugLogs.splice(0, debugLogs.length - DEBUG_LOGS_MAX);
   }
+
   await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: debugLogs });
 }
+// =============================================================
+// 表示補助
+// =============================================================
 
-// 言語表示文字列を整える。
-// 共通定義側が code を持つ構造を優先し、旧 lang 形式にも fallback する。
-function formatLanguageLabel(lang) {
-  const code = String(lang?.code || lang?.lang || "").trim();
-  const label = String(lang?.label || "").trim();
-  return label ? `${label} (${code})` : code;
+/**
+ * 短い保存ステータスメッセージを表示する。
+ *
+ * @param {string} message
+ * @returns {void}
+ */
+function showSaveStatus(message) {
+  if (!els.saveStatus) return;
+  els.saveStatus.textContent = message;
 }
 
-// select を共通言語定義から再構築する。
-function populateLangSelect(selectEl, langs, saved, allowEmpty) {
-  if (!selectEl) return;
+/**
+ * popup / options 共通の言語ラベルを組み立てる。
+ *
+ * @param {{label?: string, code?: string}|null|undefined} lang
+ * @returns {string}
+ */
+function formatLanguageLabel(lang) {
+  return lang?.label || lang?.code || "";
+}
 
-  selectEl.innerHTML = "";
+/**
+ * 言語 select を共通言語一覧で再構築する。
+ *
+ * @param {HTMLSelectElement|null} select
+ * @param {Array<{code?: string, lang?: string, label?: string}>} langs
+ * @param {string} selectedValue
+ * @returns {void}
+ */
+function populateLanguageSelect(select, langs, selectedValue) {
+  if (!select) return;
 
-  if (allowEmpty) {
-    const emptyOpt = document.createElement("option");
-    emptyOpt.value = "";
-    emptyOpt.textContent = "Browser language";
-    if (!saved) emptyOpt.selected = true;
-    selectEl.appendChild(emptyOpt);
-  }
+  select.innerHTML = "";
 
-  langs.forEach((l) => {
-    const value = String(l?.code || l?.lang || "").trim();
-    if (!value) return;
+  langs.forEach((lang) => {
+    const option = document.createElement("option");
+    const value = String(lang.code || lang.lang || "").trim();
+    option.value = value;
+    option.textContent = formatLanguageLabel(lang);
 
-    const opt = document.createElement("option");
-    opt.value = value;
-    opt.textContent = formatLanguageLabel(l);
-    if (value === saved) opt.selected = true;
-    selectEl.appendChild(opt);
+    if (value === String(selectedValue || "").trim()) {
+      option.selected = true;
+    }
+
+    select.appendChild(option);
   });
 }
 
-// テキスト出力用の1行ログ形式を作る。
+/**
+ * 現在のフォーム入力値を読み取る。
+ *
+ * @returns {{
+ *   primaryLang: string,
+ *   secondaryLang: string,
+ *   panelDefaultOpen: boolean,
+ *   playWordAudio: boolean,
+ *   enableAiTooltip: boolean,
+ *   googleAiStudioApiKey: string,
+ *   groqApiKey: string
+ * }}
+ */
+function readFormSettings() {
+  return {
+    primaryLang: String(els.primaryLang?.value || "").trim(),
+    secondaryLang: String(els.secondaryLang?.value || "").trim(),
+    panelDefaultOpen: Boolean(els.panelDefaultOpen?.checked),
+    playWordAudio: Boolean(els.playWordAudio?.checked),
+    enableAiTooltip: Boolean(els.enableAiTooltip?.checked),
+    googleAiStudioApiKey: String(els.googleAiStudioApiKey?.value || "").trim(),
+    groqApiKey: String(els.groqApiKey?.value || "").trim(),
+  };
+}
+
+/**
+ * フォームへ設定値を反映する。
+ *
+ * @param {Record<string, unknown>} syncSettings
+ * @param {Record<string, unknown>} localSettings
+ * @returns {void}
+ */
+function applySettingsToForm(syncSettings, localSettings) {
+  populateLanguageSelect(
+    els.primaryLang,
+    SUPPORTED_LANGS,
+    String(syncSettings.primaryLang || DEFAULT_GENERAL_SETTINGS.primaryLang || "en"),
+  );
+  populateLanguageSelect(
+    els.secondaryLang,
+    SUPPORTED_LANGS,
+    String(syncSettings.secondaryLang || DEFAULT_GENERAL_SETTINGS.secondaryLang || ""),
+  );
+
+  if (els.panelDefaultOpen) {
+    els.panelDefaultOpen.checked = Boolean(syncSettings.panelDefaultOpen);
+  }
+  if (els.playWordAudio) {
+    els.playWordAudio.checked = Boolean(syncSettings.playWordAudio);
+  }
+  if (els.enableAiTooltip) {
+    els.enableAiTooltip.checked = Boolean(syncSettings.enableAiTooltip);
+  }
+  if (els.googleAiStudioApiKey) {
+    els.googleAiStudioApiKey.value = String(
+      localSettings.googleAiStudioApiKey || "",
+    );
+  }
+  if (els.groqApiKey) {
+    els.groqApiKey.value = String(localSettings.groqApiKey || "");
+  }
+}
+
+/**
+ * Options 画面の入力値を検証する。
+ *
+ * @param {ReturnType<typeof readFormSettings>} settings
+ * @returns {{ok: boolean, message: string}}
+ */
+function validateFormSettings(settings) {
+  if (!settings.primaryLang) {
+    return { ok: false, message: "主言語を選択してください。" };
+  }
+
+  if (!settings.secondaryLang) {
+    return { ok: false, message: "副言語を選択してください。" };
+  }
+
+  if (settings.primaryLang === settings.secondaryLang) {
+    return {
+      ok: false,
+      message: "主言語と副言語には別の言語を選択してください。",
+    };
+  }
+
+  return { ok: true, message: "" };
+}
+
+/**
+ * API キー入力欄の表示/非表示を切り替える。
+ *
+ * @param {HTMLInputElement|null} input
+ * @returns {void}
+ */
+function toggleSecretInputVisibility(input) {
+  if (!input) return;
+  input.type = input.type === "password" ? "text" : "password";
+}
+// =============================================================
+// デバッグログ表示
+// =============================================================
+
+/**
+ * 既存ログを共通ログ構造へ正規化する。
+ *
+ * @param {any} line
+ * @returns {{time: string, source: string, category: string, message: string, payload: unknown}|null}
+ */
+function ensureLogShape(line) {
+  if (!line || typeof line !== "object") return null;
+
+  const source = String(line.source || line.scope || "options");
+  const category = normalizeCategory(line.category || line.level || "ui");
+  const message = String(line.message || "");
+  const payload = line.payload ?? null;
+  const time = String(line.time || new Date().toISOString());
+
+  return { time, source, category, message, payload };
+}
+
+/**
+ * ローカル時刻文字列へ整形する。
+ *
+ * @param {string} isoString
+ * @returns {string}
+ */
+function formatLocalTimestamp(isoString) {
+  try {
+    return new Date(isoString).toLocaleString();
+  } catch (_) {
+    return isoString;
+  }
+}
+
+/**
+ * クリップボード・ダウンロード向けに 1 行ログ文字列へ整形する。
+ *
+ * @param {any} line
+ * @returns {string}
+ */
 function formatDebugLine(line) {
   const normalizedLine = ensureLogShape(line);
   if (!normalizedLine) return "";
+
   const localTime = formatLocalTimestamp(normalizedLine.time);
   const payloadText =
     normalizedLine.payload != null
@@ -263,21 +420,12 @@ function formatDebugLine(line) {
   return `[${localTime}] [${normalizedLine.category}] [${normalizedLine.source}] ${normalizedLine.message}${payloadText}`;
 }
 
-// ログ削除用に内容比較しやすい署名を作る。
-function buildDebugLineSignature(line) {
-  const normalizedLine = ensureLogShape(line);
-  if (!normalizedLine) return "";
-  return JSON.stringify({
-    time: normalizedLine.time,
-    category: normalizedLine.category,
-    source: normalizedLine.source,
-    message: normalizedLine.message,
-    payload: normalizedLine.payload,
-  });
-}
-
-// UI 上のフィルター値を読む。
-// 字幕パネル debug panel と同じ ID 構造に合わせる。
+/**
+ * UI 上のフィルター値を読む。
+ * 字幕パネル debug panel と同じ ID 構造に合わせる。
+ *
+ * @returns {{source: string, category: string, text: string, showAll: boolean}}
+ */
 function readUiFilters() {
   return (
     globalThis.ATVB?.debugPanelRuntime?.readUiFilters?.(document) ?? {
@@ -289,7 +437,13 @@ function readUiFilters() {
   );
 }
 
-// 1行のログが現在の UI フィルターに一致するか判定する。
+/**
+ * 1 行のログが現在の UI フィルターに一致するか判定する。
+ *
+ * @param {{time: string, source: string, category: string, message: string, payload: unknown}|null} line
+ * @param {{source: string, category: string, text: string, showAll: boolean}} filter
+ * @returns {boolean}
+ */
 function matchesDebugFilter(line, filter) {
   if (!line) return false;
 
@@ -320,7 +474,13 @@ function matchesDebugFilter(line, filter) {
   return true;
 }
 
-// カテゴリ表示対象と UI フィルターを両方適用する。
+/**
+ * カテゴリ表示対象と UI フィルターを両方適用する。
+ *
+ * @param {any[]} logs
+ * @param {{source: string, category: string, text: string, showAll: boolean}} [filter=readUiFilters()]
+ * @returns {Array<{time: string, source: string, category: string, message: string, payload: unknown}>}
+ */
 function getVisibleDebugLogs(logs, filter = readUiFilters()) {
   const normalizedLogs = (logs || [])
     .map((line) => ensureLogShape(line))
@@ -339,93 +499,20 @@ function getVisibleDebugLogs(logs, filter = readUiFilters()) {
   );
 }
 
-// ログカード DOM を1件ぶん組み立てる。
-function createDebugLogItem(line) {
-  const normalizedLine = ensureLogShape(line);
-  if (!normalizedLine) return null;
-
-  const item = document.createElement("article");
-  item.className = "debug-log-item";
-  item.dataset.category = normalizedLine.category;
-
-  const meta = document.createElement("div");
-  meta.className = "debug-log-meta";
-
-  const time = document.createElement("span");
-  time.textContent = formatLocalTimestamp(normalizedLine.time);
-
-  const category = document.createElement("span");
-  category.className = "debug-log-category";
-  category.textContent = normalizedLine.category;
-
-  const source = document.createElement("span");
-  source.textContent = normalizedLine.source;
-
-  meta.append(time, category, source);
-
-  const message = document.createElement("div");
-  message.className = "debug-log-message";
-  message.textContent = normalizedLine.message || "(no message)";
-
-  item.append(meta, message);
-
-  if (normalizedLine.payload != null) {
-    const payload = document.createElement("pre");
-    payload.className = "debug-log-payload";
-    payload.textContent = JSON.stringify(normalizedLine.payload, null, 2);
-    item.appendChild(payload);
-  }
-
-  return item;
-}
-
-function getAllDebugLogs() {
-  return chrome.storage.local
-    .get(DEBUG_LOGS_KEY)
-    .then(({ [DEBUG_LOGS_KEY]: debugLogs = [] }) => debugLogs);
-}
-
-function renderDebugLogItems(root, visibleLogs) {
-  const output = root.getElementById("debugLogOutput");
-  if (!output) return;
-
-  visibleLogs.forEach((line) => {
-    const item = createDebugLogItem(line);
-    if (item) output.appendChild(item);
-  });
-}
-
-function renderDebugLogEmptyState(root) {
-  const output = root.getElementById("debugLogOutput");
-  if (!output) return;
-
-  const empty = document.createElement("div");
-  empty.className = "debug-log-empty";
-  empty.textContent = "表示できるデバッグログはまだありません。";
-  output.appendChild(empty);
-}
-
-function updateDebugLogMeta(root, meta = {}) {
-  const countEl = root.getElementById("debugLogCount");
-  const badgeEl = root.getElementById("debugRealtimeBadge");
-
-  if (countEl) {
-    const visibleCount = Number(meta.visibleCount || 0);
-    const totalCount = Number(meta.totalCount || 0);
-    countEl.textContent = `${visibleCount} / ${totalCount} logs`;
-  }
-
-  if (badgeEl) {
-    badgeEl.hidden = false;
-    badgeEl.textContent = "LIVE";
-  }
-}
-
-// フィルター適用後のログを debug panel へ再描画する。
+/**
+ * フィルター適用後のログを debug panel へ再描画する。
+ *
+ * @returns {Promise<void>}
+ */
 async function renderDebugLogs() {
   await globalThis.ATVB?.debugPanelRuntime?.update?.(document);
 }
 
+/**
+ * 可視ログをクリップボードへコピーする。
+ *
+ * @returns {Promise<void>}
+ */
 async function copyDebugLogsInternal() {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
@@ -440,486 +527,395 @@ async function copyDebugLogsInternal() {
   showSaveStatus("デバッグログをコピーしました");
 }
 
+/**
+ * 可視ログをファイル保存する。
+ *
+ * @returns {Promise<void>}
+ */
 async function downloadDebugLogsInternal() {
   const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
     await chrome.storage.local.get(DEBUG_LOGS_KEY);
   const visibleLogs = getVisibleDebugLogs(debugLogs);
   const text = visibleLogs.map(formatDebugLine).join("\n");
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const filename = `apple-tv-bilingual-debug-${timestamp}.txt`;
 
-  const response = await new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: "DOWNLOAD_DEBUG_LOG", text }, (res) => {
-      if (chrome.runtime.lastError) {
-        resolve({ ok: false, error: chrome.runtime.lastError.message });
-        return;
-      }
-      resolve(res || { ok: false, error: "no_response" });
-    });
+  await chrome.runtime.sendMessage({
+    type: "SAVE_TEXT_FILE",
+    filename,
+    text,
   });
 
-  if (!response?.ok) {
-    showSaveStatus(
-      `デバッグログの保存に失敗しました: ${response?.error ?? "unknown"}`,
-      true,
+  const line = debugLog("options", LOG_CATEGORIES.UI, "Downloaded debug logs", {
+    lineCount: visibleLogs.length,
+    filename,
+  });
+  await appendDebugLog(line);
+  showSaveStatus("デバッグログを保存しました");
+}
+
+/**
+ * 保存済みデバッグログを全削除する。
+ *
+ * @returns {Promise<void>}
+ */
+async function clearDebugLogsInternal() {
+  await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: [] });
+
+  const line = debugLog("options", LOG_CATEGORIES.UI, "Cleared debug logs");
+  await appendDebugLog(line);
+  await renderDebugLogs();
+  showSaveStatus("デバッグログを削除しました");
+}
+
+
+// =============================================================
+// Apple TV+ タブ通知
+// =============================================================
+
+/**
+ * 現在アクティブな Apple TV+ タブへ設定変更を送る。
+ * options では sync/local の保存後に、反映対象だけを content へ渡す。
+ *
+ * @param {Record<string, unknown>} settings
+ * @returns {Promise<void>}
+ */
+async function notifyActiveAppleTvTab(settings) {
+  const [tab] = await chrome.tabs.query({
+    active: true,
+    currentWindow: true,
+  });
+
+  if (!tab?.id || !tab.url || !tab.url.includes("tv.apple.com")) {
+    const line = debugLog(
+      "options",
+      LOG_CATEGORIES.SETTINGS,
+      "Skipped notifying Apple TV+ tab",
+      {
+        hasTabId: Boolean(tab?.id),
+        tabUrl: tab?.url ?? null,
+        settings,
+      },
     );
+    await appendDebugLog(line);
+    showSaveStatus("保存しました。Apple TV+ タブを開くと反映されます。");
     return;
   }
 
-  const line = debugLog(
-    "options",
-    LOG_CATEGORIES.API,
-    "Downloaded debug logs",
+  chrome.tabs.sendMessage(
+    tab.id,
     {
-      lineCount: visibleLogs.length,
-      downloadId: response.downloadId ?? null,
+      type: "SETTINGS_CHANGED",
+      settings,
+    },
+    async () => {
+      if (chrome.runtime.lastError) {
+        const line = debugLog(
+          "options",
+          LOG_CATEGORIES.ERROR,
+          "Failed to notify Apple TV+ tab",
+          {
+            message: chrome.runtime.lastError.message,
+            settings,
+          },
+        );
+        await appendDebugLog(line);
+        showSaveStatus("保存しました。Apple TV+ タブを再読み込みすると反映されます。");
+        return;
+      }
+
+      const line = debugLog(
+        "options",
+        LOG_CATEGORIES.SETTINGS,
+        "Notified Apple TV+ tab with updated settings",
+        {
+          settings,
+        },
+      );
+      await appendDebugLog(line);
+      showSaveStatus("保存して現在の Apple TV+ タブへ反映しました。");
     },
   );
-  await appendDebugLog(line);
-  showSaveStatus("デバッグログをダウンロードしました");
 }
 
-async function clearDebugLogsInternal() {
-  const { [DEBUG_LOGS_KEY]: debugLogs = [] } =
-    await chrome.storage.local.get(DEBUG_LOGS_KEY);
+// =============================================================
+// 設定の読込・保存
+// =============================================================
 
-  const visibleLogs = getVisibleDebugLogs(debugLogs);
-  const visibleSignatures = new Set(
-    visibleLogs.map((line) => buildDebugLineSignature(line)).filter(Boolean),
-  );
+/**
+ * storage から sync/local 設定を読み、schema の merge を通して返す。
+ *
+ * @returns {Promise<{
+ *   syncSettings: Record<string, unknown>,
+ *   localSettings: Record<string, unknown>
+ * }>}
+ */
+async function loadSettings() {
+  const schema = globalThis.ATVB_SCHEMA;
+  const syncKeys = schema?.SETTINGS_KEYS_SYNC ?? Object.keys(DEFAULT_GENERAL_SETTINGS);
+  const localKeys = schema?.SETTINGS_KEYS_LOCAL ?? Object.keys(DEFAULT_LOCAL_SETTINGS);
 
-  const remainingLogs = (debugLogs || [])
-    .map((line) => ensureLogShape(line))
-    .filter(Boolean)
-    .filter((line) => !visibleSignatures.has(buildDebugLineSignature(line)));
+  const [syncRaw, localRaw] = await Promise.all([
+    chrome.storage.sync.get(syncKeys),
+    chrome.storage.local.get(localKeys),
+  ]);
 
-  await chrome.storage.local.set({ [DEBUG_LOGS_KEY]: remainingLogs });
-  showSaveStatus("デバッグログをクリアしました");
-}
+  const syncSettings = schema
+    ? schema.mergeSyncSettings(syncRaw)
+    : {
+        ...DEFAULT_GENERAL_SETTINGS,
+        ...syncRaw,
+      };
 
-// 現在選択中の AI Provider を読む。
-function getPreferredAiProvider() {
-  const checked = document.querySelector(
-    'input[name="preferredAiProvider"]:checked',
-  );
-  return checked ? checked.value : "auto";
-}
+  const localSettings = schema
+    ? schema.mergeLocalSettings(localRaw)
+    : {
+        ...DEFAULT_LOCAL_SETTINGS,
+        ...localRaw,
+      };
 
-// 保存済み AI Provider をラジオへ反映する。
-function setPreferredAiProvider(value) {
-  const target =
-    document.querySelector(
-      `input[name="preferredAiProvider"][value="${value}"]`,
-    ) ||
-    document.querySelector('input[name="preferredAiProvider"][value="auto"]');
-
-  if (target) target.checked = true;
-}
-
-// 一時的な保存結果メッセージを表示する。
-function showSaveStatus(message, isError = false) {
-  els.saveStatus.textContent = message;
-  els.saveStatus.style.color = isError ? "#ff8b8b" : "#7bd88f";
-
-  clearTimeout(showSaveStatus._timer);
-  showSaveStatus._timer = setTimeout(() => {
-    els.saveStatus.textContent = "";
-  }, 2800);
-}
-
-// content 側へそのまま渡す設定 payload を作る。
-function buildLanguageSettingsPayload(settings) {
   return {
-    ...settings,
+    syncSettings,
+    localSettings,
   };
 }
 
-// 拡張有効中なら Apple TV+ タブへ設定反映を依頼する。
-async function dispatchSettingsChangedFromOptions(settingsPayload) {
-  const lineDispatchStart = debugLog(
-    "options",
-    LOG_CATEGORIES.SETTINGS,
-    "options dispatch APPLY_SETTINGS_TO_APPLE_TV",
-    {
-      settings: settingsPayload,
-    },
-  );
-  await appendDebugLog(lineDispatchStart);
-
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage(
-      {
-        type: "APPLY_SETTINGS_TO_APPLE_TV",
-        reason: "options_save",
-        settings: settingsPayload,
-      },
-      async (response) => {
-        if (chrome.runtime.lastError) {
-          const lineError = debugLog(
-            "options",
-            LOG_CATEGORIES.ERROR,
-            "options dispatch APPLY_SETTINGS_TO_APPLE_TV failed",
-            {
-              error: chrome.runtime.lastError.message,
-            },
-          );
-          await appendDebugLog(lineError);
-          resolve({ ok: false, error: chrome.runtime.lastError.message });
-          return;
-        }
-
-        resolve(response || { ok: false, error: "no_response" });
-      },
-    );
-  });
-}
-
-// パスワード入力欄の表示/非表示を切り替える。
-function toggleSecretInput(inputEl, buttonEl) {
-  const show = inputEl.type === "password";
-  inputEl.type = show ? "text" : "password";
-  buttonEl.textContent = show ? "非表示" : "表示";
-}
-
-// 設定を storage から読み込み UI に反映する。
-async function loadSettings() {
-  const lineStart = debugLog(
-    "options",
-    LOG_CATEGORIES.SETTINGS,
-    "Loading settings",
-    {
-      supportedLanguageCount: SUPPORTED_LANGS.length,
-    },
-  );
-  await appendDebugLog(lineStart);
-
-  const [general, local] = await Promise.all([
-    chrome.storage.sync.get(DEFAULT_GENERAL_SETTINGS),
-    chrome.storage.local.get(DEFAULT_LOCAL_SETTINGS),
-  ]);
-
-  populateLangSelect(
-    els.primaryLang,
-    SUPPORTED_LANGS,
-    general.primaryLang,
-    false,
-  );
-  populateLangSelect(
-    els.secondaryLang,
-    SUPPORTED_LANGS,
-    general.secondaryLang,
-    true,
-  );
-
-  els.panelDefaultOpen.checked = Boolean(general.panelDefaultOpen);
-  els.playWordAudio.checked = Boolean(general.playWordAudio);
-  els.enableAiTooltip.checked = Boolean(general.enableAiTooltip);
-
-  setPreferredAiProvider(general.preferredAiProvider);
-
-  els.googleAiStudioApiKey.value = local.googleAiStudioApiKey || "";
-  els.groqApiKey.value = local.groqApiKey || "";
-
-  const lineLoadedGeneral = debugLog(
-    "options",
-    LOG_CATEGORIES.SETTINGS,
-    "Loaded general settings",
-    general,
-  );
-  await appendDebugLog(lineLoadedGeneral);
-
-  const lineLoadedLocal = debugLog(
-    "options",
-    LOG_CATEGORIES.SETTINGS,
-    "Loaded API key flags",
-    {
-      hasGoogleAiStudioApiKey: !!local.googleAiStudioApiKey,
-      hasGroqApiKey: !!local.groqApiKey,
-    },
-  );
-  await appendDebugLog(lineLoadedLocal);
-
-  const lineProvider = debugLog(
-    "options",
-    LOG_CATEGORIES.SETTINGS,
-    "Loaded preferred AI provider",
-    {
-      preferredAiProvider: general.preferredAiProvider,
-    },
-  );
-  await appendDebugLog(lineProvider);
-
-  await renderDebugLogs();
-}
-
-// フォーム入力を保存し、必要なら content 側へ即時反映する。
+/**
+ * 現在フォームに入っている値を storage へ保存する。
+ * extensionEnabled は runtime state のため、options からは保存しない。
+ *
+ * @returns {Promise<void>}
+ */
 async function saveSettings() {
-  const primaryLang = els.primaryLang.value;
-  const secondaryLang = els.secondaryLang.value;
+  const formSettings = readFormSettings();
+  const validation = validateFormSettings(formSettings);
 
-  const lineFormValues = debugLog(
-    "options",
-    LOG_CATEGORIES.SETTINGS,
-    "options save form values",
-    {
-      primaryLang,
-      secondaryLang,
-    },
-  );
-  await appendDebugLog(lineFormValues);
+  if (!validation.ok) {
+    showSaveStatus(validation.message);
 
-  if (!primaryLang) {
     const line = debugLog(
       "options",
-      LOG_CATEGORIES.ERROR,
-      "Save blocked: primaryLang missing",
+      LOG_CATEGORIES.SETTINGS,
+      "Saving options settings blocked by validation",
+      {
+        ...formSettings,
+        validationMessage: validation.message,
+      },
     );
     await appendDebugLog(line);
-    showSaveStatus("勉強している言語を選択してください", true);
-    els.primaryLang.focus();
-    await renderDebugLogs();
     return;
   }
 
-  const generalSettings = {
-    primaryLang,
-    secondaryLang,
-    panelDefaultOpen: els.panelDefaultOpen.checked,
-    playWordAudio: els.playWordAudio.checked,
-    enableAiTooltip: els.enableAiTooltip.checked,
-    preferredAiProvider: getPreferredAiProvider(),
+  const syncSettings = {
+    primaryLang: formSettings.primaryLang,
+    secondaryLang: formSettings.secondaryLang,
+    panelDefaultOpen: formSettings.panelDefaultOpen,
+    playWordAudio: formSettings.playWordAudio,
+    enableAiTooltip: formSettings.enableAiTooltip,
   };
 
   const localSettings = {
-    googleAiStudioApiKey: els.googleAiStudioApiKey.value.trim(),
-    groqApiKey: els.groqApiKey.value.trim(),
+    googleAiStudioApiKey: formSettings.googleAiStudioApiKey,
+    groqApiKey: formSettings.groqApiKey,
   };
 
-  const lineGeneral = debugLog(
+  const lineSaving = debugLog(
     "options",
     LOG_CATEGORIES.SETTINGS,
-    "Saving general settings",
-    generalSettings,
-  );
-  await appendDebugLog(lineGeneral);
-
-  const lineApiFlags = debugLog(
-    "options",
-    LOG_CATEGORIES.SETTINGS,
-    "Saving API key flags",
+    "Saving options settings",
     {
-      hasGoogleAiStudioApiKey: !!localSettings.googleAiStudioApiKey,
-      hasGroqApiKey: !!localSettings.groqApiKey,
+      syncSettings,
+      localSettings,
     },
   );
-  await appendDebugLog(lineApiFlags);
-
-  if (!generalSettings.secondaryLang) {
-    const lineSecondaryEmpty = debugLog(
-      "options",
-      LOG_CATEGORIES.SETTINGS,
-      "secondaryLang is empty; content fallback expected",
-      { secondaryLang: generalSettings.secondaryLang },
-    );
-    await appendDebugLog(lineSecondaryEmpty);
-  }
-
-  const lineProvider = debugLog(
-    "options",
-    LOG_CATEGORIES.SETTINGS,
-    "Saving preferred AI provider",
-    {
-      preferredAiProvider: generalSettings.preferredAiProvider,
-    },
-  );
-  await appendDebugLog(lineProvider);
+  await appendDebugLog(lineSaving);
 
   await Promise.all([
-    chrome.storage.sync.set(generalSettings),
+    chrome.storage.sync.set(syncSettings),
     chrome.storage.local.set(localSettings),
   ]);
 
-  const savedValues = await chrome.storage.sync.get([
-    "primaryLang",
-    "secondaryLang",
-  ]);
-  const lineReadback = debugLog(
+  const lineSaved = debugLog(
     "options",
     LOG_CATEGORIES.SETTINGS,
-    "options saved values readback",
-    savedValues,
-  );
-  await appendDebugLog(lineReadback);
-
-  const enabledState = await chrome.storage.sync.get(["extensionEnabled"]);
-  const languageSettingsPayload = buildLanguageSettingsPayload(
-    generalSettings,
-  );
-
-  let dispatchResult = {
-    ok: false,
-    skipped: true,
-    reason: "extension-disabled",
-  };
-
-  if (enabledState.extensionEnabled === true) {
-    dispatchResult = await dispatchSettingsChangedFromOptions(
-      languageSettingsPayload,
-    );
-  }
-
-  const lineDispatchResult = debugLog(
-    "options",
-    dispatchResult?.ok ? LOG_CATEGORIES.SETTINGS : LOG_CATEGORIES.ERROR,
-    "options dispatch APPLY_SETTINGS_TO_APPLE_TV result",
+    "Saved options settings",
     {
-      payload: languageSettingsPayload,
-      extensionEnabled: enabledState.extensionEnabled,
-      result: dispatchResult,
+      syncSettings,
+      localSettings,
     },
   );
-  await appendDebugLog(lineDispatchResult);
+  await appendDebugLog(lineSaved);
 
-  if (dispatchResult?.ok) {
-    showSaveStatus("Saved and applied.");
-  } else if (dispatchResult?.skipped) {
-    showSaveStatus("Saved. Changes apply when the extension is enabled.");
-  } else {
-    showSaveStatus("Saved. Open Apple TV+ tab to apply immediately.");
-  }
-
-  const lineDone = debugLog(
-    "options",
-    LOG_CATEGORIES.SETTINGS,
-    "Settings saved successfully",
-  );
-  await appendDebugLog(lineDone);
-  await renderDebugLogs();
+  await notifyActiveAppleTvTab(syncSettings);
 }
-
-// debugLogs の storage 更新を監視し、リアルタイムで再描画する。
-function bindDebugLogRealtimeWatch() {
-  chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "local") return;
-    if (!changes[DEBUG_LOGS_KEY]) return;
-
-    renderDebugLogs().catch(() => {
-      // storage 更新を伴うログ記録は再帰発火し得るため、ここでは何もしない。
-    });
-  });
-}
-
-// 画面上のイベントをまとめて bind する。
-function bindEvents() {
-  els.saveBtn.addEventListener("click", saveSettings);
-
-  els.form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    saveSettings();
-  });
-
-  els.toggleGoogleKey.addEventListener("click", () => {
-    toggleSecretInput(els.googleAiStudioApiKey, els.toggleGoogleKey);
-  });
-
-  els.toggleGroqKey.addEventListener("click", () => {
-    toggleSecretInput(els.groqApiKey, els.toggleGroqKey);
-  });
-}
-
-
-// -------------------------------------------------------------
-// settings debug panel shell
-// -------------------------------------------------------------
 
 /**
- * settings 画面用 debug panel shell を shared builder から差し込む。
+ * storage から読んだ設定をフォームへ再反映する。
  *
- * 前提:
- * - options.html に #debugPanelMount を置く
- * - modules/debug-panel-shell.js が options.js より先に読み込まれている
+ * @returns {Promise<void>}
+ */
+async function reloadSettingsIntoForm() {
+  const { syncSettings, localSettings } = await loadSettings();
+  applySettingsToForm(syncSettings, localSettings);
+
+  const line = debugLog(
+    "options",
+    LOG_CATEGORIES.SETTINGS,
+    "Reloaded settings into options form",
+    {
+      syncSettings,
+      localSettings,
+    },
+  );
+  await appendDebugLog(line);
+}
+
+// =============================================================
+// デバッグ UI 初期化
+// =============================================================
+
+/**
+ * settings 用 debug panel shell を shared builder から差し込む。
  *
  * @returns {void}
  */
-function mountOptionsDebugPanelShell() {
-  const mountEl = els.debugPanelMount;
-  if (!mountEl) return;
+function mountDebugPanelShell() {
+  if (!els.debugPanelMount) return;
 
-  const html =
-    globalThis.ATVB?.debugPanelShell?.buildDebugPanelShellHTML?.({
-      variant: "options",
-    }) ?? "";
-
-  if (!html) return;
-
-  mountEl.innerHTML = html;
-
-  els.debugSectionToggle = document.getElementById("debugSectionToggle");
-  els.debugSectionBody = document.getElementById("debugSectionBody");
-  els.debugLogOutput = document.getElementById("debugLogOutput");
-  els.debugCopyBtn = document.getElementById("debugCopyBtn");
-  els.debugDownloadBtn = document.getElementById("debugDownloadBtn");
-  els.debugClearBtn = document.getElementById("debugClearBtn");
-  els.debugShowAll = document.getElementById("debugShowAll");
-  els.debugFilterSource = document.getElementById("debugFilterSource");
-  els.debugFilterCategory = document.getElementById("debugFilterCategory");
-  els.debugFilterText = document.getElementById("debugFilterText");
-  els.debugLogCount = document.getElementById("debugLogCount");
-  els.debugRealtimeBadge = document.getElementById("debugRealtimeBadge");
-}
-
-function mountOptionsDebugPanelRuntime() {
-  globalThis.ATVB?.debugPanelRuntime?.mount?.(document, {
-    variant: "options",
-
-    getLogs: async () => getAllDebugLogs(),
-
-    getVisibleLogs: (logs, uiFilter) => getVisibleDebugLogs(logs, uiFilter),
-
-    getMeta: (logs, visibleLogs) => ({
-      totalCount: Array.isArray(logs) ? logs.length : 0,
-      visibleCount: Array.isArray(visibleLogs) ? visibleLogs.length : 0,
-    }),
-
-    renderLogItems: (root, visibleLogs) => {
-      renderDebugLogItems(root, visibleLogs);
-    },
-
-    renderEmptyState: (root) => {
-      renderDebugLogEmptyState(root);
-    },
-
-    updateMeta: (root, meta) => {
-      updateDebugLogMeta(root, meta);
-    },
-
-    copyLogs: async () => {
-      await copyDebugLogsInternal();
-    },
-
-    downloadLogs: async () => {
-      await downloadDebugLogsInternal();
-    },
-
-    clearLogs: async () => {
-      await clearDebugLogsInternal();
-    },
+  globalThis.ATVB?.debugPanelRuntime?.mountShell?.(els.debugPanelMount, {
+    scope: "settings",
   });
 }
 
-// 初期化エントリポイント。
-// DOM 準備後にイベント bind、初期ログ追加、設定読込を行う。
-document.addEventListener("DOMContentLoaded", async () => {
-  mountOptionsDebugPanelShell();
-  mountOptionsDebugPanelRuntime();
-  bindEvents();
-  bindDebugLogRealtimeWatch();
+/**
+ * debug section の開閉 UI を初期化する。
+ *
+ * @returns {void}
+ */
+function initDebugSectionToggle() {
+  if (!els.debugSectionToggle || !els.debugSectionBody) return;
+
+  els.debugSectionToggle.addEventListener("click", () => {
+    const isOpen = els.debugSectionBody.hidden === false;
+    els.debugSectionBody.hidden = isOpen;
+    els.debugSectionToggle.setAttribute("aria-expanded", String(!isOpen));
+  });
+}
+
+/**
+ * デバッグログ関連ボタンとフィルター UI を初期化する。
+ *
+ * @returns {void}
+ */
+function initDebugActions() {
+  els.debugCopyBtn?.addEventListener("click", async () => {
+    await copyDebugLogsInternal();
+  });
+
+  els.debugDownloadBtn?.addEventListener("click", async () => {
+    await downloadDebugLogsInternal();
+  });
+
+  els.debugClearBtn?.addEventListener("click", async () => {
+    await clearDebugLogsInternal();
+  });
+
+  els.debugShowAll?.addEventListener("change", async () => {
+    await renderDebugLogs();
+  });
+
+  els.debugFilterSource?.addEventListener("change", async () => {
+    await renderDebugLogs();
+  });
+
+  els.debugFilterCategory?.addEventListener("change", async () => {
+    await renderDebugLogs();
+  });
+
+  els.debugFilterText?.addEventListener("input", async () => {
+    await renderDebugLogs();
+  });
+}
+
+// =============================================================
+// storage 監視
+// =============================================================
+
+/**
+ * local storage 上の debugLogs 変更を監視し、options の表示を追従させる。
+ *
+ * @returns {void}
+ */
+function watchDebugLogStorage() {
+  chrome.storage.onChanged.addListener(async (changes, areaName) => {
+    if (areaName !== "local") return;
+    if (!changes[DEBUG_LOGS_KEY]) return;
+
+    await renderDebugLogs();
+  });
+}
+
+// =============================================================
+// ページ初期化
+// =============================================================
+
+/**
+ * Options 画面全体を初期化する。
+ *
+ * @returns {Promise<void>}
+ */
+async function initOptionsPage() {
+  mountDebugPanelShell();
+  initDebugSectionToggle();
+  initDebugActions();
+  watchDebugLogStorage();
+
+  if (!SUPPORTED_LANGS.length) {
+    showSaveStatus("言語一覧の読み込みに失敗しました。");
+
+    const line = debugLog(
+      "options",
+      LOG_CATEGORIES.ERROR,
+      "Language definitions are missing",
+      {
+        supportedLanguageCount: 0,
+      },
+    );
+    await appendDebugLog(line);
+    return;
+  }
+
+  await reloadSettingsIntoForm();
+  await renderDebugLogs();
 
   const line = debugLog(
     "options",
     LOG_CATEGORIES.UI,
-    "options page initialized",
+    "Initialized options page",
+    {
+      supportedLanguageCount: SUPPORTED_LANGS.length,
+    },
   );
   await appendDebugLog(line);
+}
 
-  await loadSettings();
-  await globalThis.ATVB?.debugPanelRuntime?.update?.(document);
+// =============================================================
+// イベント
+// =============================================================
+
+els.saveBtn?.addEventListener("click", async (event) => {
+  event.preventDefault();
+  await saveSettings();
+});
+
+els.toggleGoogleKey?.addEventListener("click", () => {
+  toggleSecretInputVisibility(els.googleAiStudioApiKey);
+});
+
+els.toggleGroqKey?.addEventListener("click", () => {
+  toggleSecretInputVisibility(els.groqApiKey);
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  initOptionsPage();
 });

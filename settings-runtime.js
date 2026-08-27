@@ -40,11 +40,12 @@
       startBilingual,
       isPlaybackPageReady,
       getVideoAndDialog,
-      cueController,
-      syncIntervalOrchestrator,
-      panelUi,
       mountToggleOnlyUi,
     } = deps;
+
+    // cueController / syncIntervalOrchestrator / panelUi は content.js 側で
+    // getter 経由の遅延代入になっているため、ここで destructure せず、
+    // 使用箇所ごとに deps.cueController などで最新値を取得する。
 
     let initialAutoStartCleanup = null;
     let initialAutoStartToken = 0;
@@ -213,8 +214,13 @@
     // secondary fallback / settings load
     // -------------------------------------------------------
 
-    // secondaryLang 未設定時の補完値を決める。
-    // requested settings をそのまま書き換えず、実行時に使う effective 値だけを返す。
+    /**
+     * secondaryLang 未設定時の補完値を決める。
+     * requested settings をそのまま書き換えず、実行時に使う effective 値だけを返す。
+     *
+     * @param {Object} settings
+     * @returns {string}
+     */
     function applySecondaryLangFallback(settings) {
       const primaryLang = String(settings?.primaryLang || "").trim();
       const secondaryLang = String(settings?.secondaryLang || "").trim();
@@ -225,18 +231,37 @@
       return "";
     }
 
-    // SETTINGS_CHANGED で使う次回設定を組み立てる。
-    // default / 現在 state / incoming の順に merge し、反映前の基準値を揃える。
+    /**
+     * SETTINGS_CHANGED で使う次回設定を組み立てる。
+     * default / 現在 state / incoming の順に merge し、反映前の基準値を揃える。
+     *
+     * extensionEnabled は runtime state なので、contentSettings には含めない。
+     *
+     * @param {Object} incoming
+     * @returns {Object}
+     */
     function resolveSettingsChangeNextSettings(incoming = {}) {
+      const nextIncoming = { ...incoming };
+      delete nextIncoming.extensionEnabled;
+
       return {
         ...DEFAULT_SETTINGS,
         ...state.contentSettings,
-        ...incoming,
+        ...nextIncoming,
       };
     }
 
-    // storage から設定スナップショットを読み込み、
-    // requested settings と effective settings の両方を state に反映して返す。
+    /**
+     * storage から設定スナップショットを読み込み、
+     * requested settings と effective settings の両方を state に反映して返す。
+     *
+     * extensionEnabled は永続設定ではないため、storage からは読まない。
+     *
+     * @returns {Promise<{
+     *   requestedSettings: Object,
+     *   effectiveSettings: Object
+     * }>}
+     */
     async function loadSettingsSnapshot() {
       const result = await chrome.storage.sync.get(DEFAULT_SETTINGS);
 
@@ -244,6 +269,7 @@
         ...DEFAULT_SETTINGS,
         ...result,
       };
+      delete requestedSettings.extensionEnabled;
 
       const effectiveSettings = {
         ...requestedSettings,
@@ -264,20 +290,26 @@
       };
     }
 
-    // 保存済み設定を読み込んで、現在の playback へ反映を始める。
-    // extensionEnabled / language selection readiness を見て、起動するか待機するかを決める。
+    /**
+     * 保存済み設定を読み込み、現在の playback へ反映を始める。
+     *
+     * ここでは永続設定だけを反映する。
+     * runtime の enable / disable 判定は state.extensionEnabled を正本とする。
+     *
+     * @returns {Promise<void>}
+     */
     async function loadSettingsFromSync() {
       const { requestedSettings, effectiveSettings } = await loadSettingsSnapshot();
 
       logContentSettings("settings loaded from sync", {
-        extensionEnabled: effectiveSettings.extensionEnabled,
+        runtimeExtensionEnabled: state.extensionEnabled,
         primaryLang: effectiveSettings.primaryLang,
         secondaryLang: effectiveSettings.secondaryLang,
         requestedSecondaryLang: requestedSettings.secondaryLang || "",
         panelDefaultOpen: effectiveSettings.panelDefaultOpen,
       });
 
-      if (!effectiveSettings.extensionEnabled) {
+      if (state.extensionEnabled === false) {
         state.panelOpen = false;
         detachForDisabled({
           reason: "load_settings_from_sync:disabled",
@@ -298,19 +330,27 @@
     // restart orchestration
     // -------------------------------------------------------
 
-    // restart 前に state 上の設定値を更新する。
-    // requested / effective / panelOpen を揃え、次の startBilingual が参照する値を整える。
+    /**
+     * restart 前に state 上の設定値を更新する。
+     * requested / effective / panelOpen を揃え、次の startBilingual が参照する値を整える。
+     *
+     * @param {Object} settings
+     * @param {Object} [options]
+     * @returns {void}
+     */
     function applyRestartSettings(settings, options = {}) {
       const { keepPanelOpen = state.panelOpen } = options;
+      const safeSettings = { ...settings };
+      delete safeSettings.extensionEnabled;
 
       state.contentSettings = {
         ...state.contentSettings,
-        ...settings,
+        ...safeSettings,
       };
 
       state.requestedContentSettings = {
         ...state.requestedContentSettings,
-        ...settings,
+        ...safeSettings,
       };
 
       state.requestedSecondaryLang =
@@ -320,17 +360,22 @@
 
       logContentSettings("applyRestartSettings", {
         keepPanelOpen: state.panelOpen,
+        runtimeExtensionEnabled: state.extensionEnabled,
         primaryLang: state.contentSettings.primaryLang,
         secondaryLang: state.contentSettings.secondaryLang,
         requestedSecondaryLang: state.requestedSecondaryLang,
-        extensionEnabled: state.contentSettings.extensionEnabled,
       });
     }
 
-    // 設定反映後に bilingual の再起動を始める。
-    // 再起動前 cleanup と startBilingual 呼び出しをつなぐ orchestrator として使う。
-    // toggleOpId は cleanup ログとトグル ON 操作を相関するため、
-    // prepareForRestart() へ透過的に引き渡す。
+    /**
+     * 設定反映後に bilingual の再起動を始める。
+     * runtime の enable / disable 判定は state.extensionEnabled を使う。
+     *
+     * @param {Object} settings
+     * @param {string} [reason]
+     * @param {Object} [options]
+     * @returns {void}
+     */
     function restartBilingual(settings, reason = "unknown", options = {}) {
       const toggleOpId =
         typeof options.toggleOpId === "string" && options.toggleOpId
@@ -339,7 +384,7 @@
 
       applyRestartSettings(settings, options);
 
-      if (!state.contentSettings.extensionEnabled) {
+      if (state.extensionEnabled === false) {
         logContent?.("restartBilingual skipped because extension is disabled", {
           reason,
           toggleOpId,
@@ -359,13 +404,17 @@
       });
     }
 
-
     // -------------------------------------------------------
-    // トグル完全リセット
+    // toggle-off cleanup
     // -------------------------------------------------------
 
-    // settings-runtime.js が直接持っている playback 参照を明示的に切る。
-    // OFF 後の再取得で古い video / dialog / track を再利用しないための top-level cleanup。
+    /**
+     * settings-runtime.js が直接持っている playback 参照を明示的に切る。
+     * OFF 後の再取得で古い video / dialog / track を再利用しないための top-level cleanup。
+     *
+     * @param {string|null} toggleOpId
+     * @returns {void}
+     */
     function resetTopLevelPlaybackRefsForToggleOff(toggleOpId) {
       const before = {
         toggleOpId,
@@ -393,14 +442,20 @@
     // runtime message
     // -------------------------------------------------------
 
-    // Apple TV+ 側の secondary 字幕選択を現在設定へ同期する。
-    // settings 変更後の再起動前に、native 側の字幕状態を拡張設定と揃えるために使う。
+    /**
+     * Apple TV+ 側の secondary 字幕選択を現在設定へ同期する。
+     * settings 変更後の再起動前に、native 側の字幕状態を拡張設定と揃えるために使う。
+     *
+     * @param {string} secondaryLang
+     * @param {string} triggerReason
+     * @returns {Promise<void>}
+     */
     async function syncAppleTvNativeSubtitleToSecondaryLang(
       secondaryLang,
       triggerReason
     ) {
       try {
-        await cueController?.syncSecondarySubtitleTrack?.(secondaryLang, {
+        await deps.cueController?.syncSecondarySubtitleTrack?.(secondaryLang, {
           reason: `settings_changed:${triggerReason}`,
         });
       } catch (error) {
@@ -413,8 +468,37 @@
       }
     }
 
-    // runtime message を受け取り、設定変更や言語一覧要求を処理する。
-    // SETTINGS_CHANGED は非同期で処理し、sendResponse は必ず 1 回だけ返す。
+    /**
+     * 利用可能な言語一覧を安全に返す。
+     * sendResponse は必ず 1 回だけ呼び、失敗時は空配列を返す。
+     *
+     * @param {Function} sendResponse
+     * @returns {void}
+     */
+    function safeTryGetLanguages(sendResponse) {
+      try {
+        const langs = Array.isArray(state.availableLanguages)
+          ? state.availableLanguages
+          : [];
+
+        sendResponse(langs.map((l) => ({ lang: l.lang, label: l.label })));
+      } catch (error) {
+        logContentError("GET_LANGUAGES failed", {
+          message: error?.message || String(error),
+        });
+        sendResponse([]);
+      }
+    }
+
+    /**
+     * runtime message を受け取り、設定変更や言語一覧要求を処理する。
+     * SETTINGS_CHANGED は非同期で処理し、sendResponse は必ず 1 回だけ返す。
+     *
+     * @param {Object} message
+     * @param {chrome.runtime.MessageSender} sender
+     * @param {Function} sendResponse
+     * @returns {boolean}
+     */
     const onRuntimeMessage = (message, sender, sendResponse) => {
       if (!message || typeof message !== "object") return false;
 
@@ -438,8 +522,6 @@
           };
         })();
 
-        // playback page と video 参照が揃うまで待つ。
-        // SETTINGS_CHANGED が早すぎるタイミングで来ても、再生準備完了まで短時間だけ待機する。
         const waitForPlaybackReady = async ({
           timeoutMs = 4000,
           intervalMs = 200,
@@ -460,94 +542,81 @@
           return null;
         };
 
-        // SETTINGS_CHANGED を実際に state と playback へ反映する本体処理。
-        // ON/OFF 分岐、native への引き渡し、参照リセット、再起動開始までをここでまとめて行う。
         const applySettingsAsync = async () => {
+          const hasRuntimeExtensionEnabled = Object.prototype.hasOwnProperty.call(
+            incoming,
+            "extensionEnabled"
+          );
+
+          if (hasRuntimeExtensionEnabled) {
+            state.extensionEnabled = incoming.extensionEnabled !== false;
+          }
+
+          const settingsIncoming = { ...incoming };
+          delete settingsIncoming.extensionEnabled;
+
           state.requestedContentSettings = {
             ...state.requestedContentSettings,
-            ...incoming,
+            ...settingsIncoming,
           };
 
-          const nextSettings = resolveSettingsChangeNextSettings(incoming);
+          const nextSettings = resolveSettingsChangeNextSettings(settingsIncoming);
           state.contentSettings = {
             ...nextSettings,
           };
           state.requestedSecondaryLang = state.contentSettings.secondaryLang || "";
 
-          if (false) {
-            logContentSettings("SETTINGS_CHANGED received", {
-              triggerReason,
-              incoming,
-              extensionEnabled: state.contentSettings.extensionEnabled,
-              panelOpen: state.panelOpen,
-              requestedSecondaryLang: state.requestedSecondaryLang,
-            });
-          }
-
           const shouldIgnoreDisableTransition =
             state.booted === false &&
-            incoming &&
-            Object.prototype.hasOwnProperty.call(incoming, "extensionEnabled") &&
-            incoming.extensionEnabled !== false &&
+            hasRuntimeExtensionEnabled &&
+            state.extensionEnabled !== false &&
             !isLanguageSelectionReady?.(state.contentSettings);
 
           if (shouldIgnoreDisableTransition) {
             logContentSettings("SETTINGS_CHANGED disable-branch skipped", {
               triggerReason,
               incoming,
-              contentExtensionEnabled: state.contentSettings.extensionEnabled,
-              requestedExtensionEnabled:
-                state.requestedContentSettings.extensionEnabled,
+              runtimeExtensionEnabled: state.extensionEnabled,
               booted: state.booted,
               primaryLang: state.contentSettings.primaryLang,
               secondaryLang: state.contentSettings.secondaryLang,
             });
-          } else if (!state.contentSettings.extensionEnabled) {
+          } else if (state.extensionEnabled === false) {
             const toggleOpId = beginToggleOffOp();
 
-            state.requestedContentSettings = {
-              ...state.requestedContentSettings,
-              extensionEnabled: false,
-            };
-            state.contentSettings = {
-              ...state.contentSettings,
-              extensionEnabled: false,
-            };
             state.panelOpen = false;
 
             logContentSettings("SETTINGS_CHANGED disable-branch", {
               toggleOpId,
               triggerReason,
               incoming,
-              contentExtensionEnabled: state.contentSettings.extensionEnabled,
-              requestedExtensionEnabled:
-                state.requestedContentSettings.extensionEnabled,
+              runtimeExtensionEnabled: state.extensionEnabled,
             });
 
             logContentSettings("ネイティブトグル OFF apply start", {
               toggleOpId,
               triggerReason,
               panelOpen: state.panelOpen,
-              extensionEnabled: state.contentSettings.extensionEnabled,
+              runtimeExtensionEnabled: state.extensionEnabled,
             });
 
-            syncIntervalOrchestrator?.stop?.();
+            deps.syncIntervalOrchestrator?.stop?.();
             cleanupInitialAutoStartWatch();
 
             logContentSettings("ネイティブトグル OFF cleanup delegated", {
               toggleOpId,
               triggerReason,
-              hasCueController: Boolean(cueController),
+              hasCueController: Boolean(deps.cueController),
               cleanupApi: "detachForDisabled",
               primaryHandoffApi:
-                typeof cueController?.handoffPrimarySubtitleToNative ===
+                typeof deps.cueController?.handoffPrimarySubtitleToNative ===
                 "function",
               secondaryUnbindApi:
-                typeof cueController?.unbindSecondarySubtitleTrack ===
+                typeof deps.cueController?.unbindSecondarySubtitleTrack ===
                 "function",
             });
 
-            panelUi?.dispose?.();
+            deps.panelUi?.dispo
             mountToggleOnlyUi?.();
 
             detachForDisabled({
@@ -561,7 +630,7 @@
               toggleOpId,
               triggerReason,
               panelOpen: state.panelOpen,
-              extensionEnabled: state.contentSettings.extensionEnabled,
+              runtimeExtensionEnabled: state.extensionEnabled,
             });
 
             state.booted = false;
@@ -575,7 +644,7 @@
             logContentSettings("SETTINGS_CHANGED playback not ready", {
               triggerReason,
               panelOpen: state.panelOpen,
-              extensionEnabled: state.contentSettings.extensionEnabled,
+              runtimeExtensionEnabled: state.extensionEnabled,
             });
             return { ok: false, error: "playback_not_ready" };
           }
@@ -597,7 +666,7 @@
             pairedWithOff,
             triggerReason,
             panelOpen: state.panelOpen,
-            extensionEnabled: state.contentSettings.extensionEnabled,
+            runtimeExtensionEnabled: state.extensionEnabled,
             hasVideo: !!state.video,
           });
 
@@ -641,8 +710,8 @@
         };
 
         applySettingsAsync()
-          .then((payload) => {
-            safeSendResponse(payload);
+          .then((result) => {
+            safeSendResponse(result || { ok: true });
           })
           .catch((error) => {
             logContentError("SETTINGS_CHANGED apply failed", {
@@ -659,18 +728,8 @@
       }
 
       if (message.type === "GET_LANGUAGES") {
-        try {
-          const langs = Array.isArray(state.availableLanguages)
-            ? state.availableLanguages
-            : [];
-          sendResponse(langs.map((l) => ({ lang: l.lang, label: l.label })));
-        } catch (error) {
-          logContentError("GET_LANGUAGES failed", {
-            message: error?.message || String(error),
-          });
-          sendResponse([]);
-        }
-        return false;
+        safeTryGetLanguages(sendResponse);
+        return true;
       }
 
       return false;

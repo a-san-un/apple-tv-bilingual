@@ -1207,7 +1207,7 @@
     // 必要な場合だけ 1 回限り nearby current / hold view を適用する接続点。
     function onPrimaryCueChange() {
       // ★ extensionEnabled チェック
-      if (state?.contentSettings?.extensionEnabled === false) return;
+      if (state?.extensionEnabled === false) return;
       const currentTime = getCurrentTime();
 
       const primaryTrack = getBoundPrimaryTrack();

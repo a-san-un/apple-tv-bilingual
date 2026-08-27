@@ -1,28 +1,37 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - modules/settings-schema.js
-// version: 2.6.3
 //
 // 役割:
-// - 設定キー・デフォルト値・正規化ルールの正本を担当する。
-// - sync / local 設定のキー定義と、保存値の merge / fallback ルールを一箇所へ集約する。
-// - content / popup / options が共通の設定解釈を使えるよう globalThis.ATVB_SCHEMA を公開する。
+// - 永続設定のキー、デフォルト値、正規化ルールの正本を提供する。
+// - sync / local の設定境界を定義し、各 UI と content script が
+//   同じ保存値解釈を利用できるようにする。
+// - storage 値の補完・正規化・言語 fallback を schema 層へ集約する。
 //
-// このファイルのメンテナンス方針:
-// - デフォルト値の変更は DEFAULT_SYNC_SETTINGS / DEFAULT_LOCAL_SETTINGS に集約する。
-// - storage から読んだ値の正規化は schema 層で完結させ、呼び出し側へ条件分岐を漏らさない。
-// - secondaryLang の browser language fallback は applySecondaryLangFallback() に寄せ、
-//   language-definitions.js の canonicalizeLanguageCode() を通して正本 code にそろえる。
-// - popup / options / content で設定解釈がズレないよう、共通 helper を優先して再利用する。
+// 公開先:
+// - globalThis.ATVB_SCHEMA
+//
+// 設計メモ:
+// - sync 設定: primaryLang, secondaryLang, panelDefaultOpen,
+//              playWordAudio, enableAiTooltip, preferredAiProvider
+// - local 設定: googleAiStudioApiKey, groqApiKey
+// - panelDefaultOpen は永続設定、panelOpen はランタイム UI 状態。
+// - extensionEnabled はセッション単位の runtime state として扱い、
+//   settings schema では保存・復元・正規化しない。
 // =============================================================
 
 (function (root) {
   "use strict";
 
   // -------------------------------------------------------
-  // 設定キー定義
+  // persistent setting keys
   // -------------------------------------------------------
+
+  /**
+   * chrome.storage.sync に保存する設定キー。
+   *
+   * @type {readonly string[]}
+   */
   const SETTINGS_KEYS_SYNC = Object.freeze([
-    "extensionEnabled",
     "primaryLang",
     "secondaryLang",
     "panelDefaultOpen",
@@ -31,18 +40,35 @@
     "preferredAiProvider",
   ]);
 
+  /**
+   * chrome.storage.local に保存する設定キー。
+   *
+   * @type {readonly string[]}
+   */
   const SETTINGS_KEYS_LOCAL = Object.freeze([
     "googleAiStudioApiKey",
     "groqApiKey",
   ]);
 
   // -------------------------------------------------------
-  // デフォルト値の正本 (全ファイル共通)
-  // enableAiTooltip は false に統一
-  // extensionEnabled は storage に保存されるが、未保存時は false
+  // default values
   // -------------------------------------------------------
+
+  /**
+   * sync 設定のデフォルト値。
+   *
+   * extensionEnabled は永続設定ではないため含めない。
+   *
+   * @type {Readonly<{
+   *   primaryLang: string,
+   *   secondaryLang: string,
+   *   panelDefaultOpen: boolean,
+   *   playWordAudio: boolean,
+   *   enableAiTooltip: boolean,
+   *   preferredAiProvider: string
+   * }>}
+   */
   const DEFAULT_SYNC_SETTINGS = Object.freeze({
-    extensionEnabled: false,
     primaryLang: "en",
     secondaryLang: "",
     panelDefaultOpen: true,
@@ -51,27 +77,41 @@
     preferredAiProvider: "auto",
   });
 
+  /**
+   * local 設定のデフォルト値。
+   *
+   * @type {Readonly<{
+   *   googleAiStudioApiKey: string,
+   *   groqApiKey: string
+   * }>}
+   */
   const DEFAULT_LOCAL_SETTINGS = Object.freeze({
     googleAiStudioApiKey: "",
     groqApiKey: "",
   });
 
   // -------------------------------------------------------
-  // 正規化ルール
+  // normalization
   // -------------------------------------------------------
 
-  // extensionEnabled: storage 上の値が厳密に true のときだけ true とみなす。
-  function normalizeExtensionEnabled(value) {
-    return value === true;
-  }
-
-  // panelDefaultOpen: undefined / null のときは true (デフォルト) 扱い。
+  /**
+   * panelDefaultOpen を boolean へ正規化する。
+   * undefined / null を含む false 以外は、既定どおり true と扱う。
+   *
+   * @param {*} value
+   * @returns {boolean}
+   */
   function normalizePanelDefaultOpen(value) {
     return value !== false;
   }
 
-  // language-definitions.js が先に読まれていれば、その canonicalize を優先利用する。
-  // 未読込時でも壊れないよう、最低限の language-part fallback を残す。
+  /**
+   * 言語コードを拡張内の canonical な language-part へ正規化する。
+   * language-definitions.js が利用可能な場合は、その正本 helper を優先する。
+   *
+   * @param {*} value
+   * @returns {string}
+   */
   function canonicalizeLanguageCode(value) {
     const canonicalized =
       root.ATVB?.languageDefinitions?.canonicalizeLanguageCode?.(value) || "";
@@ -82,11 +122,19 @@
 
     const normalized = String(value || "").trim().toLowerCase();
     if (!normalized) return "";
+
     return normalized.split("-")[0] || "";
   }
 
-  // secondaryLang が空のときだけ browser language を補完する。
-  // 補完値は language-definitions.js の canonicalize を通して正本 code にそろえる。
+  /**
+   * secondaryLang が未指定の場合のみ、browser language を fallback として補完する。
+   *
+   * この関数は入力を破壊せず、新しい settings object を返す。
+   *
+   * @param {Object} settings
+   * @param {string} [navLanguage]
+   * @returns {Object}
+   */
   function applySecondaryLangFallback(settings, navLanguage) {
     const result = { ...settings };
 
@@ -98,34 +146,46 @@
     return result;
   }
 
-  // sync 設定を正規化してマージする。
-  // stored の値を DEFAULT_SYNC_SETTINGS で補完し、extensionEnabled / panelDefaultOpen を正規化する。
+  /**
+   * storage から取得した sync 設定をデフォルト値と merge し、
+   * 永続設定として定義された値を正規化する。
+   *
+   * panelOpen / extensionEnabled などのランタイム状態は解釈しない。
+   *
+   * @param {Object|null|undefined} stored
+   * @returns {Object}
+   */
   function mergeSyncSettings(stored) {
     const merged = { ...DEFAULT_SYNC_SETTINGS, ...(stored || {}) };
 
-    merged.extensionEnabled = normalizeExtensionEnabled(merged.extensionEnabled);
-
-    // panelDefaultOpen は永続設定として保存される (panelOpen とは別)。
     merged.panelDefaultOpen = normalizePanelDefaultOpen(merged.panelDefaultOpen);
 
     return merged;
   }
 
-  // language selection が完了しているかを返す。
-  // primaryLang が空でなければ完了とみなす。
+  // -------------------------------------------------------
+  // validation
+  // -------------------------------------------------------
+
+  /**
+   * 字幕言語の選択が起動可能な状態かを判定する。
+   *
+   * @param {Object|null|undefined} settings
+   * @returns {boolean}
+   */
   function isLanguageSelectionReady(settings) {
     return Boolean(settings && settings.primaryLang);
   }
 
   // -------------------------------------------------------
-  // エクスポート
+  // exports
   // -------------------------------------------------------
+
   const ATVB_SCHEMA = Object.freeze({
     SETTINGS_KEYS_SYNC,
     SETTINGS_KEYS_LOCAL,
     DEFAULT_SYNC_SETTINGS,
     DEFAULT_LOCAL_SETTINGS,
-    normalizeExtensionEnabled,
     normalizePanelDefaultOpen,
     canonicalizeLanguageCode,
     applySecondaryLangFallback,
@@ -133,10 +193,10 @@
     isLanguageSelectionReady,
   });
 
-  // globalThis 経由で公開 (content script / options / popup 共通)
+  // content script / popup / options から共通参照する。
   root.ATVB_SCHEMA = ATVB_SCHEMA;
 
-  // ES Module 互換のために module.exports も設定する (vitest / Node.js テスト用)
+  // Node.js / Vitest 環境では CommonJS export も提供する。
   // eslint-disable-next-line no-undef
   if (typeof module !== "undefined" && module.exports) {
     // eslint-disable-next-line no-undef

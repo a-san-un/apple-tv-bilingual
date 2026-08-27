@@ -3,9 +3,11 @@
 //
 // 役割:
 // - 再生セッションに紐づく一時的な UI / observer / subtitle state を片付ける。
-// - popup / options で保存した設定値
-//   （primaryLang / secondaryLang / panelDefaultOpen / extensionEnabled など）は保持する。
-// - restart 用 cleanup と extensionEnabled=false 用 cleanup を分け、
+// - popup / options で保存した永続設定
+//   （primaryLang / secondaryLang / panelDefaultOpen など）は保持する。
+// - runtime state の extensionEnabled はこの cleanup では保存・復元せず、
+//   呼び出し元の state.extensionEnabled を前提に teardown だけを担当する。
+// - restart 用 cleanup と extension OFF 用 cleanup を分け、
 //   再起動時は再生成前提の撤収、OFF 時は再生画面の拡張 UI 完全破棄を担当する。
 // - content switch 時の resetForContentSwitch() は、同一タイミングで重複して呼ばれても
 //   teardown が壊れないよう最小限の再入ガードを持つ。
@@ -40,6 +42,8 @@
       cueController,
       subtitleRecoveryManager,
       runtimeObservers,
+      stopSecondaryTrackSyncInterval,
+      pauseSyncIntervalOrchestrator,
     } = teardownDeps;
 
     // resetForContentSwitch() の同期的な再入だけを防ぐフラグ。
@@ -183,6 +187,9 @@
 
       stopPlaybackControlLayoutObservers?.();
       layoutController?.teardownPlaybackControlsUi?.();
+
+      stopSecondaryTrackSyncInterval?.(reason);
+      pauseSyncIntervalOrchestrator?.(reason);
 
       clearInitialCueRecovery?.();
       clearSecondaryTrackState();

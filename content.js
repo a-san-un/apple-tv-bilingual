@@ -2385,7 +2385,7 @@ function forwardContentLog(...args) {
       // 3. overlay は panel close 中は非表示へ寄せる
       setOverlayVisible(false);
 
-      logContent("panel closed: extension paused");
+      logContent("panel closed: panel-side sync paused");
     },
   });
 
@@ -2401,31 +2401,30 @@ function forwardContentLog(...args) {
   });
 
   const { createSettingsRuntime } = root.settingsRuntime;
+  // settings-runtime.js が利用する DI のみを渡す。
   const settingsRuntime = createSettingsRuntime({
     state,
     DEFAULT_SETTINGS,
     isLanguageSelectionReady,
-    clearSecondaryTrackState: (...args) =>
-      playbackSessionCleanup?.clearSecondaryTrackState?.(...args),
     logContent,
     logContentError,
     logContentSettings,
     getVideoAndDialog,
-    teardownForRestart: (...args) =>
-      playbackSessionCleanup?.teardownForRestart?.(...args),
     detachForDisabled: (...args) =>
       playbackSessionCleanup?.detachForDisabled?.(...args),
     prepareForRestart: (...args) =>
       playbackSessionCleanup?.prepareForRestart?.(...args),
     startBilingual,
     isPlaybackPageReady,
-    getPlaybackContextLogPayload,
-    getUniqueTracks: resolverDeps.getUniqueTracks,
+
+    // cueController / syncIntervalOrchestrator / panelUi は生成順序上
+    // このタイミングで未確定の可能性があるため getter で渡している。
+    // ただし settings-runtime.js 側が destructure すると getter が1回しか呼ばれず
+    // 最新値に追従しない点に注意（settings-runtime.js 側の修正も必要）。
     get cueController() { return cueController; },
-    renderSecondarySubtitle,
     get syncIntervalOrchestrator() { return syncIntervalOrchestrator; },
+    get panelUi() { return panelUi; },
     mountToggleOnlyUi: () => panelUi?.mountToggleOnlyUi?.(),
-    get panelUi() { return panelUi; }, 
   });
 
   const {
@@ -3015,8 +3014,10 @@ function forwardContentLog(...args) {
   // track 選択・panelOpen 復元・UI 構築をこの経路でまとめて行う。
   async function startBilingual(options = {}) {
     // 拡張 OFF 中は再生画面の UI 構築を進めない
-    if (state.contentSettings?.extensionEnabled === false) {
-      logContent("startBilingual skipped: disabled");
+    if (state.extensionEnabled === false) {
+      logContent("startBilingual skipped: disabled", {
+        runtimeExtensionEnabled: state.extensionEnabled,
+      });
       return;
     }
 
@@ -3248,7 +3249,7 @@ function forwardContentLog(...args) {
       state.panelOpen = panelOpen;
       logContent("字幕パネル開閉ボタン/右側字幕パネル build start", {
         panelOpen,
-        extensionEnabled: state.contentSettings?.extensionEnabled,
+        runtimeExtensionEnabled: state.extensionEnabled,
       });
 
       logContent("startBilingual panelOpen applied", {

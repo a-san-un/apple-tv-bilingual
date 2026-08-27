@@ -762,9 +762,7 @@
         control.title = enabled ? "拡張 ON" : "拡張 OFF";
       }
 
-      chrome.storage.sync.get(["extensionEnabled"], (result) => {
-        renderExtensionEnabled(Boolean(result.extensionEnabled));
-      });
+      renderExtensionEnabled(state.extensionEnabled !== false);
 
       let toggleInFlight = false;
 
@@ -775,24 +773,27 @@
         if (toggleInFlight) return;
         toggleInFlight = true;
 
-        chrome.storage.sync.get(["extensionEnabled"], (result) => {
-          const next = !Boolean(result.extensionEnabled);
+        const next = !(state.extensionEnabled !== false);
 
-          chrome.storage.sync.set({ extensionEnabled: next }, () => {
-            renderExtensionEnabled(next);
+        renderExtensionEnabled(next);
 
-            chrome.runtime.sendMessage(
-              {
-                type: "APPLY_SETTINGS_TO_APPLE_TV",
-                reason: "native_toggle",
-                settings: { extensionEnabled: next },
-              },
-              () => {
-                toggleInFlight = false;
-              }
-            );
-          });
-        });
+        chrome.runtime.sendMessage(
+          {
+            type: "APPLY_SETTINGS_TO_APPLE_TV",
+            reason: "native_toggle",
+            settings: { extensionEnabled: next },
+          },
+          () => {
+            if (chrome.runtime.lastError) {
+              logContent?.("native toggle apply failed", {
+                message: chrome.runtime.lastError.message,
+                next,
+              });
+              renderExtensionEnabled(state.extensionEnabled !== false);
+            }
+            toggleInFlight = false;
+          }
+        );
       });
 
       upNextBtn.closest("li")?.after(wrapper);
