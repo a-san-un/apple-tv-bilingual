@@ -1,0 +1,76 @@
+#atvb-native-toggle {
+  display: flex;
+  align-items: center;
+  list-style: none;
+  margin-left: 14px;
+}
+
+#atvb-native-toggle .atvb-native-toggle__control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  color: #ffffff;
+  font: inherit;
+}
+
+#atvb-native-toggle .atvb-native-toggle__control:hover,
+#atvb-native-toggle .atvb-native-toggle__control:focus,
+#atvb-native-toggle .atvb-native-toggle__control:focus-visible,
+#atvb-native-toggle .atvb-native-toggle__control:active {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  outline: none;
+}
+
+#atvb-native-toggle .atvb-native-toggle__track {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.25);
+  transition: background 0.2s ease;
+}
+
+#atvb-native-toggle[data-enabled="true"] .atvb-native-toggle__track {
+  background: #00aaff;
+}
+
+#atvb-native-toggle .atvb-native-toggle__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: left 0.2s ease;
+}
+
+#atvb-native-toggle[data-enabled="true"] .atvb-native-toggle__knob {
+  left: 18px;
+}
+
+#atvb-native-toggle .atvb-native-toggle__label {
+  display: inline-block;
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1;
+  color: #888888;
+  white-space: nowrap;
+}
+
+#atvb-native-toggle[data-enabled="true"] .atvb-native-toggle__label {
+  color: #00aaff;
+  font-weight: 700;
+}

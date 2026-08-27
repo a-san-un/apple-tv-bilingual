@@ -43,6 +43,7 @@
       cueController,
       syncIntervalOrchestrator,
       panelUi,
+      mountToggleOnlyUi,
     } = deps;
 
     let initialAutoStartCleanup = null;
@@ -281,7 +282,7 @@
         detachForDisabled({
           reason: "load_settings_from_sync:disabled",
         });
-        panelUi?.watchForPlayerTabs?.();
+        mountToggleOnlyUi?.();
         return;
       }
 
@@ -547,7 +548,7 @@
             });
 
             panelUi?.dispose?.();
-            panelUi?.watchForPlayerTabs?.();
+            mountToggleOnlyUi?.();
 
             detachForDisabled({
               reason: `settings_changed:${triggerReason}:toggle_off`,

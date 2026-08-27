@@ -60,7 +60,7 @@
         "sync-interval-orchestrator.js",
         "content.js"
       ],
-      "css": ["overlay.css"],
+      "css": ["overlay.css", "native-toggle.css"],
       "run_at": "document_idle"
     }
   ],

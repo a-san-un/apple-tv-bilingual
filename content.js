@@ -2028,6 +2028,8 @@ function forwardContentLog(...args) {
         // subtitle block state の参照は facade 経由に統一する。
         // builder は block state の内部実装を直接知らない。
         getPreviousSubtitleBlocks: () => subtitleBlockApi.getSequence(),
+        setCurrentSubtitleBlock: (block, meta) =>
+          subtitleBlockApi.syncCurrentBlock(block, meta),
 
         buildSubtitleBlockSequence,
         setSubtitleBlocks,

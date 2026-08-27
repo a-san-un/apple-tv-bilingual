@@ -10,7 +10,7 @@
 // 位置づけ:
 // - `content.js` から panel build の「順序知識」と panel render 実行知識を引き受ける owner。
 // - `mountForPlayback()` が再生画面用 panel UI 一式の唯一の入口となり、
-//   `createToggleButton()` / `createRightPanel()` / `watchForPlayerTabs()` /
+//   `ensurePanelToggleButton()` / `createRightPanel()` / `watchForPlayerTabs()` /
 //   popup host / debug panel の呼び出し順序をこのファイル内に閉じ込める。
 // - visibility の正本は `modules/panel-visibility-state.js` 側にあり、
 //   このファイルは DOM 表示切り替え・render state 所有・renderer 呼び出し owner に留める。
@@ -58,6 +58,35 @@
     } = deps;
 
     const PANEL_SLOT_LAYER_STYLE_ID = "atv-panel-slot-layer-style";
+
+    const PANEL_WIDTH_PERCENT = "30%";
+
+    function getPanelWidthPercent() {
+      return PANEL_WIDTH_PERCENT;
+    }
+
+    function getToggleButtonRightWhenOpen() {
+      return getPanelWidthPercent();
+    }
+
+    const NATIVE_TOGGLE_STYLE_ID = "atvb-native-toggle-style";
+
+    /**
+     * native toggle 用 CSS を document 側へ 1 回だけ注入する。
+     * panel.css は ShadowRoot 内専用のため、Shadow 外の native toggle には別経路で適用する。
+     *
+     * @returns {void}
+     */
+    function ensureNativeToggleStyle() {
+      if (document.getElementById(NATIVE_TOGGLE_STYLE_ID)) return;
+
+      const href = chrome.runtime.getURL("native-toggle.css");
+      const link = document.createElement("link");
+      link.id = NATIVE_TOGGLE_STYLE_ID;
+      link.rel = "stylesheet";
+      link.href = href;
+      document.head.appendChild(link);
+    }
 
     // -----------------------------------------------------------
     // Section: render owner state
@@ -340,8 +369,15 @@
 
       const host = document.createElement("div");
       host.id = "atv-panel-host";
-      host.style.position = "relative";
+      host.style.position = "fixed";
+      host.style.top = "0";
+      host.style.right = "0";
+      host.style.width = getPanelWidthPercent();
+      host.style.height = "100vh";
+      host.style.display = "none";
       host.style.zIndex = "2147483647";
+      host.style.pointerEvents = "auto";
+      host.style.boxSizing = "border-box";
 
       state.panelShadowRoot = host.attachShadow({ mode: "open" });
       state.panelShadowRoot.innerHTML = buildPanelShellHTML();
@@ -481,7 +517,7 @@
         panelHost.style.display = show ? "" : "none";
       }
 
-      updateToggleButton(show);
+      syncPanelToggleButton(show);
       applyLayout?.(show);
     }
 
@@ -555,44 +591,57 @@
     }
 
     // -----------------------------------------------------------
-    // Section: toggle button host
+    // Section: 字幕パネル開閉ボタン
     // -----------------------------------------------------------
 
     /**
-     * 再生画面右端の panel 開閉ボタンを作成する。
+     * 字幕パネル開閉ボタンの見た目と状態を反映する。
+     *
+     * @param {HTMLElement} button
+     * @param {boolean} isOpen
+     * @returns {void}
+     */
+    function applyPanelToggleButtonState(button, isOpen) {
+      button.style.position = "fixed";
+      button.style.top = "60px";
+      button.style.right = isOpen ? getToggleButtonRightWhenOpen() : "0px";
+      button.style.zIndex = "2147483647";
+      button.style.display = "";
+
+      button.textContent = isOpen ? "‹" : "›";
+      button.title = isOpen ? "字幕パネルを閉じる" : "字幕パネルを開く";
+
+    }
+
+    /**
+     * 字幕パネル開閉ボタンを生成し、未生成時のみ target へ追加する。
      * 既存ボタンがある場合は再利用し、resize handler も 1 本に保つ。
      *
      * @returns {HTMLElement|null}
      */
-    function createToggleButton() {
+    function ensurePanelToggleButton() {
       const target = getTarget?.();
       if (!target) return null;
 
       const existing = target.querySelector("#atv-toggle-btn");
       if (existing instanceof HTMLElement) {
-        updateToggleButton(Boolean(state.panelOpen));
+        syncPanelToggleButton(Boolean(state.panelOpen));
         return existing;
       }
 
-      const btn = document.createElement("button");
-      btn.id = "atv-toggle-btn";
-      btn.type = "button";
-      btn.textContent = state.panelOpen ? "‹" : "›";
-      btn.title = state.panelOpen ? "字幕パネルを閉じる" : "字幕パネルを開く";
+      const button = document.createElement("button");
+      button.id = "atv-toggle-btn";
+      button.type = "button";
 
-      btn.style.position = "absolute";
-      btn.style.top = "50%";
-      btn.style.right = state.panelOpen ? "320px" : "0px";
-      btn.style.transform = "translateY(-50%)";
-      btn.style.zIndex = "2147483647";
+      applyPanelToggleButtonState(button, Boolean(state.panelOpen));
 
-      btn.addEventListener("click", (event) => {
+      button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
         togglePanel();
       });
 
-      target.appendChild(btn);
+      target.appendChild(button);
 
       if (state.toggleButtonResizeHandler) {
         window.removeEventListener("resize", state.toggleButtonResizeHandler);
@@ -600,25 +649,25 @@
       }
 
       state.toggleButtonResizeHandler = () => {
-        if (state.panelOpen) updateToggleButton(true);
+        syncPanelToggleButton(Boolean(state.panelOpen));
       };
 
       window.addEventListener("resize", state.toggleButtonResizeHandler, {
         passive: true,
       });
 
-      return btn;
+      return button;
     }
 
     /**
-     * toggle button の矢印表記と位置（right オフセット）だけを更新する。
+     * 字幕パネル開閉ボタンの矢印表記と位置を現在の panel 状態へ同期する。
      *
      * @param {boolean} isOpen
      * @returns {void}
      */
-    function updateToggleButton(isOpen) {
-      const btn = getTarget?.()?.querySelector?.("#atv-toggle-btn");
-      if (!(btn instanceof HTMLElement)) {
+    function syncPanelToggleButton(isOpen) {
+      const button = getTarget?.()?.querySelector?.("#atv-toggle-btn");
+      if (!(button instanceof HTMLElement)) {
         logContent?.("字幕パネル開閉ボタン update skipped: button missing", {
           requestedOpen: isOpen,
           panelOpen: state.panelOpen,
@@ -626,31 +675,15 @@
         return;
       }
 
-      if (isOpen) {
-        const panelHost = getTarget?.()?.querySelector?.("#atv-panel-host");
-        const panelWidthPx =
-          panelHost instanceof HTMLElement
-            ? panelHost.getBoundingClientRect().width
-            : 0;
-
-        btn.textContent = "‹";
-        btn.title = "字幕パネルを閉じる";
-        btn.style.right = `${panelWidthPx}px`;
-        btn.style.display = "";
-      } else {
-        btn.textContent = "›";
-        btn.title = "字幕パネルを開く";
-        btn.style.right = "0px";
-        btn.style.display = "";
-      }
+      applyPanelToggleButtonState(button, isOpen);
 
       logContent?.("字幕パネル開閉ボタン update done", {
         requestedOpen: isOpen,
         panelOpen: state.panelOpen,
-        buttonRight: btn.style.right,
-        buttonTitle: btn.title,
-        buttonText: btn.textContent,
-        buttonDisplay: btn.style.display,
+        buttonRight: button.style.right,
+        buttonTitle: button.title,
+        buttonText: button.textContent,
+        buttonDisplay: button.style.display,
       });
     }
 
@@ -660,6 +693,9 @@
 
     /**
      * 再生画面のネイティブタブ横へ拡張 ON/OFF トグルを差し込む。
+     * native toggle は ShadowRoot 外の document 側 DOM に置くため、
+     * native-toggle.css を document.head へ注入したうえで、
+     * PlayerTab の sibling として li 要素を追加する。
      *
      * @returns {void}
      */
@@ -669,20 +705,76 @@
       const upNextBtn = document.querySelector(
         '[data-testid="uts.col.PlayerTabUpNext-trigger"]'
       );
-      if (!upNextBtn) return;
+      if (!(upNextBtn instanceof HTMLElement)) return;
+
+      ensureNativeToggleStyle();
 
       const wrapper = document.createElement("li");
       wrapper.id = "atvb-native-toggle";
+      wrapper.dataset.enabled = "false";
 
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = "Bilingual";
-      button.addEventListener("click", () => {
-        togglePanel();
+      const control = document.createElement("button");
+      control.type = "button";
+      control.className = "atvb-native-toggle__control";
+      control.setAttribute("role", "switch");
+      control.setAttribute("aria-checked", "false");
+
+      const track = document.createElement("span");
+      track.className = "atvb-native-toggle__track";
+
+      const knob = document.createElement("span");
+      knob.className = "atvb-native-toggle__knob";
+      track.appendChild(knob);
+
+      const label = document.createElement("span");
+      label.className = "atvb-native-toggle__label";
+      label.textContent = "拡張 OFF";
+
+      control.appendChild(track);
+      control.appendChild(label);
+      wrapper.appendChild(control);
+
+      function renderExtensionEnabled(enabled) {
+        wrapper.dataset.enabled = String(enabled);
+        control.setAttribute("aria-checked", String(enabled));
+        label.textContent = enabled ? "拡張 ON" : "拡張 OFF";
+        control.title = enabled ? "拡張 ON" : "拡張 OFF";
+      }
+
+      chrome.storage.sync.get(["extensionEnabled"], (result) => {
+        renderExtensionEnabled(Boolean(result.extensionEnabled));
       });
 
-      wrapper.appendChild(button);
-      upNextBtn.parentElement?.appendChild(wrapper);
+      let toggleInFlight = false;
+
+      control.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (toggleInFlight) return;
+        toggleInFlight = true;
+
+        chrome.storage.sync.get(["extensionEnabled"], (result) => {
+          const next = !Boolean(result.extensionEnabled);
+
+          chrome.storage.sync.set({ extensionEnabled: next }, () => {
+            renderExtensionEnabled(next);
+
+            chrome.runtime.sendMessage(
+              {
+                type: "APPLY_SETTINGS_TO_APPLE_TV",
+                reason: "native_toggle",
+                settings: { extensionEnabled: next },
+              },
+              () => {
+                toggleInFlight = false;
+              }
+            );
+          });
+        });
+      });
+
+      upNextBtn.closest("li")?.after(wrapper);
     }
 
     /**
@@ -731,7 +823,7 @@
     function mountForPlayback({ panelOpen = false } = {}) {
       ensurePanelSlotLayerStyle();
       ensurePanelRenderOwnerState();
-      createToggleButton();
+      ensurePanelToggleButton();
       createRightPanel();
       watchForPlayerTabs();
 
