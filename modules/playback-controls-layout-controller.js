@@ -6,6 +6,7 @@
     const {
       playbackControlsLayoutApi,
       logContent,
+      logPanelProbe,
       requestAnimationFrame:
         requestAnimationFrameFn = window.requestAnimationFrame.bind(window),
       cancelAnimationFrame:
@@ -188,15 +189,13 @@
         clearControlSettlingTimers();
       }
 
-      if (typeof logContent === "function") {
-        logContent("layoutController.panelVisibilityChanged", {
-          panelOpen: layoutState.panelOpen,
-          reason,
-          retryDelays,
-          immediate,
-          settlingDelays,
-        });
-      }
+      logPanelProbe?.("layoutController.panelVisibilityChanged", {
+        panelOpen: layoutState.panelOpen,
+        reason,
+        retryDelays,
+        immediate,
+        settlingDelays,
+      });
     }
 
     function applyPanelLayout(isVisible, options = {}) {

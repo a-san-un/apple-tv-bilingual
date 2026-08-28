@@ -32,6 +32,7 @@
    * @param {() => Element|null} deps.getTarget - panel / toggle button を差し込む対象ノードを返す関数。
    * @param {(panelOpen: boolean) => void} deps.applyLayout - panelOpen に応じてレイアウトを適用する関数。
    * @param {(...args: any[]) => void} [deps.logContent] - content ログを記録する関数。
+   * @param {(message: string, payload?: any) => void} [deps.logPanelProbe] - panel/UI 観測用 probe ログ関数。
    * @param {(reason: string) => void} [deps.applyPanelStateEffects] - panel open 時の補助 effects。
    *   panel block 再構築や外部副作用が必要な場合に owner 外から注入する。
    * @param {() => void} deps.destroyOverlay - overlay UI を完全破棄する関数。
@@ -51,6 +52,7 @@
       getTarget,
       applyLayout,
       logContent,
+      logPanelProbe,
       applyPanelStateEffects,
       destroyOverlay,
       mountPopupHost,
@@ -264,7 +266,7 @@
       const result = panelRenderer.renderPanel(input);
       commitPanelRenderResult(result, reason);
 
-      logContent?.("panel render completed", {
+      logPanelProbe?.("panel render completed", {
         reason,
         hasResult: Boolean(result),
         didRebuildList: Boolean(result?.didRebuildList),
@@ -575,7 +577,7 @@
      * @returns {void}
      */
     function applyPanelState(reason) {
-      logContent?.("applyPanelState start", {
+      logPanelProbe?.("applyPanelState start", {
         reason,
         panelOpen: Boolean(state.panelOpen),
         hasPanelShadowRoot: Boolean(state.panelShadowRoot),
@@ -590,7 +592,7 @@
 
       renderCurrentPanel(reason);
 
-      logContent?.("applyPanelState done", {
+      logPanelProbe?.("applyPanelState done", {
         reason,
         panelOpen: Boolean(state.panelOpen),
         hasPanelShadowRoot: Boolean(state.panelShadowRoot),

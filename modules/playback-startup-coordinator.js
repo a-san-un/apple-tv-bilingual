@@ -25,6 +25,7 @@
   }) {
     const {
       logContent,
+      logStartupProbe,
       isLanguageSelectionReady,
       getPlaybackContext,
       getPlaybackContextLogPayload,
@@ -261,7 +262,7 @@
         readiness.hasRequestedPrimaryTrack &&
         readiness.hasRequestedSecondaryTrack;
 
-      logContent?.("startup coordinator track readiness", {
+      logStartupProbe?.("startup coordinator track readiness", {
         triggerReason,
         startupReason,
         ready,

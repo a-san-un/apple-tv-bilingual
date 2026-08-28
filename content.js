@@ -2085,6 +2085,7 @@ function forwardContentLog(...args) {
   const layoutController = createLayoutController({
     playbackControlsLayoutApi: playbackControlsLayout,
     logContent,
+    logPanelProbe,
     requestAnimationFrame: window.requestAnimationFrame.bind(window),
     cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
     setTimeout: window.setTimeout.bind(window),
@@ -2390,6 +2391,7 @@ function forwardContentLog(...args) {
     sendToBackground,
     applyLayout,
     logContent,
+    logPanelProbe,
 
     // block 再構築と subtitle snapshot 更新までが content 側の高レベル effect。
     // panel list render は panel-ui.js がこの callback 後に実施する。
@@ -2545,6 +2547,7 @@ function forwardContentLog(...args) {
       state,
       services: {
         logContent,
+        logStartupProbe,
         isLanguageSelectionReady,
         getPlaybackContext,
         getPlaybackContextLogPayload,
