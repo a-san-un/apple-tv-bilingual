@@ -268,7 +268,6 @@
         reason,
         hasResult: Boolean(result),
         didRebuildList: Boolean(result?.didRebuildList),
-        blockSignature: result?.blockSignature || "",
         currentBlockKey: result?.currentBlock?.key || null,
         allBlocksCount: result?.snapshot?.allBlocksCount ?? null,
       });

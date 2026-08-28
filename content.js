@@ -34,9 +34,16 @@
     preferredAiProvider: "auto",
   };
 
-  const DEBUG_SECONDARY_SUBS = false; // Subtitle probe logs. Keep false in normal operation.
-  const DEBUG_PANEL_PROBE = false; // Panel/UI probe logs. Keep false in normal operation.
-  const DEBUG_MEMORY_PROBE = true; // Memory lifecycle probe logs. Keep false in normal operation.
+  // ---------------------------------------------------------------------
+  // Debug probe flags
+  // - 通常テストではすべて false を基本とする
+  // - 問題の再現時だけ必要な probe を 1 つずつ有効化する
+  // ---------------------------------------------------------------------
+  const DEBUG_SECONDARY_SUBS = false; // 字幕 snapshot / cue 観測用
+  const DEBUG_PANEL_PROBE = false; // パネル描画 / UI レイアウト観測用
+  const DEBUG_MEMORY_PROBE = false; // listener / bind / unbind 観測用
+  const DEBUG_STARTUP_PROBE = false; // 起動 / readiness / auto-start 観測用
+  const DEBUG_RECOVERY_PROBE = false; // recovery / skip / wait / fallback 観測用
   const LOG_CATEGORIES = Object.freeze({
     SETTINGS: "settings",
     SUBTITLE: "subtitle",
@@ -62,6 +69,7 @@
     restarting: false,
     video: null,
     dialogEl: null,
+    extensionEnabled: false,
     contentSettings: { ...DEFAULT_SETTINGS },
     requestedContentSettings: {},
     requestedSecondaryLang: "",
@@ -361,18 +369,49 @@ function forwardContentLog(...args) {
       buildContentScopedPayload(payload),
     );
 
+  // ---------------------------------------------------------------------
+  // Probe log helpers
+  // Role:
+  // - 調査目的ごとの詳細ログ出力を 1 箇所に集約する
+  // - 通常時は無効、必要時のみ個別に有効化する
+  // Keep in content.js:
+  // - probe の ON/OFF 判定
+  // - logContent* への橋渡し
+  // ---------------------------------------------------------------------
+
+  /**
+   * 字幕 snapshot / cue 観測用ログ。
+   * 字幕本文に近い情報を含みうるため、通常時は false のまま使う。
+   */
   function logSubtitleProbe(message, payload = null) {
     if (!DEBUG_SECONDARY_SUBS) return;
     logContentSubtitle(message, payload);
   }
 
+  /**
+   * パネル描画 / UI レイアウト観測用ログ。
+   * panel render completed や applyPanelState などの細かい UI 遷移を扱う。
+   */
   function logPanelProbe(message, payload = null) {
     if (!DEBUG_PANEL_PROBE) return;
     logContentUi(message, payload);
   }
 
-  function logMemoryProbe(message, payload = null) {
-    if (!DEBUG_MEMORY_PROBE) return;
+  /**
+   * 起動 / readiness / auto-start 観測用ログ。
+   * startBilingual の途中経過や track readiness の確認時に使う。
+   */
+  function logStartupProbe(message, payload = null) {
+    if (!DEBUG_STARTUP_PROBE) return;
+    logContentUi(message, payload);
+  }
+
+  /**
+   * recovery / skip / wait / fallback 観測用ログ。
+   * 「なぜ recovery が走ったか・走らなかったか」を追跡するために使う。
+   */
+  function logRecoveryProbe(message, payload = null) {
+    if (!DEBUG_RECOVERY_PROBE) return;
     logContentUi(message, payload);
   }
 
@@ -2308,7 +2347,10 @@ function forwardContentLog(...args) {
   // content.js はここで DI するだけで、bind/fallback の実装は controller 側に閉じる。
   const subtitleSyncController = createSubtitleSyncController({
     state,
-    services: subtitleSyncServices,
+    services: {
+      ...subtitleSyncServices,
+      logRecoveryProbe,
+    },
   });
 
   cueController = createCueController({
@@ -2409,6 +2451,7 @@ function forwardContentLog(...args) {
     logContent,
     logContentError,
     logContentSettings,
+    logStartupProbe,
     getVideoAndDialog,
     detachForDisabled: (...args) =>
       playbackSessionCleanup?.detachForDisabled?.(...args),
@@ -2847,7 +2890,7 @@ function forwardContentLog(...args) {
   }
 
   function requestSnapshotRefresh(reason = "") {
-    logContentSubtitle("snapshot refresh requested", {
+    logSubtitleProbe("snapshot refresh requested", {
       contentKey: historyStore.getCurrentKey() || "",
       reason: String(reason || ""),
       currentTime: Number(state.video?.currentTime ?? 0),
@@ -2883,7 +2926,7 @@ function forwardContentLog(...args) {
     const DEBUG_CURRENT_SNAPSHOT_INPUT = false;
 
     if (DEBUG_CURRENT_SNAPSHOT_INPUT) {
-      logContentSubtitle("current subtitle view snapshot input", {
+      logSubtitleProbe("current subtitle view snapshot input", {
         contentKey: historyStore.getCurrentKey() || "",
         totalBlockCount: blocks.length,
         currentIndex,
@@ -2982,7 +3025,7 @@ function forwardContentLog(...args) {
     // 空 view は異常ではなく「まだ現在位置の cue が来ていない待機状態」。
     // 起動直後の観測で waiting / ready を見分けやすいよう snapshot ログを残す。
     if (false) {
-      logContentSubtitle("current subtitle view snapshot", {
+      logSubtitleProbe("current subtitle view snapshot", {
         contentKey: historyStore.getCurrentKey() || "",
         totalBlockCount: blocks.length,
         currentIndex,
@@ -3023,7 +3066,7 @@ function forwardContentLog(...args) {
 
     // 起動時点の panelOpen / panelDefaultOpen / keepPanelOpen をログへ残す
     // 起動時点の panelOpen / panelDefaultOpen / keepPanelOpen をログへ残す
-    logContent("startBilingual trace", {
+    logStartupProbe("startBilingual trace", {
       panelOpen: state.panelOpen,
       keepPanelOpen:
         typeof options.keepPanelOpen === "boolean"
@@ -3054,7 +3097,7 @@ function forwardContentLog(...args) {
     state.bilingualSessionSeq += 1;
     state.activeBilingualSessionId = state.bilingualSessionSeq;
 
-    logMemoryProbe("startBilingual session-start", {
+    logStartupProbe("startBilingual session-start", {
       sessionId: state.activeBilingualSessionId,
       reason: options.reason || "",
       currentTime: Number.isFinite(state.video?.currentTime)
@@ -3101,7 +3144,7 @@ function forwardContentLog(...args) {
     }
 
     // 今回の言語入力値を resolver 前の状態としてログへ残す
-    logContentSubtitle("startBilingual language inputs", {
+    logStartupProbe("startBilingual language inputs", {
       requestedContentSettings: {
         primaryLang: requestedSettings.primaryLang || "",
         secondaryLang: requestedSettings.secondaryLang || "",
@@ -3201,16 +3244,15 @@ function forwardContentLog(...args) {
       "startBilingual",
     );
 
-    // resolver 結果をログへ残す
-    if (false) {
-      logContentSubtitle(
-        "secondary resolver snapshot",
-        buildSecondaryResolverSnapshot("startBilingual"),
-      );
-    }
+    // secondary resolver の解決結果を観測する。
+    // 通常時は不要だが、secondary track の解決不良や recovery 条件の確認時に使う。
+    logRecoveryProbe(
+      "secondary resolver snapshot",
+      buildSecondaryResolverSnapshot("startBilingual"),
+    );
 
     // 選択できた track の詳細を確認用に残す
-    logContentSubtitle("Selected tracks detail", {
+    logStartupProbe("Selected tracks detail", {
       requestedPrimaryLang: state.contentSettings.primaryLang,
       requestedSecondaryLang: state.contentSettings.secondaryLang,
       requestedSecondaryLangState: state.requestedSecondaryLang || "",
@@ -3247,12 +3289,12 @@ function forwardContentLog(...args) {
 
     function applyPanelVisibleAndBuild(panelOpen) {
       state.panelOpen = panelOpen;
-      logContent("字幕パネル開閉ボタン/右側字幕パネル build start", {
+      logPanelProbe("字幕パネル開閉ボタン/右側字幕パネル build start", {
         panelOpen,
         runtimeExtensionEnabled: state.extensionEnabled,
       });
 
-      logContent("startBilingual panelOpen applied", {
+      logStartupProbe("startBilingual panelOpen applied", {
         panelOpen: state.panelOpen,
         panelDefaultOpenSetting: state.contentSettings.panelDefaultOpen,
         secondaryLang: state.contentSettings.secondaryLang || "",
@@ -3260,7 +3302,7 @@ function forwardContentLog(...args) {
       });
 
       layoutController.initForPanelOpen(state.panelOpen);
-      logContent("字幕パネル開閉ボタン/右側字幕パネル build done", {
+      logPanelProbe("字幕パネル開閉ボタン/右側字幕パネル build done", {
         panelOpen: state.panelOpen,
         hasSubtitlePanelToggleButton: Boolean(
           document.body.querySelector("#atv-toggle-btn"),

@@ -377,3 +377,30 @@ runtime ON/OFF を含むシナリオでは、次も記録する。
 - small resolution での Apple TV+ intrinsic layout 制約の完全解消
 - Chrome 拡張機能の配布・審査・ストア公開に関する検証
 - パフォーマンスプロファイルや heap snapshot を使った長時間メモリリーク調査
+
+***
+
+## 11. Step 17-A テスト範囲外で発見した既存不具合（記録用）
+
+### 11-1. options.html: `schema.mergeLocalSettings is not a function`
+
+- **発見日時**: 2026-08-28
+- **発生場所**: `options.html`
+- **エラー内容**: `Uncaught (in promise) TypeError: schema.mergeLocalSettings is not a function`
+- **スタックトレース**: `options.js:671` の `loadSettings()` 内、`schema.mergeLocalSettings(localRaw)` 呼び出し
+- **原因**:
+  `modules/settings-schema.js` の `ATVB_SCHEMA` には `mergeSyncSettings` は存在するが、
+  対になる `mergeLocalSettings` が未実装・未 export のため。
+- **影響範囲**:
+  `options.js` の `loadSettings()` が `globalThis.ATVB_SCHEMA` を検出できる環境では、
+  local 設定（`googleAiStudioApiKey` / `groqApiKey`）の読込を含む初期化が必ず失敗する。
+- **Step 17-A との関係**:
+  panel / block / `extensionEnabled` runtime 分離とは無関係の既存不具合。
+  Step 17-A のブラウザ回帰テスト対象には含めない。
+- **対応方針（未着手）**:
+  - 対象ファイル: `modules/settings-schema.js`
+  - 追加関数: `mergeLocalSettings(stored)`（`DEFAULT_LOCAL_SETTINGS` との merge のみを担当）
+  - 変更理由: `options.js` が前提とする schema 契約を満たすため
+  - 検証ケース: `options.html` を開いて Console エラーが出ないこと、
+    local 設定（API キー）の読込・保存が正常に動作すること
+- **状態**: 未対応（このスレッドでは実装修正に入らない）

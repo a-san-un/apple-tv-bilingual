@@ -35,6 +35,7 @@
       logContent,
       logContentError,
       logContentSettings,
+      logStartupProbe,
       detachForDisabled,
       prepareForRestart,
       startBilingual,
@@ -141,7 +142,7 @@
         const subtitleLikeTrackCount = getSubtitleLikeTracks(video).length;
         const ready = subtitleLikeTrackCount > 0;
 
-        logContent?.("initial auto-start track readiness", {
+        logStartupProbe?.("initial auto-start track readiness", {
           reason,
           triggerReason,
           ready,

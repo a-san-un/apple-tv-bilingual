@@ -51,6 +51,7 @@
   function createSubtitleSyncController({ services = {} }) {
     const {
       logContent,
+      logRecoveryProbe,
       resolver,
       syncNativeSubtitleSelection,
       bindSecondaryTrack,
@@ -319,7 +320,7 @@
       while (!task.cancelled && Date.now() - startedAt < timeoutMs) {
         const snapshot = getTrackReadability(track, currentTime);
         if (snapshot.readable) {
-          logContent?.("subtitleSyncController.waitForReadableTrack", {
+          logRecoveryProbe?.("subtitleSyncController.waitForReadableTrack", {
             readable: true,
             language: track?.language || "",
             label: track?.label || "",
@@ -338,7 +339,7 @@
         });
       }
 
-      logContent?.("subtitleSyncController.waitForReadableTrack", {
+      logRecoveryProbe?.("subtitleSyncController.waitForReadableTrack", {
         readable: false,
         cancelled: Boolean(task.cancelled),
         language: track?.language || "",
@@ -620,7 +621,7 @@
         requestedMode,
       });
 
-      logContent?.("subtitleSyncController.buildSecondarySyncDecision", {
+      logRecoveryProbe?.("subtitleSyncController.buildSecondarySyncDecision", {
         actionType: action.type,
         actionReason: action.reason,
         hasSelectedTrack: Boolean(selectedTrack),
@@ -692,7 +693,7 @@
         requestedMode,
       });
 
-      logContent?.("subtitleSyncController.resolveSecondaryWaitOutcome", {
+      logRecoveryProbe?.("subtitleSyncController.resolveSecondaryWaitOutcome", {
         waited: true,
         waitSucceeded: Boolean(readableTrack),
         finalActionType: finalDecision.action?.type || "",
