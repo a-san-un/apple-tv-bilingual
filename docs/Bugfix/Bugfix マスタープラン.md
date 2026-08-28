@@ -1,8 +1,8 @@
-# Bugfix マスタープラン 2026-08-26（要約版）
+# Bugfix マスタープラン 2026-08-28（要約版）
 
-**作成日:** 2026-08-13 ／ **最終更新:** 2026-08-26 ／ **ブランチ:** `issue-32-content-core-split`  
+**作成日:** 2026-08-13 ／ **最終更新:** 2026-08-28 ／ **ブランチ:** `issue-32-content-core-split`  
 **入口資料:** 新しいスレッドでもこの資料 1 枚を読めば、プロジェクトの目標・現在地・優先順位・次に着手する作業が分かる状態を保つ。  
-**反映済みの主な節目:** Step 15 の `lane-recovery-state` 命名整理、Step 16 の `cue-sequence-builder` への導出集約、Step 17-A-7 / 17-A-8 / 17-A-9 / 17-A-10 の panel 系整理を反映済みである。
+**反映済みの主な節目:** Step 15 の `lane-recovery-state` 命名整理、Step 16 の `cue-sequence-builder` への導出集約、Step 17-A-7 / 17-A-8 / 17-A-9 / 17-A-10 の panel 系整理、Step 17-A-11 の `extensionEnabled` runtime state 分離を反映済みである。次の主作業として、Step 17-B の visibility / lifecycle owner 固定に着手する。
 
 ***
 
@@ -47,7 +47,7 @@
 
 | 変数名 | 保存先 | 役割 | 備考 |
 | :-- | :-- | :-- | :-- |
-| `extensionEnabled` | `chrome.storage.sync` | 拡張全体の ON/OFF | ネイティブトグルが書き換える。 |
+| `state.extensionEnabled` | ランタイムメモリ | 現在の playback session における拡張全体の ON/OFF | native toggle / runtime 設定反映で更新する。`chrome.storage.sync` には保存しない（Step 17-A-11 で完全に分離済み）。 |
 | `panelOpen` | `chrome.storage.local` | 現在の字幕パネル開閉状態 | `modules/panel-visibility-state.js` が load / persist を担当する。 |
 | `panelDefaultOpen` | `chrome.storage.sync` | 通常起動時の `panelOpen` 初期値 | ランタイムの現在状態ではない。 |
 | `subtitleBlockState.sequence` | ランタイムメモリ | sequence / blocks / currentIndex / meta の正本 | `modules/subtitle-block-state.js` が取得、current block 解決、panel open 時の再同期を担当する。 |
@@ -55,6 +55,7 @@
 | `state.lastPanelRenderSnapshot` | 観測用ランタイム情報 | panel 最終描画 snapshot | debug / 観測用途。保存・clear は panel owner 側で扱う。 |
 
 **補足**  
+`extensionEnabled` は永続設定ではなく、現在の playback session に限定した runtime state である。ページ再読込または SPA 遷移後の新しい playback session では、前セッションの ON/OFF 状態を `chrome.storage.sync` から復元しない。Step 17-A-11 で、`modules/settings-store.js` / `modules/settings-schema.js` / popup / options の全経路からこの前提を確定済みである。  
 `panelOpen` は現在、`chrome.storage.local` に保存する設計で実装されている。  
 `panelDefaultOpen` は未保存時の初期値であり、`panelOpen` と混同しない。
 
@@ -64,7 +65,7 @@
 
 | 正式名称 | DOM ID | 役割 |
 | :-- | :-- | :-- |
-| ネイティブトグル | `atvb-native-toggle` | 拡張全体の ON/OFF のみ。OFF 時も残す。 |
+| ネイティブトグル | `atvb-native-toggle` | 現在の playback session における拡張全体の runtime ON/OFF。`state.extensionEnabled` を切り替え、OFF 時も残す。 |
 | 字幕パネル開閉ボタン | `atv-toggle-btn` | 右側字幕パネルの開閉のみ。設定保存に関与しない。 |
 | 字幕パネル本体 host | `atv-panel-host` | 右側字幕パネル host。表示/非表示と矩形計測の正本。 |
 | 字幕パネル本体 root | `atv-panel-root` | 右側字幕パネル本体。 |
@@ -88,10 +89,11 @@
 - Step 17-A-8 として、`panelUi.dispose()` を panel 系 cleanup の高レベル入口として固定し、`removeHost()` との責務境界、cleanup 到達経路、`applyPanelState()` / `refreshPanel()` の API 境界を明文化済みである。
 - Step 17-A-9 として、`panel-ui.js`、`panel-renderer.js`、`subtitle-blocks.js`、`subtitle-block-resolver.js` を `modules/` 配下へ移動し、`manifest.json` の参照を更新済みである。
 - Step 17-A-10 として、`content.js` に残っていた panel / block public API と高レベル中継境界を整理し、owner ごとの責務を固定済みである。具体的には、旧 sequence getter DI / fallback の削除、`applyPanelOpenEffects()` への panel open effect 集約、`modules/subtitle-block-state.js` からの描画 callback DI 削除、`modules/panel-ui.js` の render artifact cleanup 集約、`modules/subtitle-state-reset.js` の mirror / snapshot reset helper 分離、`reinitialize-coordinator.js` の reset options 契約化、関連コメント同期まで反映済みである。
+- Step 17-A-11 として、`extensionEnabled` を `chrome.storage.sync` の永続設定から切り離し、`state.extensionEnabled` を current playback session の runtime state 正本として扱う分離が完了している。具体的には、`settings-runtime.js` の `state.extensionEnabled` 基準への統一と destructure 整理、`content.js` の dead DI 削除、`modules/settings-store.js` からの `loadEnabledFlag()` / `saveEnabledFlag()` / export 削除、`modules/settings-schema.js` の schema / default / merge / normalize からの `extensionEnabled` 除外、`modules/playback-session-cleanup.js` の stop / pause の `runSessionTeardown()` への統合、`modules/panel-ui.js` の panel lifecycle への責務限定、popup / options の runtime enable/disable への追従まで反映済みである。詳細は `Bugfix 実装シート.md` を正本とする。
 
-### 現在の残課題
+### 進行中の作業
 
-- **Step 17-B:** Step 17-A-10 で確定した API 境界を前提に、`panelOpen`、`panelDefaultOpen`、通常 open / close、reinitialize、SPA 遷移、拡張 ON/OFF を含む visibility / lifecycle の owner を固定する。
+- **Step 17-B:** visibility / lifecycle の owner と cleanup 境界を固定する。`panelOpen`、`panelDefaultOpen`、通常 open / close、reinitialize、SPA 遷移、拡張 ON/OFF の各経路を洗い出し、`content.js`、`modules/panel-ui.js`、`modules/panel-visibility-state.js`、cleanup / reinitialize 系モジュールの責務境界を確認する。詳細は `docs/Bugfix/Step17-B_visibility-lifecycle_方針整理メモ.md` を正本とする。
 - **Step 18:** term inspector 関連 state / shell を `content.js` から切り離す。
 
 ***
@@ -110,6 +112,7 @@
 | 17-A-8 | dispose 契約の固定 | 完了 | `panelUi.dispose()` を panel cleanup の高レベル入口として固定した。 |
 | 17-A-9 | `modules/` 統合と manifest 整合 | 完了 | panel / block 系 4 ファイルを `modules/` へ移動し、`manifest.json` を更新した。 |
 | 17-A-10 | Step 17-B / 18 へつなぐ API 固定 | 完了 | `content.js` に残る panel / block public API と高レベル中継範囲を確定し、旧 sequence getter DI / fallback 削除、`applyPanelOpenEffects()` 集約、block state の描画 callback DI 削除、panel render artifact cleanup 集約、subtitle reset helper 分離、reinitialize reset options 契約化、関連コメント同期まで反映済みである。 |
+| 17-A-11 | `extensionEnabled` の runtime state 分離 | 完了 | `settings-runtime.js` の `state.extensionEnabled` 基準への統一・destructure 整理・deps. 参照置換、`content.js` の dead DI 削除、`modules/settings-store.js` / `modules/settings-schema.js` からの永続設定経路削除、`modules/playback-session-cleanup.js` の stop/pause 統合、`modules/panel-ui.js` の panel lifecycle への責務限定、popup / options の runtime enable/disable 追従まで反映済みである。 |
 
 詳細は `docs/Bugfix/Step17-A_panel系統合_方針整理メモ.md` を正本とする。
 
@@ -119,7 +122,7 @@
 
 | 優先度 | ステップ | 目的 | 着手条件 |
 | :-- | :-- | :-- | :-- |
-| 最優先 | 17-B | visibility / lifecycle の owner と cleanup 境界を固定する | 17-A-10 の API 固定完了後。 |
+| 最優先 | 17-B | visibility / lifecycle の owner と cleanup 境界を固定する | Step 17-A-10 / 17-A-11 の API 固定・runtime state 分離が完了済み。着手可能。 |
 | 次 | 18 | term inspector 関連 state / shell を `content.js` から分離する | 17-A / 17-B の panel 系境界確定後。 |
 | 継続観測 | F-4 / F-5 / F-8 / F-9 / F-10 / M-1 | message channel error、cleanup / mode restore、ログ整理、完全リセット、seek 後の track 参照消失、長時間メモリ観測 | 主作業と混線しない範囲で継続。 |
 
@@ -131,7 +134,7 @@
 開始時は次の順で確認するとよい。
 
 1. `docs/Bugfix/Step17-B_visibility-lifecycle_方針整理メモ.md` を開き、visibility / lifecycle の論点と対象 state を確認する。
-2. `docs/Bugfix/Step17-A_panel系統合_方針整理メモ.md` を参照し、17-A-10 で固定済みの API 境界を前提として扱う。
+2. `docs/Bugfix/Step17-A_panel系統合_方針整理メモ.md` を参照し、17-A-10 / 17-A-11 で固定済みの API 境界・runtime state 境界を前提として扱う。
 3. `content.js`、`modules/panel-ui.js`、`modules/panel-visibility-state.js`、`reinitialize-coordinator.js`、cleanup 系モジュールを対象に、open / close / reinitialize / SPA 遷移 / ON-OFF の到達経路を洗い出す。
 4. `panelOpen` と `panelDefaultOpen` の役割差、および storage / runtime / DOM 表示切り替えの owner を切り分ける。
 
@@ -142,13 +145,14 @@
 - panel UI / overlay UI / layout の見た目調整
 - track / toggle / lifecycle の別スコープ修正
 - 別スコープの test failure 修正
-- Step 17-B 以降の visibility / lifecycle 実装そのもの
+- Step 17-A-11 のファイル単位の詳細実装（`Bugfix 実装シート.md` を正本とする）
+- Step 17-B の visibility / lifecycle 実装そのもの
 - Step 18 の term inspector 抽出実装そのもの
 
 ***
 
 ## 結論
 
-現在の最優先は **Step 17-B** であり、Step 17-A-10 で確定した panel / block API 境界を前提に visibility / lifecycle の owner を固定することである。
+Step 17-A-11 は完了し、`extensionEnabled` を `chrome.storage.sync` の永続設定から切り離し、`state.extensionEnabled` を current playback session の runtime state 正本として扱う分離が確定した。  
+現在の最優先は **Step 17-B** であり、Step 17-A-10 / 17-A-11 で確定した panel / block API 境界と runtime state 境界を前提に、visibility / lifecycle の owner を固定する。  
 Step 18 はその次に、panel 系境界と lifecycle 境界の整理後、term inspector 関連 state / shell を `content.js` から切り離す段階である。
-
