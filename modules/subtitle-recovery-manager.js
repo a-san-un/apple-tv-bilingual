@@ -241,7 +241,7 @@
     function markRecoverySucceeded(reason = "recovery_succeeded") {
       lastBothMissingRecoveryAttemptAt = 0;
 
-      logContent?.("subtitle recovery manager success", {
+      logRecoveryProbe?.("subtitle recovery manager success", {
         reason,
         lastBothMissingRecoveryAttemptAt,
       });

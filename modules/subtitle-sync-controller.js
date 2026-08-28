@@ -727,7 +727,7 @@
         reason: options.reason || `subtitle-sync-controller-${role}-native-fallback`,
       });
 
-      logContent?.("subtitleSyncController.syncNativeSubtitleSelectionFallback", {
+      logRecoveryProbe?.("subtitleSyncController.syncNativeSubtitleSelectionFallback", {
         role,
         requestedLang,
         applied: Boolean(result),
@@ -759,7 +759,7 @@
         const selectedTrack = selection.track || null;
 
         if (!selectedTrack) {
-          logContent?.("subtitleSyncController.syncTrackDirectly", {
+          logRecoveryProbe?.("subtitleSyncController.syncTrackDirectly", {
             role,
             requestedLang,
             bound: false,
@@ -830,7 +830,7 @@
         }
 
         if (!readableTrack || task.cancelled) {
-          logContent?.("subtitleSyncController.syncTrackDirectly", {
+          logRecoveryProbe?.("subtitleSyncController.syncTrackDirectly", {
             role,
             requestedLang,
             bound: false,
@@ -847,7 +847,7 @@
           requestedLang,
         });
 
-        logContent?.("subtitleSyncController.syncTrackDirectly", {
+        logRecoveryProbe?.("subtitleSyncController.syncTrackDirectly", {
           role,
           requestedLang,
           bound: Boolean(binding),

@@ -198,7 +198,7 @@
     function logTrackSnapshot(video, triggerReason = "unknown") {
       const subtitleLikeTracks = getSubtitleLikeTracks(video);
 
-      logContent?.("startup coordinator track snapshot", {
+      logStartupProbe?.("startup coordinator track snapshot", {
         triggerReason,
         currentTime: Number.isFinite(video?.currentTime) ? video.currentTime : null,
         readyState: video?.readyState ?? null,
@@ -220,7 +220,7 @@
 
     /** attach 開始時点の playback 文脈をログへ残す */
     function logStartupAttach(video, reason = "unknown") {
-      logContent?.("startup coordinator attach", {
+      logStartupProbe?.("startup coordinator attach", {
         reason,
         currentTime: Number.isFinite(video?.currentTime) ? video.currentTime : null,
         readyState: video?.readyState ?? null,
@@ -346,7 +346,7 @@
         // SPA 遷移直後の track 遅延か、resolver 側の言語一致条件かを切り分けるためのログ。
         const readiness = getTrackReadinessSnapshot(video);
 
-        logContent?.("startup coordinator track wait timeout", {
+        logStartupProbe?.("startup coordinator track wait timeout", {
           startupReason,
           keepPanelOpen: typeof keepPanelOpen === "boolean" ? keepPanelOpen : null,
           currentTime: Number.isFinite(video?.currentTime) ? video.currentTime : null,
@@ -415,7 +415,7 @@
           return;
         }
 
-        logContent?.("startup coordinator delayed retry", {
+        logStartupProbe?.("startup coordinator delayed retry", {
           startupReason,
           keepPanelOpen:
             typeof keepPanelOpen === "boolean" ? keepPanelOpen : null,
@@ -602,7 +602,7 @@
 
       const found = getVideoAndDialog?.();
 
-      logContent?.("playback target reattach candidate", {
+      logStartupProbe?.("playback target reattach candidate", {
         reason,
         foundVideo: Boolean(found?.video),
         foundDialog: Boolean(found?.dialog || found?.dialogEl),

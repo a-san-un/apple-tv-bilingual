@@ -154,7 +154,7 @@
 
         cleanupInitialAutoStartWatch();
 
-        logContent?.("initial auto-start firing", {
+        logStartupProbe?.("initial auto-start firing", {
           reason,
           triggerReason,
           totalTrackCount: video?.textTracks?.length ?? 0,
@@ -188,7 +188,7 @@
       }, 250);
 
       timeoutTimer = window.setTimeout(() => {
-        logContent?.("initial auto-start track wait timeout", {
+        logStartupProbe?.("initial auto-start track wait timeout", {
           reason,
           totalTrackCount: video?.textTracks?.length ?? 0,
           subtitleLikeTrackCount: getSubtitleLikeTracks(video).length,

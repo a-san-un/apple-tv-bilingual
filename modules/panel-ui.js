@@ -690,7 +690,7 @@
     function syncPanelToggleButton(isOpen) {
       const button = getTarget?.()?.querySelector?.("#atv-toggle-btn");
       if (!(button instanceof HTMLElement)) {
-        logContent?.("字幕パネル開閉ボタン update skipped: button missing", {
+        logPanelProbe?.("字幕パネル開閉ボタン update skipped: button missing", {
           requestedOpen: isOpen,
           panelOpen: state.panelOpen,
         });
@@ -699,7 +699,7 @@
 
       applyPanelToggleButtonState(button, isOpen);
 
-      logContent?.("字幕パネル開閉ボタン update done", {
+      logPanelProbe?.("字幕パネル開閉ボタン update done", {
         requestedOpen: isOpen,
         panelOpen: state.panelOpen,
         buttonRight: button.style.right,
@@ -786,7 +786,7 @@
           },
           () => {
             if (chrome.runtime.lastError) {
-              logContent?.("native toggle apply failed", {
+              logPanelProbe?.("native toggle apply failed", {
                 message: chrome.runtime.lastError.message,
                 next,
               });
