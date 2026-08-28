@@ -2,7 +2,7 @@
 
 **作成日:** 2026-08-13 ／ **最終更新:** 2026-08-28 ／ **ブランチ:** `issue-32-content-core-split`  
 **入口資料:** 新しいスレッドでもこの資料 1 枚を読めば、プロジェクトの目標・現在地・優先順位・次に着手する作業が分かる状態を保つ。  
-**反映済みの主な節目:** Step 15 の `lane-recovery-state` 命名整理、Step 16 の `cue-sequence-builder` への導出集約、Step 17-A-7 / 17-A-8 / 17-A-9 / 17-A-10 の panel 系整理、Step 17-A-11 の `extensionEnabled` runtime state 分離を反映済みである。次の主作業として、Step 17-B の visibility / lifecycle owner 固定に着手する。
+**反映済みの主な節目:** Step 15 の `lane-recovery-state` 命名整理、Step 16 の `cue-sequence-builder` への導出集約、Step 17-A-7 / 17-A-8 / 17-A-9 / 17-A-10 の panel 系整理、Step 17-A-11 の `extensionEnabled` runtime state 分離、Panel / Startup / Recovery の詳細観測ログの既存 probe への追加移管、Step17-C として残存 `logContent` の棚卸しと probe 制御方針整理メモの作成まで反映済みである。次回は**ブラウザテストから着手する**。テスト前提となるログ整備は一通り完了している。
 
 ***
 
@@ -29,7 +29,8 @@
 | 資料⑦ | `docs/Bugfix/字幕同期・切り替え条件統合と責務再設計メモ.md` | primary / secondary 字幕同期、monitor、recovery、native fallback の統合設計メモ | 字幕同期設計変更時に更新 |
 | 資料⑧ | `docs/Bugfix/Step17-A_panel系統合_方針整理メモ.md` | Step 17-A の panel owner / block state / debug runtime / API 境界整理の詳細正本 | Step 17-A 作業時に更新 |
 | 資料⑨ | `docs/Bugfix/Step17-B_visibility-lifecycle_方針整理メモ.md` | Step 17-B の visibility / lifecycle 整理の詳細正本 | Step 17-B 作業時に更新 |
-| 資料⑩ | `docs/Bugfix/module-load-order.md` | content scripts の module 読み込み順と依存関係 | manifest / module 追加時に更新 |
+| 資料⑩ | `docs/Bugfix/Step17-C_残存ログprobe制御_方針整理メモ.md` | 残存 `logContent` の棚卸し、probe 分類、DI 変更方針の詳細正本 | probe 整理方針更新時に更新 |
+| 資料⑪ | `docs/Bugfix/module-load-order.md` | content scripts の module 読み込み順と依存関係 | manifest / module 追加時に更新 |
 
 ***
 
@@ -89,70 +90,81 @@
 - Step 17-A-8 として、`panelUi.dispose()` を panel 系 cleanup の高レベル入口として固定し、`removeHost()` との責務境界、cleanup 到達経路、`applyPanelState()` / `refreshPanel()` の API 境界を明文化済みである。
 - Step 17-A-9 として、`panel-ui.js`、`panel-renderer.js`、`subtitle-blocks.js`、`subtitle-block-resolver.js` を `modules/` 配下へ移動し、`manifest.json` の参照を更新済みである。
 - Step 17-A-10 として、`content.js` に残っていた panel / block public API と高レベル中継境界を整理し、owner ごとの責務を固定済みである。具体的には、旧 sequence getter DI / fallback の削除、`applyPanelOpenEffects()` への panel open effect 集約、`modules/subtitle-block-state.js` からの描画 callback DI 削除、`modules/panel-ui.js` の render artifact cleanup 集約、`modules/subtitle-state-reset.js` の mirror / snapshot reset helper 分離、`reinitialize-coordinator.js` の reset options 契約化、関連コメント同期まで反映済みである。
-- Step 17-A-11 として、`extensionEnabled` を `chrome.storage.sync` の永続設定から切り離し、`state.extensionEnabled` を current playback session の runtime state 正本として扱う分離が完了している。具体的には、`settings-runtime.js` の `state.extensionEnabled` 基準への統一と destructure 整理、`content.js` の dead DI 削除、`modules/settings-store.js` からの `loadEnabledFlag()` / `saveEnabledFlag()` / export 削除、`modules/settings-schema.js` の schema / default / merge / normalize からの `extensionEnabled` 除外、`modules/playback-session-cleanup.js` の stop / pause の `runSessionTeardown()` への統合、`modules/panel-ui.js` の panel lifecycle への責務限定、popup / options の runtime enable/disable への追従まで反映済みである。詳細は `Bugfix 実装シート.md` を正本とする。
+- Step 17-A-11 として、`extensionEnabled` を永続設定から外し、current playback session に限定した runtime state として一本化済みである。
+- その後の補助整理として、`settings-runtime.js`、`modules/subtitle-sync-controller.js`、`modules/panel-ui.js`、`modules/playback-startup-coordinator.js`、`modules/subtitle-recovery-manager.js` の詳細観測ログを既存 probe へ追加移管した。
+- Step17-C として、残存 `logContent` を棚卸しし、`logLifecycleProbe` / `logRecoveryProbe` / `logSubtitleProbe` / `logLookupProbe` まで含めた probe 制御方針を整理した。
+- 次回のブラウザテストに向けて、少なくとも「起動」「panel」「recovery」の主要観測点は probe で切り替えられる状態まで整理済みである。
 
-### 進行中の作業
+### 今回スレッドで未実施のこと
 
-- **Step 17-B:** visibility / lifecycle の owner と cleanup 境界を固定する。`panelOpen`、`panelDefaultOpen`、通常 open / close、reinitialize、SPA 遷移、拡張 ON/OFF の各経路を洗い出し、`content.js`、`modules/panel-ui.js`、`modules/panel-visibility-state.js`、cleanup / reinitialize 系モジュールの責務境界を確認する。詳細は `docs/Bugfix/Step17-B_visibility-lifecycle_方針整理メモ.md` を正本とする。
-- **Step 18:** term inspector 関連 state / shell を `content.js` から切り離す。
-
-***
-
-## Step 17-A の進捗
-
-| 枝番 | 内容 | 状態 | 補足 |
-| :-- | :-- | :-- | :-- |
-| 17-A-1 | panel / blocks の依存棚卸し | 完了 | 方針整理メモに owner、依存、関数マッピングを記録済み。 |
-| 17-A-2 | visibility 正本の固定 | 完了 | `modules/panel-visibility-state.js` を開閉 state の load / persist 専用に維持する。 |
-| 17-A-3 | panel owner の再整理 | 完了 | `modules/panel-ui.js` に host、ShadowRoot、toggle、observer、render 更新の owner を寄せ、dispose 契約も固定済みである。 |
-| 17-A-4 | renderer 専用化 | 完了 | `modules/panel-renderer.js` は state を直接読まず、入力から描画結果・snapshot を返す。 |
-| 17-A-5 | resolver の計算責務化 | 完了 | `modules/subtitle-block-resolver.js` は panel 表示用 block への計算変換に留める。 |
-| 17-A-6 | block state owner の統合 | 完了 | `modules/subtitle-block-state.js` を正本とし、clear / dispose 経路も確認済みである。 |
-| 17-A-7 | `content.js` の薄化 | 完了 | renderer 直接依存と panel list 直接描画を外し、DI・高レベル中継へ縮小した。 |
-| 17-A-8 | dispose 契約の固定 | 完了 | `panelUi.dispose()` を panel cleanup の高レベル入口として固定した。 |
-| 17-A-9 | `modules/` 統合と manifest 整合 | 完了 | panel / block 系 4 ファイルを `modules/` へ移動し、`manifest.json` を更新した。 |
-| 17-A-10 | Step 17-B / 18 へつなぐ API 固定 | 完了 | `content.js` に残る panel / block public API と高レベル中継範囲を確定し、旧 sequence getter DI / fallback 削除、`applyPanelOpenEffects()` 集約、block state の描画 callback DI 削除、panel render artifact cleanup 集約、subtitle reset helper 分離、reinitialize reset options 契約化、関連コメント同期まで反映済みである。 |
-| 17-A-11 | `extensionEnabled` の runtime state 分離 | 完了 | `settings-runtime.js` の `state.extensionEnabled` 基準への統一・destructure 整理・deps. 参照置換、`content.js` の dead DI 削除、`modules/settings-store.js` / `modules/settings-schema.js` からの永続設定経路削除、`modules/playback-session-cleanup.js` の stop/pause 統合、`modules/panel-ui.js` の panel lifecycle への責務限定、popup / options の runtime enable/disable 追従まで反映済みである。 |
-
-詳細は `docs/Bugfix/Step17-A_panel系統合_方針整理メモ.md` を正本とする。
+- このスレッドは本来ブラウザテスト用として立てたが、実際にはネイティブトグル周辺の修正、runtime state 整理、probe 整理、資料更新を優先したため、**ブラウザテスト自体は未実施**である。
+- したがって、今回の到達点は「テストを始められる観測基盤の整備完了」であり、「実機での振る舞い確認完了」ではない。
 
 ***
 
-## 実装の優先順位
+## 現時点の評価
 
-| 優先度 | ステップ | 目的 | 着手条件 |
-| :-- | :-- | :-- | :-- |
-| 最優先 | 17-B | visibility / lifecycle の owner と cleanup 境界を固定する | Step 17-A-10 / 17-A-11 の API 固定・runtime state 分離が完了済み。着手可能。 |
-| 次 | 18 | term inspector 関連 state / shell を `content.js` から分離する | 17-A / 17-B の panel 系境界確定後。 |
-| 継続観測 | F-4 / F-5 / F-8 / F-9 / F-10 / M-1 | message channel error、cleanup / mode restore、ログ整理、完全リセット、seek 後の track 参照消失、長時間メモリ観測 | 主作業と混線しない範囲で継続。 |
+### 安定してきた領域
 
-***
+- panel lifecycle の高レベル入口と低レベル DOM cleanup の責務境界はかなり明確になった。
+- runtime ON/OFF と永続設定の混線は、`extensionEnabled` の runtime state 分離により大きく改善した。
+- startup / recovery / panel の詳細観測ログは既存 probe へ寄せたため、次回のブラウザテストでは必要な観測だけを有効化しやすい。
 
-## 次スレッドの入口
+### まだ固定し切っていない領域
 
-次スレッドでは、まず **Step 17-B の visibility / lifecycle owner 固定** に着手する。  
-開始時は次の順で確認するとよい。
-
-1. `docs/Bugfix/Step17-B_visibility-lifecycle_方針整理メモ.md` を開き、visibility / lifecycle の論点と対象 state を確認する。
-2. `docs/Bugfix/Step17-A_panel系統合_方針整理メモ.md` を参照し、17-A-10 / 17-A-11 で固定済みの API 境界・runtime state 境界を前提として扱う。
-3. `content.js`、`modules/panel-ui.js`、`modules/panel-visibility-state.js`、`reinitialize-coordinator.js`、cleanup 系モジュールを対象に、open / close / reinitialize / SPA 遷移 / ON-OFF の到達経路を洗い出す。
-4. `panelOpen` と `panelDefaultOpen` の役割差、および storage / runtime / DOM 表示切り替えの owner を切り分ける。
-
-**この資料で扱わないこと**
-
-- 個別ファイルへの置換手順や JSDoc 差し替え案
-- 実機ログや検証ログの詳細
-- panel UI / overlay UI / layout の見た目調整
-- track / toggle / lifecycle の別スコープ修正
-- 別スコープの test failure 修正
-- Step 17-A-11 のファイル単位の詳細実装（`Bugfix 実装シート.md` を正本とする）
-- Step 17-B の visibility / lifecycle 実装そのもの
-- Step 18 の term inspector 抽出実装そのもの
+- Step 17-B の visibility / lifecycle owner 固定は、まだ本格着手前である。
+- 残存 `logContent` はまだあり、session cleanup、startup skip、secondary recovery、subtitle reset、cue rebuild などの高レベルログは追加整理余地がある。
+- `console.*` のうち debug / warn / error の扱いは、probe 整理とは別ワークストリームで扱う前提である。
 
 ***
 
-## 結論
+## 今の優先順位
 
-Step 17-A-11 は完了し、`extensionEnabled` を `chrome.storage.sync` の永続設定から切り離し、`state.extensionEnabled` を current playback session の runtime state 正本として扱う分離が確定した。  
-現在の最優先は **Step 17-B** であり、Step 17-A-10 / 17-A-11 で確定した panel / block API 境界と runtime state 境界を前提に、visibility / lifecycle の owner を固定する。  
-Step 18 はその次に、panel 系境界と lifecycle 境界の整理後、term inspector 関連 state / shell を `content.js` から切り離す段階である。
+### 優先 1: ブラウザテストの再開
+
+次回スレッドでは、**最初にブラウザテストを行う**。  
+今回のスレッドではテストが未実施のため、まず現在の build で次を確認する。
+
+- 再生中の ON → OFF → ON
+- panel open / close と overlay 追従
+- hard seek 後の subtitle / panel / overlay 復帰
+- SPA 遷移後の cleanup / restart
+- native subtitle fallback と secondary recovery の観測
+
+### 優先 2: Step 17-B の実作業着手
+
+ブラウザテストの結果を踏まえつつ、visibility / lifecycle owner の固定に着手する。  
+特に、再生状態変化・UI 表示状態・session cleanup の責務境界が、現在の owner 分割で破綻していないかを確認しながら進める。
+
+### 優先 3: Step17-C に沿った残存ログ整理
+
+ブラウザテストで追加観測が必要な箇所が見えたら、`Step17-C_残存ログprobe制御_方針整理メモ.md` に沿って残存 `logContent` を段階的に probe へ寄せる。  
+この作業はテストを補助するためのものであり、テストより先に全面移行を完了させること自体を目的にしない。
+
+***
+
+## 次スレッド開始時の着手順
+
+1. Apple TV+ 再生画面でブラウザテストを開始する。  
+2. 必要な probe flag を有効化し、startup / panel / recovery の挙動を観測する。  
+3. 不具合が再現したら、その時点で owner 境界、cleanup 経路、runtime state、recovery 経路のどこでズレているかを切り分ける。  
+4. テスト結果を `Bugfix 実装シート.md` に反映する。  
+5. 追加のログ整理が必要なら `Step17-C_残存ログprobe制御_方針整理メモ.md` を参照して修正対象を決める。  
+
+***
+
+## 次回すぐ見る資料
+
+- `docs/Bugfix/Bugfix 実装シート.md`
+- `docs/Bugfix/Step17-B_visibility-lifecycle_方針整理メモ.md`
+- `docs/Bugfix/Step17-C_残存ログprobe制御_方針整理メモ.md`
+
+***
+
+## メモ
+
+- 次回は**実装整理の続きではなく、先にブラウザテストから入る**。
+- 今回の時点で、startup / panel / recovery の主要観測ログは probe 化されているため、テストしながらログを読みやすい。
+- 残存ログの全面 probe 化は未完だが、ブラウザテスト開始の前提としては十分な段階まで整理済みである。
+
+情報源
