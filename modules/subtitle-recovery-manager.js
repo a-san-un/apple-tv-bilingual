@@ -15,7 +15,6 @@
   /**
    * subtitle health snapshot から復旧アクションを決定するインスタンスを生成する。
    * @param {{
-   *   logContent?: Function,
    *   logRecoveryProbe?: Function,
    *   cooldownMs?: number,
    *   laneRecoveryState?: {
@@ -28,7 +27,6 @@
    */
   function createSubtitleRecoveryManager(deps = {}) {
     const {
-      logContent,
       logRecoveryProbe,
       cooldownMs = 4000,
       laneRecoveryState = null,

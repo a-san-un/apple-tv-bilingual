@@ -40,10 +40,10 @@
   // - 問題の再現時だけ必要な probe を 1 つずつ有効化する
   // ---------------------------------------------------------------------
   const DEBUG_SECONDARY_SUBS = false; // 字幕 snapshot / cue 観測用
-  const DEBUG_PANEL_PROBE = false; // パネル描画 / UI レイアウト観測用
+  const DEBUG_PANEL_PROBE = true; // パネル描画 / UI レイアウト観測用
   const DEBUG_MEMORY_PROBE = false; // listener / bind / unbind 観測用
-  const DEBUG_STARTUP_PROBE = false; // 起動 / readiness / auto-start 観測用
-  const DEBUG_RECOVERY_PROBE = false; // recovery / skip / wait / fallback 観測用
+  const DEBUG_STARTUP_PROBE = true; // 起動 / readiness / auto-start 観測用
+  const DEBUG_RECOVERY_PROBE = true; // recovery / skip / wait / fallback 観測用
   const LOG_CATEGORIES = Object.freeze({
     SETTINGS: "settings",
     SUBTITLE: "subtitle",
@@ -505,122 +505,111 @@ function forwardContentLog(...args) {
     });
   }
 
+  /**
+   * 現在の再生対象コンテナ（dialog）を返す。
+   * dialog が未解決の場合は document.body へフォールバックする。
+   * overlay / panel などの DOM 挿入先を決める際の基準として使う。
+   * @returns {Element}
+   */
   function getTarget() {
     return state.dialogEl || document.body;
   }
 
+  // =====================================================================
+  // Section: Playback Context Controller (DI)
+  // 役割:
+  // - 再生対象識別・content key 解決は modules/playback-context-controller.js
+  //   が正本であり、content.js は既存呼び出し互換のための薄いラッパーだけを持つ。
+  // - DOM 探索・正規化ロジックの実装詳細はこの Section では持たない。
+  //   詳細は modules/playback-context-controller.js を参照する。
+  // - history 切替（switchHistoryContext 以降）は historyStore /
+  //   overlayController / secondarySubtitleDom を跨ぐため、この Section の
+  //   スコープ外として下の Section に残す。
+  // =====================================================================
+
+  /**
+   * playback context controller のインスタンス。
+   * state.video を DI し、再生対象識別・content key 解決を委譲する。
+   * @type {ReturnType<typeof root.playbackContextController.createPlaybackContextController>}
+   */
+  const playbackContextController =
+    root.playbackContextController?.createPlaybackContextController?.({
+      getVideoElement: () => state.video ?? null,
+    }) ?? null;
+
+  /**
+   * 再生画面上の video / dialog / playback view をまとめて取得する。
+   * @returns {ReturnType<typeof playbackContextController.getPlaybackContext>}
+   */
   function getPlaybackContext() {
-    const video = document.querySelector("video");
-    const playbackDialog = document.querySelector("dialog.playback-view");
-    const playbackView = document.querySelector(
-      '[data-testid="playback-view"]',
-    );
-    const textTrackCount = video?.textTracks?.length ?? 0;
-
-    // 再生判定は URL ではなく DOM 条件を基準にする。
-    const isPlaybackReady = Boolean(video) && textTrackCount > 0;
-
-    return {
-      video,
-      playbackDialog,
-      playbackView,
-      textTrackCount,
-      isPlaybackReady,
-    };
+    return playbackContextController.getPlaybackContext();
   }
 
+  /**
+   * 再生準備が整っているときだけ、video と（解決済みの）dialog を返す。
+   * @returns {({ video: HTMLVideoElement, dialog: (Element|null) }|null)}
+   */
   function getVideoAndDialog() {
-    const ctx = getPlaybackContext();
-    if (!ctx.isPlaybackReady) return null;
-
-    const resolvedDialog =
-      ctx.playbackDialog || ctx.playbackView?.closest("dialog") || null;
-    return { video: ctx.video, dialog: resolvedDialog };
+    return playbackContextController.getVideoAndDialog();
   }
 
+  /**
+   * 現在の再生画面が readiness 条件を満たしているかだけを返す。
+   * @returns {boolean}
+   */
   function isPlaybackPageReady() {
-    return getPlaybackContext().isPlaybackReady;
+    return playbackContextController.isPlaybackPageReady();
   }
 
-  // playback context detection helpers
-  // playback readiness の観測結果を、logging や上位判断へ渡すための補助関数群。
+  /**
+   * playback readiness の観測結果を、logging や上位判断へ渡すための
+   * 軽量 payload に整形する。
+   * @returns {ReturnType<typeof playbackContextController.getPlaybackContextLogPayload>}
+   */
   function getPlaybackContextLogPayload() {
-    const ctx = getPlaybackContext();
-    return {
-      hasVideo: Boolean(ctx.video),
-      hasPlaybackDialog: Boolean(ctx.playbackDialog),
-      hasPlaybackView: Boolean(ctx.playbackView),
-      textTrackCount: ctx.textTrackCount,
-      isPlaybackReady: ctx.isPlaybackReady,
-    };
+    return playbackContextController.getPlaybackContextLogPayload();
   }
 
-  // content key resolver helpers
-  // 現在の再生対象から安定した content key を組み立てるための下位 helper 群。
-  function normalizeContentKeyPart(value) {
-    return String(value || "")
-      .trim()
-      .replace(/\s+/g, " ")
-      .toLowerCase();
+  /**
+   * media source を最優先にしつつ、title / aria 系属性から content key を解決する。
+   * @param {ReturnType<typeof getPlaybackContext>} [ctx]
+   * @returns {string}
+   */
+  function resolvePlaybackContentKey(ctx) {
+    return playbackContextController.resolvePlaybackContentKey(ctx);
   }
 
-  function normalizeMediaSourceKey(rawSrc) {
-    const src = String(rawSrc || "").trim();
-    if (!src) return "";
-
-    try {
-      const parsed = new URL(src, location.href);
-      return `${parsed.origin}${parsed.pathname}`.toLowerCase();
-    } catch (_) {
-      return src.split("?")[0].split("#")[0].toLowerCase();
-    }
+  /**
+   * video.currentSrc / src から videoSrcKey を正規化して返す。
+   * 引数省略時は state.video を使う（controller 側の getVideoElement DI 経由）。
+   * @param {HTMLVideoElement} [video]
+   * @returns {string}
+   */
+  function getCurrentVideoSrcKey(video) {
+    return playbackContextController.getCurrentVideoSrcKey(video);
   }
 
-  function getPlaybackTitleKey() {
-    const rawTitle = String(document.title || "");
-    const cleanedTitle = rawTitle
-      .replace(/\s*[|｜-]\s*apple tv\+\s*$/i, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    return normalizeContentKeyPart(cleanedTitle);
-  }
+  // =====================================================================
+  // Section: Subtitle History Context Switching
+  // 役割:
+  // - 再生対象の切替に応じて、字幕履歴の文脈（historyStore の active bucket）を
+  //   切り替える。overlay / secondary DOM のクリアもここで発生させる。
+  // - content key の解決自体は上の Section（playbackContextController）に委譲し、
+  //   この Section では「切り替わったときに何をするか」だけを持つ。
+  // =====================================================================
 
-  function resolvePlaybackContentKey(ctx = getPlaybackContext()) {
-    const mediaSourceKey = normalizeMediaSourceKey(
-      ctx.video?.currentSrc || ctx.video?.getAttribute("src") || "",
-    );
-    // エピソード識別は currentSrc を最優先にする。
-    if (mediaSourceKey) {
-      return `media:${mediaSourceKey}`;
-    }
-
-    const titleKey = getPlaybackTitleKey();
-    const attrCandidates = [
-      ctx.playbackView?.getAttribute("data-automation-id"),
-      ctx.playbackView?.getAttribute("data-testid"),
-      ctx.playbackView?.getAttribute("aria-label"),
-      ctx.playbackDialog?.getAttribute("aria-label"),
-    ];
-    const stableIdKey = attrCandidates
-      .map((value) => normalizeContentKeyPart(value))
-      .find(Boolean);
-
-    const keyParts = [];
-    if (titleKey) keyParts.push(`title:${titleKey}`);
-    if (stableIdKey) keyParts.push(`id:${stableIdKey}`);
-
-    if (!keyParts.length) return "content:unknown";
-    return keyParts.join("|");
-  }
-
-  function getCurrentVideoSrcKey(video = state.video) {
-    return normalizeMediaSourceKey(
-      video?.currentSrc || video?.getAttribute("src") || "",
-    );
-  }
-
-
+  /**
+   * 再生コンテンツ切り替え時に、字幕履歴の文脈を切り替える。
+   * 切り替え前後で content key が変わる場合のみ、overlay state をクリアし、
+   * secondary subtitle の panel テキストもクリアする。
+   * @param {string} nextContentKey
+   * @param {string} [reason]
+   * @returns {boolean} 実際に切り替わった場合は true
+   */
   function switchHistoryContext(nextContentKey, reason = "unknown") {
+    // -- 1. historyStore へ切替を要求する --
+    // 実際に content key が変わった場合だけ、切替前に overlay /
+    // secondary DOM のクリアと holdBlockCandidate のリセットを行う。
     const switched = historyStore.switchContext(nextContentKey, {
       reason,
       onBeforeSwitch: (prevKey, nextKey) => {
@@ -632,12 +621,16 @@ function forwardContentLog(...args) {
       },
     });
 
+    // -- 2. 切替が発生しなかった場合は早期 return する --
     if (!switched) return false;
 
-    // state.subtitleHistory をブリッジ同期（既存参照箇所との互換維持）
+    // -- 3. state.subtitleHistory をブリッジ同期する --
+    // panel-renderer など既存参照箇所との互換のため、
+    // historyStore の active history を state 側にも反映する。
     state.subtitleHistory = historyStore.getActiveHistory();
     state.lastPrimaryText = "";
 
+    // -- 4. 切替結果をログへ記録する --
     logContentSubtitle("history context switched", {
       reason,
       previousContentKey: historyStore.getCurrentKey(),
@@ -647,15 +640,28 @@ function forwardContentLog(...args) {
     return true;
   }
 
-
+  /**
+   * 現在の playback context から content key を解決し、
+   * switchHistoryContext() へそのまま渡す。
+   * @param {string} [reason]
+   * @returns {boolean}
+   */
   function syncHistoryContextWithPlayback(reason = "unknown") {
     return switchHistoryContext(resolvePlaybackContentKey(), reason);
   }
 
+  /**
+   * primary subtitle の1エントリを現在の historyStore へ追記する。
+   * state.subtitleHistory をブリッジ同期する（panel-renderer 等の既存参照を維持）。
+   * @param {string} entry
+   */
   function _appendSubtitleHistory(entry) {
     if (!entry) return;
+
+    // -- 1. historyStore へ追記する --
     historyStore.append(entry);
-    // state.subtitleHistory をブリッジ同期（panel-renderer 等の既存参照を維持）
+
+    // -- 2. state.subtitleHistory をブリッジ同期する --
     state.subtitleHistory = historyStore.getActiveHistory();
   }
 
@@ -2176,7 +2182,7 @@ function forwardContentLog(...args) {
     root.createSubtitleRecoveryManager || null;
   const subtitleRecoveryManager = createSubtitleRecoveryManager
     ? createSubtitleRecoveryManager({
-        logContent,
+        logRecoveryProbe,
         cooldownMs: 4000,
         laneRecoveryState,
       })
