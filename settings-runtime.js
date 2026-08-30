@@ -42,6 +42,7 @@
       isPlaybackPageReady,
       getVideoAndDialog,
       mountToggleOnlyUi,
+      getPlaybackStartupCoordinator,
     } = deps;
 
     // cueController / syncIntervalOrchestrator / panelUi は content.js 側で
@@ -122,6 +123,38 @@
       return getSubtitleLikeTracks(video).length > 0;
     }
 
+    /**
+     * playback startup coordinator が同一 video の auto-start owner になれるなら、
+     * settings runtime 側の初回 auto-start は委譲して二重起動を避ける。
+     *
+     * @param {HTMLVideoElement|null} video
+     * @param {string} reason
+     * @returns {boolean}
+     */
+    function delegateInitialAutoStartToCoordinator(video, reason = "unknown") {
+      const coordinator = getPlaybackStartupCoordinator?.() || null;
+      if (!coordinator?.canAutoStartFromSavedSettings) return false;
+      if (!coordinator?.attachAndMaybeStart) return false;
+      if (!video || state.video !== video) return false;
+      if (!coordinator.canAutoStartFromSavedSettings()) return false;
+
+      logStartupProbe?.("initial auto-start delegated to coordinator", {
+        reason,
+        videoSrcKey: state.lastVideoSrcKey || "",
+        requestedContentSettings: {
+          primaryLang: state.requestedContentSettings?.primaryLang || "",
+          secondaryLang: state.requestedContentSettings?.secondaryLang || "",
+          panelDefaultOpen:
+            state.requestedContentSettings?.panelDefaultOpen ?? null,
+        },
+      });
+
+      coordinator.attachAndMaybeStart(video, `settings_runtime:${reason}`, {
+        keepPanelOpen: state.panelOpen,
+      });
+      return true;
+    }
+
     // 字幕 track が揃うまで待ってから startBilingual する。
     // 初回読み込み直後の「track はまだ無いが video はある」状態で早すぎる起動を避ける。
     function startBilingualWhenTracksReady(reason = "unknown") {
@@ -132,6 +165,10 @@
       const video = state.video;
       if (!video) {
         logContent?.("initial auto-start skipped: no video", { reason });
+        return;
+      }
+
+      if (delegateInitialAutoStartToCoordinator(video, reason)) {
         return;
       }
 

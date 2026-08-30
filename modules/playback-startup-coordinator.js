@@ -277,6 +277,10 @@
 
       if (!ready) return false;
 
+      // tracks ready 経由で startBilingual を呼ぶ場合、
+      // SPA直後の保険として仕掛けていた delayed retry は不要になる。
+      // 同じ video に対する startBilingual 重複実行を防ぐ。
+      cleanupDelayedRetry();
       cleanupStartupWatch();
 
       logTrackSnapshot(video, `ready:${triggerReason}`);
@@ -371,6 +375,10 @@
 
         if (!canFallbackStart) return;
 
+        // timeout fallback 経由で startBilingual まで進める場合も、
+        // 同時に走っている delayed retry を止めて重複起動を防ぐ。
+        cleanupDelayedRetry();
+
         logTrackSnapshot(video, `timeout_fallback:${startupReason}`);
 
         startBilingual?.({
@@ -436,6 +444,11 @@
     /**
      * video を attach し、保存済み settings が有効なら
      * tracks ready 待ちを経由して startBilingual まで進める。
+     *
+     * playback startup coordinator は、
+     * saved settings 起点の playback auto-start における primary owner。
+     * settings-runtime.js 側は、この関数へ委譲できる場合は
+     * 独自の track wait / auto-start を開始しない。
      */
     function attachAndMaybeStart(video, reason = "unknown", options = {}) {
       if (!video) return;

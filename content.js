@@ -39,11 +39,11 @@
   // - 通常テストではすべて false を基本とする
   // - 問題の再現時だけ必要な probe を 1 つずつ有効化する
   // ---------------------------------------------------------------------
-  const DEBUG_SECONDARY_SUBS = false; // 字幕 snapshot / cue 観測用
-  const DEBUG_PANEL_PROBE = true; // パネル描画 / UI レイアウト観測用
-  const DEBUG_MEMORY_PROBE = false; // listener / bind / unbind 観測用
-  const DEBUG_STARTUP_PROBE = true; // 起動 / readiness / auto-start 観測用
-  const DEBUG_RECOVERY_PROBE = true; // recovery / skip / wait / fallback 観測用
+  const DEBUG_SECONDARY_SUBS = false; // 字幕本文・snapshotログはまだ出さない
+  const DEBUG_PANEL_PROBE = false; // panel UIの詳細は今回の主因ではない
+  const DEBUG_MEMORY_PROBE = true; // secondary bind/unbind/listener/monitorを確認する
+  const DEBUG_STARTUP_PROBE = true; // SPA遷移後のtarget検出・start条件を見る
+  const DEBUG_RECOVERY_PROBE = false; // wait/fallback/recoveryの判定を見る
   const LOG_CATEGORIES = Object.freeze({
     SETTINGS: "settings",
     SUBTITLE: "subtitle",
@@ -530,10 +530,10 @@ function forwardContentLog(...args) {
   /**
    * playback context controller のインスタンス。
    * state.video を DI し、再生対象識別・content key 解決を委譲する。
-   * @type {ReturnType<typeof root.playbackContextController.createPlaybackContextController>}
+   * @type {ReturnType<typeof window.ATVB.playbackContextController.createPlaybackContextController>}
    */
   const playbackContextController =
-    root.playbackContextController?.createPlaybackContextController?.({
+    window.ATVB?.playbackContextController?.createPlaybackContextController?.({
       getVideoElement: () => state.video ?? null,
     }) ?? null;
 
@@ -2470,11 +2470,11 @@ function forwardContentLog(...args) {
 
     // cueController / syncIntervalOrchestrator / panelUi は生成順序上
     // このタイミングで未確定の可能性があるため getter で渡している。
-    // ただし settings-runtime.js 側が destructure すると getter が1回しか呼ばれず
-    // 最新値に追従しない点に注意（settings-runtime.js 側の修正も必要）。
+    // playbackStartupCoordinator も後段生成なので getter で参照を遅延する。
     get cueController() { return cueController; },
     get syncIntervalOrchestrator() { return syncIntervalOrchestrator; },
     get panelUi() { return panelUi; },
+    getPlaybackStartupCoordinator: () => playbackStartupCoordinator || null,
     mountToggleOnlyUi: () => panelUi?.mountToggleOnlyUi?.(),
   });
 
