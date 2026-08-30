@@ -24,7 +24,25 @@
   // モジュール公開先の ATVB 名前空間を確保する。
   const root = (window.ATVB = window.ATVB || {});
 
-  // 再生セッション終了・再起動・無効化で使う cleanup 関数群を生成する。
+  /**
+   * 再生セッション終了・再起動・無効化で使う cleanup 関数群を生成する。
+   * 永続設定は保持し、playback session に紐づく一時 state の撤収だけを担当する。
+   *
+   * @param {object} params cleanup 生成に必要な依存関係。
+   * @param {object} params.state playback runtime state。
+   * @param {(message: string, payload?: object) => void} [params.logContent]
+   *   構造化ログ出力関数。
+   * @param {object} [params.teardownDeps={}] teardown に使う依存関係。
+   * @returns {{
+   *   teardownForRestart: (options?: object) => void,
+   *   detachForDisabled: (options?: object) => void,
+   *   prepareForRestart: (options?: object) => void,
+   *   resetForContentSwitch: (reason?: string) => void,
+   *   clearPlaybackSessionUiState: (reason?: string) => void,
+   *   handleNavigationTargetMissing: (options?: object) => void,
+   *   restoreDefaultLayout: () => void,
+   * }} playback session cleanup API。
+   */
   function createPlaybackSessionCleanup({
     state,
     logContent,
@@ -42,6 +60,7 @@
       cueController,
       subtitleRecoveryManager,
       runtimeObservers,
+      resetInitialAutoStartDelegation,
       stopSecondaryTrackSyncInterval,
       pauseSyncIntervalOrchestrator,
     } = teardownDeps;
@@ -56,8 +75,10 @@
     // 小さな state cleanup
     // -------------------------------------------------------
 
-    // secondary track の参照と表示だけを消す。
-    // 設定値や requested settings には触らない。
+    /**
+     * secondary track の参照と表示だけを消す。
+     * 設定値や requested settings には触らない。
+     */
     function clearSecondaryTrackState() {
       state.secondaryTrack = null;
       state.lastSecondarySyncContext = null;
@@ -74,9 +95,12 @@
     // cleanup snapshot
     // -------------------------------------------------------
 
-    // cleanup 前後ログ用に、現在の playback session 周辺 state を
-    // 軽量スナップショット化する。
-    // 生の DOM / track をそのまま出さず、保持有無と件数を中心に返す。
+    /**
+     * cleanup 前後ログ用に、現在の playback session 周辺 state を軽量スナップショット化する。
+     * 生の DOM / track をそのまま出さず、保持有無と件数を中心に返す。
+     *
+     * @returns {object} cleanup 前後比較用の軽量 snapshot。
+     */
     function buildCleanupSnapshot() {
       const secondaryMonitorState =
         cueController?.getSecondaryMonitorState?.() || null;
@@ -156,15 +180,33 @@
       };
     }
 
-    // cleanup 開始 / 終了ログを揃った形式で出す。
-    // toggleOpId がある場合は OFF 側相関ログとしてそのまま流せるようにする。
+    /**
+     * cleanup 開始 / 終了ログを揃った形式で出す。
+     * toggleOpId がある場合は OFF 側相関ログとしてそのまま流せるようにする。
+     *
+     * @param {string} phase cleanup の段階名。
+     * @param {object} [payload={}] 追加で記録する構造化 payload。
+     */
     function logCleanupPhase(phase, payload = {}) {
       logContent?.(`playback session cleanup ${phase}`, payload);
     }
 
-    // teardown 共通本体。
-    // restart / disabled で共通な撤収処理をまとめ、mode restore や
-    // complete reset の有無だけをオプションで切り替える。
+    /**
+     * teardown 共通本体。
+     * restart / disabled で共通な撤収処理をまとめ、mode restore や
+     * complete reset の有無だけをオプションで切り替える。
+     *
+     * @param {object} [options={}] teardown 実行オプション。
+     * @param {string} [options.phase="unknown"] ログ用の cleanup phase。
+     * @param {boolean} [options.restoreSecondaryMode=false]
+     *   secondary track の mode を native 側へ戻すか。
+     * @param {boolean} [options.completeSubtitleStateReset=false]
+     *   subtitle state を complete reset として扱うか。
+     * @param {boolean} [options.preserveSecondaryDom=false]
+     *   secondary DOM を残すか。
+     * @param {string|null} [options.toggleOpId=null] toggle 操作相関 ID。
+     * @param {string} [options.reason=options.phase] cleanup reason。
+     */
     function runSessionTeardown({
       phase = "unknown",
       restoreSecondaryMode = false,
@@ -197,6 +239,7 @@
       disposePanelUi?.({ reason });
 
       runtimeObservers?.stopAll?.();
+      resetInitialAutoStartDelegation?.();
 
       cueController?.handoffPrimarySubtitleToNative?.();
       cueController?.unbindSecondarySubtitleTrack?.({
@@ -232,9 +275,15 @@
     // teardown helpers
     // -------------------------------------------------------
 
-    // restart 前に、現在の playback session に紐づく UI / observer をいったん撤収する。
-    // 直後に startBilingual() で再生成する前提なので、字幕制御はネイティブへ戻すが
-    // secondary track の mode 復元までは行わない。
+    /**
+     * restart 前に、現在の playback session に紐づく UI / observer をいったん撤収する。
+     * 直後に startBilingual() で再生成する前提なので、字幕制御はネイティブへ戻すが
+     * secondary track の mode 復元までは行わない。
+     *
+     * @param {object} [options={}] 実行オプション。
+     * @param {string} [options.toggleOpId] toggle 操作相関 ID。
+     * @param {string} [options.reason="teardownForRestart"] cleanup reason。
+     */
     function teardownForRestart(options = {}) {
       const toggleOpId =
         typeof options.toggleOpId === "string" && options.toggleOpId
@@ -255,8 +304,14 @@
       });
     }
 
-    // extensionEnabled=false 用の cleanup。
-    // 再生画面に出していた拡張 UI を完全に外し、secondary subtitle の mode も元へ戻す。
+    /**
+     * extensionEnabled=false 用の cleanup。
+     * 再生画面に出していた拡張 UI を完全に外し、secondary subtitle の mode も元へ戻す。
+     *
+     * @param {object} [options={}] 実行オプション。
+     * @param {string} [options.toggleOpId] toggle 操作相関 ID。
+     * @param {string} [options.reason="detachForDisabled"] cleanup reason。
+     */
     function detachForDisabled(options = {}) {
       const toggleOpId =
         typeof options.toggleOpId === "string" && options.toggleOpId
@@ -281,8 +336,14 @@
     // restart preparation
     // -------------------------------------------------------
 
-    // 再起動前に、再生セッション由来の一時 state だけを初期化する。
-    // 保存済み設定は保持し、直後の startBilingual() で新しい字幕状態を積み直す前提で使う。
+    /**
+     * 再起動前に、再生セッション由来の一時 state だけを初期化する。
+     * 保存済み設定は保持し、直後の startBilingual() で新しい字幕状態を積み直す前提で使う。
+     *
+     * @param {object} [options={}] 実行オプション。
+     * @param {string} [options.toggleOpId] toggle 操作相関 ID。
+     * @param {string} [options.reason="prepareForRestart"] cleanup reason。
+     */
     function prepareForRestart(options = {}) {
       const toggleOpId =
         typeof options.toggleOpId === "string" && options.toggleOpId
@@ -331,12 +392,16 @@
     // session cleanup
     // -------------------------------------------------------
 
-    // SPA で別コンテンツへ切り替わるときの cleanup。
-    // 設定は保持したまま、旧 playback session に紐づく UI / track / subtitle state を撤収する。
-    // clearPlaybackSessionUiState よりは「次の再生へすぐ繋ぐ前提」の軽い cleanup として扱う。
-    //
-    // ここでは同期的な再入だけを防ぎ、
-    // 同一旧セッションへの cleanup 一度化そのものは coordinator 側に任せる。
+    /**
+     * SPA で別コンテンツへ切り替わるときの cleanup。
+     * 設定は保持したまま、旧 playback session に紐づく UI / track / subtitle state を撤収する。
+     * clearPlaybackSessionUiState よりは「次の再生へすぐ繋ぐ前提」の軽い cleanup として扱う。
+     *
+     * ここでは同期的な再入だけを防ぎ、
+     * 同一旧セッションへの cleanup 一度化そのものは coordinator 側に任せる。
+     *
+     * @param {string} [reason="content_switch"] cleanup reason。
+     */
     function resetForContentSwitch(reason = "content_switch") {
       if (isResettingForContentSwitch) {
         logContent?.("resetForContentSwitch reentry skipped", {
@@ -355,6 +420,9 @@
         stopPlaybackControlLayoutObservers?.();
         layoutController?.teardownPlaybackControlsUi?.();
 
+        stopSecondaryTrackSyncInterval?.("content_switch");
+        pauseSyncIntervalOrchestrator?.("content_switch");
+
         clearInitialCueRecovery?.();
         clearSecondaryTrackState();
 
@@ -369,10 +437,12 @@
         disposePanelUi?.({ reason: "content_switch" });
 
         runtimeObservers?.stopAll?.();
+        resetInitialAutoStartDelegation?.();
 
         clearInternalSubtitleState?.({
           preserveSecondaryDom: false,
           reason: "content_switch",
+          completeReset: true,
         });
 
         state.primaryTrack = null;
@@ -394,13 +464,20 @@
       });
     }
 
-    // 再生 UI と字幕 state を完全に外す。
-    // close / navigation / hard reset など「今の playback session を完全終了する」用途。
+    /**
+     * 再生 UI と字幕 state を完全に外す。
+     * close / navigation / hard reset など「今の playback session を完全終了する」用途。
+     *
+     * @param {string} [reason="clear_playback_session_ui_state"] cleanup reason。
+     */
     function clearPlaybackSessionUiState(reason = "clear_playback_session_ui_state") {
       const before = buildCleanupSnapshot();
 
       stopPlaybackControlLayoutObservers?.();
       layoutController?.teardownPlaybackControlsUi?.();
+
+      stopSecondaryTrackSyncInterval?.(reason);
+      pauseSyncIntervalOrchestrator?.(reason);
 
       clearInitialCueRecovery?.();
       clearSecondaryTrackState();
@@ -417,10 +494,12 @@
       disposePanelUi?.({ reason });
 
       runtimeObservers?.stopAll?.();
+      resetInitialAutoStartDelegation?.();
 
       clearInternalSubtitleState?.({
         preserveSecondaryDom: false,
         reason,
+        completeReset: true,
       });
 
       state.primaryTrack = null;
@@ -439,8 +518,14 @@
       });
     }
 
-    // navigation 直後に新しい playback target がまだ見つからないときの後始末。
-    // UI はすでに resetForContentSwitch() 済みの想定なので、ここでは参照系を空に寄せる。
+    /**
+     * navigation 直後に新しい playback target がまだ見つからないときの後始末。
+     * UI はすでに resetForContentSwitch() 済みの想定なので、ここでは参照系を空に寄せる。
+     *
+     * @param {object} [options={}] 実行オプション。
+     * @param {string} [options.reason="navigation_target_missing"] cleanup reason。
+     * @param {object} [options.playbackContext={}] 補助ログ用の playback context。
+     */
     function handleNavigationTargetMissing({
       reason = "navigation_target_missing",
       playbackContext = {},
@@ -463,8 +548,10 @@
     // layout reset
     // -------------------------------------------------------
 
-    // 再生 UI teardown 後に layout を標準状態へ戻す。
-    // 拡張 UI の残骸を避けるため、最後に一度だけ呼ぶ用途を想定する。
+    /**
+     * 再生 UI teardown 後に layout を標準状態へ戻す。
+     * 拡張 UI の残骸を避けるため、最後に一度だけ呼ぶ用途を想定する。
+     */
     function restoreDefaultLayout() {
       applyLayout?.({
         panelOpen: false,

@@ -51,6 +51,7 @@
 
     let initialAutoStartCleanup = null;
     let initialAutoStartToken = 0;
+    let lastDelegatedAutoStartVideoSrcKey = "";
 
     // -------------------------------------------------------
     // トグル操作ログ相関
@@ -95,6 +96,16 @@
         }
       }
       initialAutoStartCleanup = null;
+      resetInitialAutoStartDelegation("cleanup_watch");
+    }
+
+    function resetInitialAutoStartDelegation(reason = "unknown") {
+      if (!lastDelegatedAutoStartVideoSrcKey) return;
+      logStartupProbe?.("initial auto-start delegation reset", {
+        reason,
+        previousVideoSrcKey: lastDelegatedAutoStartVideoSrcKey,
+      });
+      lastDelegatedAutoStartVideoSrcKey = "";
     }
 
     // textTracks から字幕候補になりうる track だけを抽出する。
@@ -138,9 +149,29 @@
       if (!video || state.video !== video) return false;
       if (!coordinator.canAutoStartFromSavedSettings()) return false;
 
+      const delegatedVideoSrcKey = state.lastVideoSrcKey || "";
+      if (!delegatedVideoSrcKey) return false;
+
+      if (delegatedVideoSrcKey === lastDelegatedAutoStartVideoSrcKey) {
+        logStartupProbe?.("initial auto-start delegation skipped", {
+          reason,
+          skipReason: "same_video_already_delegated",
+          videoSrcKey: delegatedVideoSrcKey,
+          requestedContentSettings: {
+            primaryLang: state.requestedContentSettings?.primaryLang || "",
+            secondaryLang: state.requestedContentSettings?.secondaryLang || "",
+            panelDefaultOpen:
+              state.requestedContentSettings?.panelDefaultOpen ?? null,
+          },
+        });
+        return true;
+      }
+
+      lastDelegatedAutoStartVideoSrcKey = delegatedVideoSrcKey;
+
       logStartupProbe?.("initial auto-start delegated to coordinator", {
         reason,
-        videoSrcKey: state.lastVideoSrcKey || "",
+        videoSrcKey: delegatedVideoSrcKey,
         requestedContentSettings: {
           primaryLang: state.requestedContentSettings?.primaryLang || "",
           secondaryLang: state.requestedContentSettings?.secondaryLang || "",
@@ -166,6 +197,14 @@
       if (!video) {
         logContent?.("initial auto-start skipped: no video", { reason });
         return;
+      }
+
+      const currentVideoSrcKey = state.lastVideoSrcKey || "";
+      if (
+        currentVideoSrcKey &&
+        currentVideoSrcKey !== lastDelegatedAutoStartVideoSrcKey
+      ) {
+        lastDelegatedAutoStartVideoSrcKey = "";
       }
 
       if (delegateInitialAutoStartToCoordinator(video, reason)) {
@@ -430,6 +469,14 @@
         return;
       }
 
+      state.restarting = true;
+
+      logContent?.("restartBilingual restarting flag set", {
+        reason,
+        toggleOpId,
+        keepPanelOpen: state.panelOpen,
+      });
+
       prepareForRestart?.({
         reason,
         toggleOpId,
@@ -439,6 +486,12 @@
         reason,
         toggleOpId,
         keepPanelOpen: state.panelOpen,
+      }).catch((error) => {
+        logContentError?.("restartBilingual start failed", {
+          reason,
+          toggleOpId,
+          error: String(error),
+        });
       });
     }
 
@@ -796,6 +849,7 @@
       restartBilingual,
       onRuntimeMessage,
       ensureMessageListener,
+      resetInitialAutoStartDelegation,
     };
   }
 

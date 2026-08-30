@@ -41,7 +41,7 @@
   // ---------------------------------------------------------------------
   const DEBUG_SECONDARY_SUBS = false; // 字幕本文・snapshotログはまだ出さない
   const DEBUG_PANEL_PROBE = false; // panel UIの詳細は今回の主因ではない
-  const DEBUG_MEMORY_PROBE = true; // secondary bind/unbind/listener/monitorを確認する
+  const DEBUG_MEMORY_PROBE = false; // secondary bind/unbind/listener/monitorを確認する
   const DEBUG_STARTUP_PROBE = true; // SPA遷移後のtarget検出・start条件を見る
   const DEBUG_RECOVERY_PROBE = false; // wait/fallback/recoveryの判定を見る
   const LOG_CATEGORIES = Object.freeze({
@@ -3065,15 +3065,16 @@ function forwardContentLog(...args) {
   // 未設定時は notice 表示と panel close のみを行い、通常の track attach / UI build は進めない。
   // track 選択・panelOpen 復元・UI 構築をこの経路でまとめて行う。
   async function startBilingual(options = {}) {
-    // 拡張 OFF 中は再生画面の UI 構築を進めない
-    if (state.extensionEnabled === false) {
-      logContent("startBilingual skipped: disabled", {
-        runtimeExtensionEnabled: state.extensionEnabled,
-      });
-      return;
-    }
+    try {
+      // 拡張 OFF 中は再生画面の UI 構築を進めない
+      if (state.extensionEnabled === false) {
+        logContent("startBilingual skipped: disabled", {
+          runtimeExtensionEnabled: state.extensionEnabled,
+        });
+        return;
+      }
 
-    // 起動時点の panelOpen / panelDefaultOpen / keepPanelOpen をログへ残す
+      // 起動時点の panelOpen / panelDefaultOpen / keepPanelOpen をログへ残す
     // 起動時点の panelOpen / panelDefaultOpen / keepPanelOpen をログへ残す
     logStartupProbe("startBilingual trace", {
       panelOpen: state.panelOpen,
@@ -3392,6 +3393,21 @@ function forwardContentLog(...args) {
 
     // secondary track の同期監視を有効化する
     ensureSecondaryTrackSyncInterval();
+
+    } finally {
+      if (state.restarting) {
+        state.restarting = false;
+        logContent("startBilingual restarting flag cleared", {
+          reason: options.reason || "",
+          toggleOpId:
+            typeof options.toggleOpId === "string" && options.toggleOpId
+              ? options.toggleOpId
+              : null,
+          hasVideo: Boolean(state.video),
+          panelOpen: state.panelOpen,
+        });
+      }
+    }
   }
 
 

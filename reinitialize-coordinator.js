@@ -1,12 +1,74 @@
 // =============================================================
 // Apple TV+ Bilingual Subtitles - reinitialize-coordinator.js
-// version: 2.6.3
-// 役割: subtitle pipeline の再初期化フローを coordinator としてまとめる。
-// Phase J / Issue #32: entry / retry / settings-result bridge を 1 塊で外出しし、
-// content.js をイベント入口と重い実装詳細に寄せる。
+// version: 2.7.0
+//
+// 役割:
+// - subtitle pipeline の再初期化フローを coordinator としてまとめる。
+// - content.js / sync interval / panel reopen など複数入口からの
+//   「現在の playback へ再接続したい」要求を共通オーケストレーションへ寄せる。
+// - settings reload が必要なケースと、すでに state に反映済み設定を使って
+//   再初期化だけしたいケースを options で切り替える。
+// - video object 変更 / currentSrc 変更のような video-change 系 reason では、
+//   track 解決が遅れた場合の retry をこの coordinator が一元管理する。
+// - retry は毎回 current playback を取り直してから実行し、
+//   stale な video へ再接続しないことを優先する。
+//
+// 設計メモ:
+// - restart / detach の UI teardown までは担当しない。
+//   ここでは subtitle pipeline の再構築と、その結果に応じた retry 制御に限定する。
+// - reloadSettingsAndReinitialize() は文字列 reason と options object の両方を受ける。
+//   既存 call site 互換を保ちつつ、video-change 経路の suppressSettingsReload を扱える。
 // =============================================================
 
 (function () {
+  "use strict";
+
+  /**
+   * subtitle pipeline の再初期化 coordinator を生成する。
+   * settings snapshot の state 反映、current playback の再取得、
+   * track 再解決、listener 再接続、retry 制御をまとめて提供する。
+   *
+   * @param {Object} deps coordinator 依存関係。
+   * @param {Object} deps.state content runtime state。
+   * @param {Object} deps.panelUi panel UI 制御 API。
+   * @param {(reason?: string) => Promise<Object>} deps.loadSettingsSnapshot
+   *   保存済み設定 snapshot を取得する関数。
+   * @param {() => ({ video: HTMLVideoElement, dialog: Element | null } | null)}
+   *   deps.getVideoAndDialog 現在の playback target を返す関数。
+   * @param {(video: HTMLVideoElement | null) => string} deps.getCurrentVideoSrcKey
+   *   video から currentSrc 識別子を作る関数。
+   * @param {(reason?: string) => boolean} deps.syncHistoryContextWithPlayback
+   *   current playback と history context を同期する関数。
+   * @param {(options?: Object) => void} deps.clearInternalSubtitleState
+   *   subtitle runtime state を内部的に初期化する関数。
+   * @param {(
+   *   video: HTMLVideoElement | null,
+   *   primaryLang: string,
+   *   secondaryLang: string,
+   *   reason?: string,
+   * ) => Promise<{
+   *   primaryTrackFound: boolean,
+   *   secondaryTrackFound: boolean,
+   *   primaryListenerBound: boolean,
+   *   secondaryListenerBound: boolean,
+   *   trackCount: number,
+   *   primaryTrack: *,
+   *   secondaryTrack: *,
+   * }>} deps.selectPrimaryAndSecondaryTracks
+   *   primary / secondary track を再選択し、listener を接続する関数。
+   * @param {number[]} deps.TRACK_RESOLVE_RETRY_DELAYS_MS retry delay 一覧。
+   * @param {(message: string, payload?: Object) => void} [deps.logContent]
+   *   汎用 content log。
+   * @param {(message: string, payload?: Object) => void} [deps.logContentSubtitle]
+   *   subtitle 系 log。
+   * @param {(message: string, payload?: Object) => void} [deps.logContentError]
+   *   error 系 log。
+   * @returns {{
+   *   clearTrackResolveRetryTimers: () => void,
+   *   reinitializeSubtitlePipeline: (reason?: string) => Promise<Object>,
+   *   reloadSettingsAndReinitialize: (input?: string | Object) => void,
+   * }} public API。
+   */
   function createReinitializeCoordinator(deps) {
     const {
       state,
@@ -26,12 +88,64 @@
     // -----------------------------------------------------------------------------
     // Retry timer ownership
     // track resolve retry timer の所有者はこの coordinator。
-    // detach 側からも cleanup できるよう public API に出す。
+    // detach / restart 側からも cleanup できるよう public API に出す。
     // -----------------------------------------------------------------------------
+
+    /**
+     * track resolve retry timer をすべて解除する。
+     * coordinator が所有している retry timer の後始末だけを担当する。
+     *
+     * @returns {void}
+     */
     function clearTrackResolveRetryTimers() {
       if (!state.trackResolveRetryTimers.length) return;
       state.trackResolveRetryTimers.forEach((timerId) => clearTimeout(timerId));
       state.trackResolveRetryTimers = [];
+    }
+
+    // -----------------------------------------------------------------------------
+    // Reason / option normalization
+    // 文字列 reason と options object の両方を受ける入口を正規化し、
+    // video-change 判定や settings reload 要否を 1 箇所で揃える。
+    // -----------------------------------------------------------------------------
+
+    /**
+     * 渡された reason / options を正規化する。
+     *
+     * 受け付ける形:
+     * - "panel_reopen"
+     * - { reason: "current_src_changed", suppressSettingsReload: true }
+     *
+     * @param {string|Object} [input="unknown"] reinitialize 実行入力。
+     * @returns {{
+     *   reason: string,
+     *   suppressSettingsReload: boolean,
+     *   isVideoChange: boolean,
+     * }} 正規化済み options。
+     */
+    function normalizeReinitializeOptions(input = "unknown") {
+      if (typeof input === "string") {
+        return {
+          reason: input,
+          suppressSettingsReload: false,
+          isVideoChange: input === "video_changed",
+        };
+      }
+
+      const reason =
+        typeof input?.reason === "string" && input.reason
+          ? input.reason
+          : "unknown";
+
+      return {
+        reason,
+        suppressSettingsReload: Boolean(input?.suppressSettingsReload),
+        isVideoChange:
+          input?.isVideoChange === true ||
+          reason === "video_changed" ||
+          reason === "current_src_changed" ||
+          reason === "video_object_changed",
+      };
     }
 
     // -----------------------------------------------------------------------------
@@ -40,6 +154,20 @@
     // panel 反映までの手順を束ねる。
     // 判定本体や resolver / binder の実装詳細は deps 側へ委譲する。
     // -----------------------------------------------------------------------------
+
+    /**
+     * 現在の playback target を使って subtitle pipeline を再初期化する。
+     *
+     * @param {string} [reason="unknown"] 再初期化 reason。
+     * @returns {Promise<{
+     *   reason: string,
+     *   primaryTrackFound: boolean,
+     *   secondaryTrackFound: boolean,
+     *   primaryListenerBound: boolean,
+     *   secondaryListenerBound: boolean,
+     *   ready: boolean,
+     * }>} 再初期化結果。
+     */
     async function reinitializeSubtitlePipeline(reason = "unknown") {
       const switched = syncHistoryContextWithPlayback(reason);
       clearInternalSubtitleState({
@@ -62,7 +190,7 @@
       const primaryListenerBound = trackSelection.primaryListenerBound;
       const secondaryListenerBound = trackSelection.secondaryListenerBound;
 
-      logContentSubtitle("tracks resolved", {
+      logContentSubtitle?.("tracks resolved", {
         reason,
         switchedHistoryContext: switched,
         primaryTrackFound,
@@ -72,7 +200,7 @@
         secondaryTrack: trackSelection.secondaryTrack,
       });
 
-      logContentSubtitle("cuechange listeners rebound", {
+      logContentSubtitle?.("cuechange listeners rebound", {
         reason,
         primaryListenerBound,
         secondaryTrackBound: secondaryListenerBound,
@@ -82,7 +210,7 @@
       // 実 UI 更新の詳細は panelUi 側に残す。
       panelUi.applyPanelState(reason);
 
-      logContent("panel state reapplied", {
+      logContent?.("panel state reapplied", {
         reason,
         contentKey: state.currentContentKey,
         panelOpen: state.panelOpen,
@@ -107,6 +235,12 @@
     // 現在の playback context を取り直し、coordinator 本体へ渡すための入口。
     // video / dialog 更新だけを担当し、再初期化ルール自体は持たない。
     // -----------------------------------------------------------------------------
+
+    /**
+     * 再初期化前に current playback target を取り直し、state を更新する。
+     *
+     * @returns {boolean} 再初期化可能な video を持てたとき true。
+     */
     function refreshPlaybackContextForReinitialize() {
       const found = getVideoAndDialog();
 
@@ -121,6 +255,12 @@
       return true;
     }
 
+    /**
+     * current playback を再取得してから subtitle pipeline 再初期化を実行する。
+     *
+     * @param {string} [reason="unknown"] 再初期化 reason。
+     * @returns {Promise<Object|null>} 再初期化結果。video が無ければ null。
+     */
     async function runReinitializeFromCurrentPlayback(reason = "unknown") {
       if (!refreshPlaybackContextForReinitialize()) return null;
       return await reinitializeSubtitlePipeline(reason);
@@ -128,14 +268,22 @@
 
     // -----------------------------------------------------------------------------
     // Subtitle Pipeline: Retry Control
-    // video_changed 後に track 解決が遅れるケースだけを対象に、
+    // video-change 系 reason 後に track 解決が遅れるケースを対象に、
     // retry 間隔とタイマーのライフサイクルを管理する。
     // retry 条件の判定本体は持ち込まず、再試行の orchestration に限定する。
     // -----------------------------------------------------------------------------
+
+    /**
+     * video-change 系再初期化の retry を予約する。
+     * 各試行では current playback を取り直してから再初期化する。
+     *
+     * @param {string} [reason="video_changed"] retry の親 reason。
+     * @returns {void}
+     */
     async function scheduleTrackResolveRetry(reason = "video_changed") {
       clearTrackResolveRetryTimers();
 
-      logContentSubtitle("track resolve retry scheduled", {
+      logContentSubtitle?.("track resolve retry scheduled", {
         reason,
         retryDelaysMs: TRACK_RESOLVE_RETRY_DELAYS_MS,
       });
@@ -146,7 +294,7 @@
 
           const attempt = retryIndex + 1;
 
-          logContentSubtitle("track resolve retry attempt", {
+          logContentSubtitle?.("track resolve retry attempt", {
             reason,
             attempt,
             delayMs,
@@ -159,7 +307,7 @@
           if (!retryResult) return;
 
           if (retryResult.ready) {
-            logContentSubtitle("track resolve retry success", {
+            logContentSubtitle?.("track resolve retry success", {
               reason,
               attempt,
             });
@@ -168,7 +316,7 @@
           }
 
           if (attempt === TRACK_RESOLVE_RETRY_DELAYS_MS.length) {
-            logContentError("track resolve retry exhausted", {
+            logContentError?.("track resolve retry exhausted", {
               reason,
               attempts: TRACK_RESOLVE_RETRY_DELAYS_MS.length,
               primaryTrackFound: retryResult.primaryTrackFound,
@@ -190,23 +338,53 @@
     // content.js に残すのはイベント入口で、reload → reflect → reinitialize の
     // 手順はこの coordinator に寄せる。
     // -----------------------------------------------------------------------------
-    function applyVideoChangedReinitializeResult(result) {
+
+    /**
+     * video-change 系再初期化の結果に応じて retry を制御する。
+     *
+     * @param {Object|null} result 再初期化結果。
+     * @param {string} [reason="video_changed"] 親 reason。
+     * @returns {void}
+     */
+    function applyVideoChangedReinitializeResult(
+      result,
+      reason = "video_changed",
+    ) {
       if (!result) return;
 
       if (result.ready) {
         clearTrackResolveRetryTimers();
-      } else {
-        scheduleTrackResolveRetry("video_changed");
+        return;
       }
+
+      scheduleTrackResolveRetry(reason);
     }
 
-    function applyReinitializeResult(result, reason = "unknown") {
-      if (reason === "video_changed") {
-        applyVideoChangedReinitializeResult(result);
-      }
+    /**
+     * 再初期化結果の後処理を行う。
+     * 現在は video-change 系 reason の retry 制御だけを担当する。
+     *
+     * @param {Object|null} result 再初期化結果。
+     * @param {Object} [options={}] 判定オプション。
+     * @param {string} [options.reason="unknown"] 実行 reason。
+     * @param {boolean} [options.isVideoChange=false] video-change 系かどうか。
+     * @returns {void}
+     */
+    function applyReinitializeResult(
+      result,
+      { reason = "unknown", isVideoChange = false } = {},
+    ) {
+      if (!isVideoChange) return;
+      applyVideoChangedReinitializeResult(result, reason);
     }
 
-    // settings 読込結果を state へ反映するだけの薄い bridge。
+    /**
+     * settings 読込結果を state へ反映するだけの薄い bridge。
+     * requested settings と effective settings を coordinator 側から同期する。
+     *
+     * @param {Object} snapshot settings snapshot。
+     * @returns {void}
+     */
     function applySettingsSnapshotToState(snapshot) {
       state.requestedContentSettings = {
         ...(snapshot.storedSettings || {}),
@@ -215,23 +393,51 @@
       state.contentSettings = { ...snapshot.effectiveSettings };
     }
 
-    // settings reload → state reflect → reinitialize 起動の橋渡し。
-    function reloadSettingsAndReinitialize(reason = "unknown") {
+    /**
+     * settings reload → state reflect → reinitialize 起動の橋渡し。
+     *
+     * 文字列 reason と options object の両方を受け付ける。
+     * video-change 経路では suppressSettingsReload=true を使い、
+     * 既存 state をそのまま使って current playback へ再接続する。
+     *
+     * @param {string|Object} [input="unknown"] 再初期化入力。
+     * @returns {void}
+     */
+    function reloadSettingsAndReinitialize(input = "unknown") {
       if (state.restarting) return;
 
-      loadSettingsSnapshot(reason)
-        .then(async (snapshot) => {
+      const {
+        reason,
+        suppressSettingsReload,
+        isVideoChange,
+      } = normalizeReinitializeOptions(input);
+
+      const run = async () => {
+        if (!suppressSettingsReload) {
+          const snapshot = await loadSettingsSnapshot(reason);
           applySettingsSnapshotToState(snapshot);
-          const result = await runReinitializeFromCurrentPlayback(reason);
-          applyReinitializeResult(result, reason);
-        })
-        .catch((error) => {
-          logContentError("settings load failed", {
-            reason,
-            error: String(error),
-          });
+        }
+
+        const result = await runReinitializeFromCurrentPlayback(reason);
+        applyReinitializeResult(result, {
+          reason,
+          isVideoChange,
         });
+      };
+
+      run().catch((error) => {
+        logContentError?.("settings load or reinitialize failed", {
+          reason,
+          suppressSettingsReload,
+          isVideoChange,
+          error: String(error),
+        });
+      });
     }
+
+    // -----------------------------------------------------------------------------
+    // エクスポート
+    // -----------------------------------------------------------------------------
 
     return {
       clearTrackResolveRetryTimers,
