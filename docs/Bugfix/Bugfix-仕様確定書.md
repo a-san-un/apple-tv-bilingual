@@ -1,327 +1,483 @@
 # Bugfix 仕様確定書
 
-**作成日:** 2026-08-14  
-**最終更新:** 2026-08-21  
-**ブランチ:** `issue-32-content-core-split`  
-**位置づけ:** このセッションで固まった仕様の正本。マスタープランと合わせて参照すること。
+**対象ブランチ:** `issue-32-content-core-split`  
+**文書の位置づけ:** 現在進めている Bugfix の設計確定と修正方針の正本。実装はこの文書の責務境界・状態遷移・禁止事項に従う。  
+**対象範囲:** Apple TV+ 上の字幕表示、native 字幕制御、overlay / panel UI、secondary track 選択、recovery、lifecycle cleanup、runtime messaging のうち、今回の整理対象に含まれるもの。  
+**対象外:** 将来着手項目、長期計測計画、後続フェーズ専用の整理タスク。これらは別の将来作業計画に退避する。  
 
----
+***
 
-## 1. レイアウト図との対応（図-B / C / D）
+## 1. 目的
 
-| 状態 | ネイティブ字幕 | 拡張 overlay 字幕 | ネイティブ UI アイコン群 |
-|---|---|---|---|
-| **図-B** トグル OFF | ✅ 字幕メニューで出せる状態にする | ❌ 非表示 | ✅ 全表示（確認済） |
-| **図-C** トグル ON ＋ パネル閉 | ❌ 意図的に非表示（overlay 優先） | ✅ 表示中。動画全体の中央下へ配置 | ✅ 全表示（確認済） |
-| **図-D** トグル ON ＋ パネル開 | ❌ 意図的に非表示（overlay 優先） | ✅ 表示中。右パネル幅を除いた左側可視領域中央へ寄せる | ✅ 全表示（確認済） |
+今回の Bugfix の目的は、単なる症状対処ではなく、字幕制御の責務を再分離し、再生開始・seek・SPA 遷移・OFF/ON・destroy をまたいでも一貫して壊れない構造へ更新することにある。  
+とくに、secondary track の判断、bind / keep / clear の実行、native 字幕復元、overlay / panel 表示制御、cleanup の所有者を明確に分け、`content.js` に判断ロジックが逆流しない状態を作る。  
 
-**レイアウト図の場所:** `docs/Bugfix/Layout/appletv-layout1.drawio`
+この文書では、次の 4 点を確定する。
 
----
+- 何をどのモジュールの責務とするか
+- どの状態で何を表示・非表示・復元するか
+- どの終了経路で何を cleanup するか
+- 今回の修正で禁止する実装パターンは何か
 
-## 2. ネイティブ字幕の制御仕様（Bugfix-E / F-5 確定・完了）
+***
 
-### 方針：「拡張機能とネイティブ UI の完全切り離し」
+## 2. 設計原則
 
-拡張機能はネイティブ字幕の制御に**最小限だけ介入**し、OFF 時は**触った分だけ元に戻す**。  
-Apple TV+ 側の字幕メニュー操作には干渉しない。  
-ネイティブ字幕復元の主責務は `cue-controller.restoreNativeSubtitles()` に寄せる。  
-**F-5 はこの仕様に基づき 2026-08-21 時点で完了済み。**
+### 2-1. 責務分離
 
-### トグル OFF 時（拡張 → ネイティブへの引き渡し）
+今回の修正では、次の原則を守る。
 
-- `cue-controller.js` の `restoreNativeSubtitles()` を呼ぶ
-- この関数は `primaryTrackOriginalMode`（拡張が bind する前に保存した元の mode）に `track.mode` を戻す
-- `atvb-cue-suppress` スタイル要素（`video::cue { visibility: hidden !important; }`）も除去する
-- 拡張機能は `track.mode` の値を自分で決定しない。Apple TV+ が設定していた状態に戻すだけとする
-- OFF 時は UI 破棄と native 字幕復元を責務分離し、native 側状態の復元を先に行う
+- `content.js` は配線専用とし、業務判断を持たない
+- 字幕トラックの判断は decision 層に集約する
+- 実際の bind / unbind / monitor attach / cleanup は binder 層が持つ
+- secondary の再取得・再接続判断は recovery 系が持つ
+- native 字幕の退避・復元は cue-controller 系が正本を持つ
+- UI の表示制御と DOM 存在管理は UI 層が持つ
+- session の開始・終了に伴う統合 cleanup は lifecycle / cleanup 系が持つ
 
-```js
-// settings-runtime.js の OFF ブランチ
-if (!extensionEnabled) {
-  cueController?.restoreNativeSubtitles?.();  // ネイティブ字幕を復元
-  destroyUiHosts();                           // 拡張 UI を破棄
-  applyDone();
-  return;
-}
-```
+これにより、同じ条件分岐が複数モジュールに散らばる状態を止める。
 
-### トグル ON 時（ネイティブ → 拡張が引き取る）
+### 2-2. 単一正本
 
-- `bindPrimarySubtitleTrack()` 内で `primaryTrackOriginalMode = track.mode` を保存してから `hidden` にする
-- overlay が字幕描画を担う
-- ネイティブ字幕は表示しない（`atvb-cue-suppress` CSS で抑制）
-- secondary 用に触った track / mode は、OFF 時に native 側へ残さない
+以下の情報は、それぞれ一箇所だけを正本とする。
 
-### `cue-controller.js` の公開 API（確認済み）
+| 項目 | 正本 |
+|---|---|
+| secondary を bind すべきかの判断 | decision 関数 |
+| primary / secondary track の bind 実行 | cue-track-binder |
+| native 字幕の元 mode | cue-controller が保存する original mode |
+| overlay の位置計算 | overlay 位置同期関数 |
+| session 単位の cleanup 実行 | playback-session-cleanup |
+| UI の存在状態 | UI host の実 DOM |
 
-`restoreNativeSubtitles` はすでに公開済み。
+同じ意味の状態を複数のフラグで持たない。
 
-```js
-return {
-  handoffPrimarySubtitleToNative,
-  restoreNativeSubtitles,
-  unbindPrimarySubtitleTrack,
-  bindPrimarySubtitleTrack,
-  // ...
-};
-```
+### 2-3. セッション分離
 
-### F-5 完了確認済み事項
+再生セッションをまたぐ状態の持ち越しを禁止する。  
+old session の listener、observer、timer、retry、watch、pending recovery は、新 session に引き継いではならない。  
 
-- `restoreNativeSubtitles()` は **拡張が変更した分だけ**を戻す仕様で確定
-- native menu 状態と `TextTrack.mode` 復元の責務は混同していないことを確認済み
-- ON → OFF → ON を繰り返しても native / extension の責務が混線しないことを確認済み
-- 別エピソード遷移後でも同じルールで成立することを確認済み
+### 2-4. 触った分だけ戻す
 
----
+native 字幕や native UI に対して、拡張機能は必要最小限だけ介入し、OFF または終了時には**自分が変更した分だけ**戻す。  
+Apple TV+ 本体が持つ UI の構造や状態を、拡張側の都合で恒久的に書き換えない。  
 
-## 3. ネイティブ UI アイコン群の仕様
+***
 
-- パネル開閉・トグル ON/OFF に関わらず**常に全表示を維持する**
-- 拡張機能は Apple TV+ のヘッダー・フッター・シークバー・再生コントロール・音量・字幕ボタン・共有・全画面などのネイティブ UI 要素を**操作・隠蔽・移動しない**
-- **現状：すでに達成済み**（確認済み）
+## 3. アーキテクチャ責務
 
----
+## 3-1. `content.js`
 
-## 4. トグル OFF 直後の空白許容
+`content.js` は初期化・依存性生成・接続・停止の配線だけを担当する。  
+次のようなロジックは持たない。
 
-- OFF → UI 破棄 → ネイティブ字幕復元 の切り替え時、字幕が一瞬消えるタイミングが発生しうる
-- **これは許容する**（確定）
-- ただし、最終状態としては native 字幕が利用可能であることを優先する
+- secondary を bind するかどうかの条件判断
+- recovery を発火するかどうかの条件判断
+- cleanup 実行条件の詳細分岐
+- `TextTrack.mode` をどう変えるかの判断
+- panel / overlay 表示位置の算出ロジック本体
 
-処理順序:
+許可される責務:
 
-```text
-① cueController?.restoreNativeSubtitles?.()  ← ネイティブ字幕の track.mode を復元
-② destroyUiHosts()                           ← panel / overlay / toggleBtn を DOM から除去
-③ applyDone()
-```
+- 各モジュールの生成
+- モジュール間依存の注入
+- 起動フローの開始
+- shutdown / destroy の入口呼び出し
+- 高水準イベントの受け渡し
 
----
+### 3-2. cue-controller
 
-## 5. `destroyUiHosts()` で破棄する対象
+cue-controller は primary 字幕と native 字幕の受け渡し責務の正本とする。  
+主な責務は次のとおり。
 
-| 要素 | DOM ID / selector | 処置 |
+- primary 字幕 track の bind / unbind
+- bind 前の native `track.mode` の退避
+- overlay 使用中の native 字幕抑制
+- OFF / 終了時の native 字幕復元
+- 拡張側が変更した CSS / track 状態の解除
+
+ただし、secondary の選定基準そのものは持たない。
+
+### 3-3. decision 層
+
+secondary 関連の実行要否は、専用の decision 関数で一元判断する。  
+この判断は最低でも次を返せる必要がある。
+
+- action: `bind` / `keep` / `clear` / `skip`
+- reason: なぜその action なのか
+- target: 対象 track があるか
+- recoveryHint: recovery 系が見る補助情報
+- observability: ログに出すための最小診断情報
+
+この結果をもとに binder や recovery が動く。  
+各実行側が独自に再判断してはならない。
+
+### 3-4. cue-track-binder
+
+binder は decision の実行者であり、secondary listener / monitor の所有者でもある。  
+主な責務は次のとおり。
+
+- decision の action に従った bind / keep / clear の実行
+- secondary track への listener attach
+- detach / cleanup の実行
+- 同一 session 内での多重 attach 防止
+- 所有中リソースの明示的破棄
+
+binder は「何をすべきか」は決めず、「決まったことを安全に実行する」ことに専念する。
+
+### 3-5. recovery 系
+
+recovery 系は、secondary track が失われた、再取得が必要、再接続を試みる、といった回復処理を扱う。  
+ただし、通常経路の bind 判定と recovery 条件を混同しない。  
+
+主な責務:
+
+- secondary 消失時の再探索
+- 必要時のみの再試行
+- retry / watch の上限管理
+- session 境界での保留処理破棄
+- decision 層への入力条件の補助
+
+### 3-6. playback-session-cleanup / lifecycle 系
+
+session 終了に関わる総 cleanup の正本とする。  
+主な責務:
+
+- session 単位の cleanup 呼び出し集約
+- 多重 cleanup 防止
+- old session 資源の確実破棄
+- close / destroy / restart / SPA 遷移など終了経路の統一処理
+- cleanup 実行済み / skip の状態区別
+
+***
+
+## 4. 状態モデル
+
+今回の実装は、少なくとも次の状態を区別して扱う。
+
+| 状態 | extensionEnabled | panel | overlay | native subtitles | 説明 |
+|---|---|---|---|---|---|
+| S1 | OFF | なし | なし | 復元状態 | 拡張は字幕描画を行わない |
+| S2 | ON | 閉 | 表示 | 抑制 | overlay が字幕描画を担当 |
+| S3 | ON | 開 | 表示 | 抑制 | overlay は左可視領域中央へ寄せる |
+| S4 | ON | 遷移中 | 必要に応じ再計算 | 抑制 | seek / SPA / episode change 中の過渡状態 |
+| S5 | 終了処理中 | 破棄中 | 破棄中 | 復元中または復元済み | cleanup 実行中 |
+
+重要なのは、panel の開閉は overlay の生死を決めないこと、そして ON/OFF が overlay 存在の第一条件であること。
+
+***
+
+## 5. 表示仕様
+
+## 5-1. native UI
+
+Apple TV+ のネイティブ UI アイコン群、ヘッダー、フッター、シークバー、再生操作群には干渉しない。  
+拡張機能は、それらを隠す、移動する、縮める、消す、といった操作を行わない。  
+
+## 5-2. native toggle
+
+native toggle は拡張全体の ON/OFF だけを担当する。  
+OFF 中でも残してよい常設要素は native toggle のみとする。  
+
+## 5-3. panel
+
+panel は ON 時だけ存在できる。  
+OFF 時は非表示ではなく、原則として破棄対象とする。  
+
+panel の責務は secondary 情報の閲覧や操作であり、overlay 表示の有無を直接決めない。  
+panel の開閉状態は overlay 位置計算には影響するが、overlay 自体を消す条件にはならない。
+
+## 5-4. overlay
+
+overlay は ON 時にのみ存在し、字幕描画の正本である。  
+panel が閉じていても開いていても表示を継続する。  
+
+配置ルール:
+
+- ON + panel 閉: 動画全体の中央下
+- ON + panel 開: 右 panel 幅を除いた左側可視領域の中央下
+- OFF: 非表示ではなく破棄対象
+- 終了処理中: cleanup に従って破棄
+
+***
+
+## 6. native 字幕制御仕様
+
+### 6-1. ON 時
+
+拡張が primary 字幕を overlay 描画へ引き取るとき、bind 前の native `track.mode` を保存してから抑制へ移る。  
+このとき、native 字幕を拡張都合で恒久的に変更してはならない。  
+
+要件:
+
+- original mode は bind 前に保存する
+- overlay 使用中は native 字幕を抑制する
+- secondary 用に変更した状態を native 側へ残さない
+- native menu の意味と `TextTrack.mode` の制御責務を混同しない
+
+### 6-2. OFF 時
+
+OFF 時は「触った分だけ戻す」を厳守する。  
+拡張側が保存していた original mode に戻し、拡張が注入した字幕抑制 CSS を除去する。  
+
+処理順の原則:
+
+1. native 字幕復元
+2. overlay / panel など拡張 UI 破棄
+3. 設定適用完了
+
+### 6-3. 空白許容
+
+OFF 切り替え直後に、一瞬字幕が見えない時間が入る可能性は許容する。  
+ただし、最終状態として native 字幕が再利用可能であることを優先する。  
+
+***
+
+## 7. secondary 選択仕様
+
+secondary の扱いは、今回の修正で最重要の一つとする。  
+従来のように、controller 側、binder 側、recovery 側でそれぞれ独自条件を持つ構造は廃止する。  
+
+### 7-1. 判断モデル
+
+secondary の扱いは decision 関数が一度だけ決める。  
+出力 action は少なくとも次のいずれかとする。
+
+- `bind`: 新しい secondary を bind する
+- `keep`: 現在の secondary を維持する
+- `clear`: 現在の secondary を解除する
+- `skip`: 今回は何もしない
+
+### 7-2. 判断材料
+
+decision 層は、最低でも次の入力を見られる必要がある。
+
+- 現在の primary / secondary track 情報
+- 既存 bind 状態
+- track 再生成有無
+- seek / restart / SPA 遷移などの lifecycle 条件
+- recovery 中かどうか
+- current session に属する情報かどうか
+
+### 7-3. 実行原則
+
+- decision を見ずに binder が独自 bind しない
+- decision を見ずに recovery が独自 clear しない
+- `keep` と `skip` を混同しない
+- 同じ理由で複数箇所が重複ログを出さない
+
+***
+
+## 8. recovery 仕様
+
+recovery は「通常の bind 判定に失敗したから毎回走る処理」ではない。  
+secondary track の消失や再生成など、回復が必要な条件に限定して動く。  
+
+要件:
+
+- retry は無制限に増やさない
+- watch は session をまたいで残さない
+- recovery 中でも action の正本は decision 層にある
+- recovery 完了後、不要な pending 状態を残さない
+- old track を再利用候補として握り続けない
+
+禁止事項:
+
+- track が見つからないたびに無制限 retry
+- new session 開始後も old session 用 timer が残ること
+- recovery ログが通常 bind ログと区別できないこと
+
+***
+
+## 9. lifecycle / cleanup 仕様
+
+### 9-1. 対象経路
+
+少なくとも次の経路で cleanup が正しく成立しなければならない。
+
+- panel close
+- playback close
+- extension OFF
+- extension ON 復帰
+- short seek
+- hard seek
+- SPA 遷移
+- destroy
+- restart
+- 別エピソード遷移
+- 別作品遷移
+
+### 9-2. cleanup 原則
+
+- 同一 session への cleanup 実体は 1 回だけ
+- cleanup skip と cleanup 実行は明確に区別する
+- listener / observer / timer / retry / watch を owner 単位で破棄する
+- UI 破棄と track 復元の責務を混ぜない
+- old session の保留処理を new session へ持ち越さない
+
+### 9-3. 所有権
+
+cleanup し忘れを防ぐため、所有権を固定する。
+
+| 資源 | owner |
+|---|---|
+| primary subtitle bind 状態 | cue-controller |
+| secondary bind / listener | cue-track-binder |
+| recovery retry / watch | recovery 系 |
+| session 統合 cleanup | playback-session-cleanup |
+| panel / overlay DOM | UI 管理層 |
+
+owner 以外が暗黙に破棄しない。
+
+***
+
+## 10. runtime messaging 仕様
+
+runtime messaging は今回の主軸ではないが、設計上の前提はここで確定する。  
+message channel closed 系の問題を再発させないため、送信契約を明確化する。  
+
+### 10-1. 送信種別
+
+メッセージは次の 2 種類に分ける。
+
+- request-response: 応答が必須
+- fire-and-forget: 応答不要
+
+この区別を曖昧にしたまま `return true` を使わない。
+
+### 10-2. 要件
+
+- `return true` を返す経路では、応答完了の責務を明示する
+- 応答不要の経路では、疑似的に request-response へしない
+- content script 再注入や page 遷移時の race を前提に設計する
+- retry が必要でも、回数と条件を限定する
+- 未解決 Promise を放置しない
+
+***
+
+## 11. 初期化仕様
+
+### 11-1. `extensionEnabled`
+
+初期値は OFF を正とする。  
+storage 未設定時は `false` として扱い、明示的に ON にされたときだけ拡張機能を有効化する。  
+
+### 11-2. 起動順
+
+起動時は次の順を原則とする。
+
+1. settings 読み出し
+2. 高水準 coordinator / controller 群の生成
+3. UI 注入可否判定
+4. ON の場合のみ overlay / panel / binder 系起動
+5. 必要な監視開始
+
+`extensionEnabled` 確定前に UI 注入可否を silent fail で判定してはならない。
+
+### 11-3. 早期 return の扱い
+
+初期化や注入関数で早期 return する場合、理由が観測できるログを残す。  
+「何も起きなかった」状態を silent にしない。  
+
+***
+
+## 12. DOM / UI 正本
+
+DOM 上の役割名と責務を固定する。  
+
+| 要素 | 役割 | OFF 時 |
 |---|---|---|
-| 字幕パネル本体 host | `#atv-panel-host` | `remove()` |
-| 字幕パネル本体 root | `#atv-panel-root` | host ごと remove される前提。単独で残留していれば除去対象 |
-| 字幕パネル開閉ボタン | `#atv-toggle-btn` | `remove()` |
-| オーバーレイ host | `#atv-overlay-host` | `remove()` |
-| オーバーレイ inner root | `[data-atvb-overlay-root]` | host ごと remove される前提。単独で残留していれば除去対象 |
-| ネイティブトグル | `#atvb-native-toggle` | **残す（削除しない）** |
+| `#atvb-native-toggle` | 拡張全体 ON/OFF | 残す |
+| `#atv-toggle-btn` | panel 開閉 | 破棄 |
+| `#atv-panel-host` | panel host | 破棄 |
+| `#atv-panel-root` | panel 本体 | host とともに消える |
+| `#atv-overlay-host` | overlay host | 破棄 |
+| `[data-atvb-overlay-root]` | overlay 内部 root | host とともに消える |
+| `[data-atvb-overlay-primary]` | primary 描画先 | 破棄 |
+| `[data-atvb-overlay-secondary]` | secondary 描画先 | 破棄 |
 
----
+host が正本であり、inner root 単体残留は異常状態として cleanup 対象とする。
 
-## 6. `extensionEnabled` の初期状態
+***
 
-| 状況 | 値 | 理由 |
-|---|---|---|
-| 初回インストール時（storage に未設定） | `false`（OFF） | ネイティブ UI を壊さない。ユーザーが明示的に ON にする設計 |
-| 前回 ON で閉じた場合 | `true`（ON） | `chrome.storage.sync` から引き継ぐ |
-| 前回 OFF で閉じた場合 | `false`（OFF） | `chrome.storage.sync` から引き継ぐ |
+## 13. ログ仕様
 
-```js
-const { extensionEnabled = false } =
-  await chrome.storage.sync.get('extensionEnabled');
-```
+今回の修正では、ログは「量」ではなく「責務の切り分け」を優先する。  
 
-### 実装上の注意
+分類原則:
 
-`extensionEnabled` を `injectNativeToggle` 内で参照するとき、  
-`chrome.storage.sync.get` 完了前に関数が呼ばれると `undefined` になり、  
-`!extensionEnabled` が `true` と評価されて無言でトグルが注入されない不具合が起こりうる。
+- decision: なぜ bind / keep / clear / skip になったか
+- binder: 実際に何を attach / detach / bind / clear したか
+- recovery: なぜ再探索 / retry したか
+- lifecycle: どの経路で cleanup / restart / destroy が走ったか
+- ui: panel / overlay / toggle の生成と破棄
+- messaging: request-response / fire-and-forget の送信結果
 
-```js
-// 避ける
-if (!settings.extensionEnabled) return;
+要件:
 
-// 採用
-const { extensionEnabled = false } = settings ?? {};
-if (!extensionEnabled) return;
-```
+- 同じ事実を複数層が重複出力しない
+- 一時観測ログは恒久仕様に含めない
+- 通常再生でノイズ過多にしない
+- 問題発生時の因果関係は追える
 
-また `injectNativeToggle` 内の早期 `return` には、  
-必ず診断ログまたは警告ログを添える。
+***
 
-```js
-if (!toolbar) {
-  console.warn('[ATVB] injectNativeToggle: 注入先が見つからない', { tried: '.playback-toolbar' });
-  return;
-}
-```
+## 14. 禁止事項
 
----
+今回の修正では、以下を禁止する。
 
-## 7. overlay / panel レイアウト仕様
+- `content.js` に個別の字幕判断ロジックを再追加すること
+- 複数モジュールがそれぞれ secondary 判断を持つこと
+- owner 以外が暗黙に listener / timer / watch を破棄すること
+- session をまたいで old state を再利用すること
+- OFF 時に native 字幕を未復元のまま UI だけ破棄すること
+- panel 開閉で overlay を消すこと
+- `return true` を返したのに応答しないこと
+- silent early return を量産すること
+- 一時デバッグコードを恒久仕様として残すこと
 
-### 7-1. DOM 正本
+***
 
-| 正式名称 | DOM ID / selector | 役割 |
-|---|---|---|
-| ネイティブトグル | `#atvb-native-toggle` | 拡張全体の ON/OFF のみ。OFF 時も残す |
-| 字幕パネル開閉ボタン | `#atv-toggle-btn` | 右側字幕パネルの開閉のみ |
-| 字幕パネル本体 host | `#atv-panel-host` | 表示/非表示・幅計測の正本 |
-| 字幕パネル本体 root | `#atv-panel-root` | パネル UI 本体 |
-| オーバーレイ host | `#atv-overlay-host` | 位置・幅・矩形計測の正本 |
-| オーバーレイ inner root | `[data-atvb-overlay-root]` | overlay 内部コンテナ |
-| オーバーレイ primary | `[data-atvb-overlay-primary]` | primary 字幕描画先 |
-| オーバーレイ secondary | `[data-atvb-overlay-secondary]` | secondary 字幕描画先 |
+## 15. 完了条件
 
-### 7-2. 表示ルール
+今回の Bugfix は、少なくとも次を満たしたときに完了と判断する。
 
-- **トグル OFF:** overlay は非表示。panel は非表示または破棄する
-- **トグル ON + パネル閉:** overlay は表示し、動画全体の中央下に配置する
-- **トグル ON + パネル開:** overlay は表示し続け、右側パネル幅を除いた左側可視領域の中央下に配置する
-- panel の開閉で overlay を消さない。overlay は常に ON/OFF にのみ従属する
-- `#atv-toggle-btn`、`#atv-panel-host`、`#atv-overlay-host` は ON 時にのみ存在すべき
-- `#atvb-native-toggle` のみ OFF 時も残す
+- `content.js` が配線専用になっている
+- secondary の判断正本が一箇所に集約されている
+- binder が実行責務と所有資源を明確に持っている
+- recovery が通常判定と混線していない
+- native 字幕が OFF / 終了時に一貫して復元される
+- overlay / panel の存在条件が ON/OFF と整合している
+- cleanup が全終了経路で多重なく成立する
+- old session の listener / timer / retry が持ち越されない
+- runtime messaging の送信契約が明確である
+- ログが責務ごとに読める
 
-### 7-3. 位置計算ルール
+***
 
-`syncOverlayPositionToPlayer(options = {})` を位置計算の正本とする。
+## 16. 実装順の指針
 
-- `panelOpen` は `options.panelOpen` を優先する
-- 未指定時は `getPanelOpen()` の値を fallback 参照する
-- `panelOpen=true` のときは `visibleWidth = rect.width - panelWidth` を使って overlay の X 位置と幅を計算する
-- `panelOpen=false` のときは動画全体矩形の中央へ配置する
+実装は次の順で進める。
 
-### 7-4. フォントサイズ計算ルール
+1. decision 正本の確立
+2. binder の実行責務統一
+3. cue-controller の native 復元責務固定
+4. `content.js` の配線専用化
+5. lifecycle / cleanup 統合
+6. UI / overlay / panel 条件整理
+7. messaging 契約整理
+8. ログ整理と不要分岐削除
 
-- overlay のフォントサイズは **player 全体矩形** を基準に計算する
-- 位置補正用の `visibleWidth` をフォントサイズ計算に流用しない
-- そのため `applyOverlayTypography(rect)` は、可視領域幅ではなく player 全体の `rect` を受け取る
+この順番を崩して局所対処を先に積むと、責務が再び分散しやすい。
 
-### 7-5. F-1 実装後の確認済み挙動
+***
 
-- パネル開時、overlay は左側可視領域中央へ寄る
-- パネル閉時、overlay は動画中央へ戻る
-- パネル開閉で primary / secondary のフォントサイズは縮小しない
+## 17. 備考
 
----
+この文書は、現在の Bugfix の**仕様正本**であり、途中メモではない。  
+曖昧な実装都合で例外分岐を増やすのではなく、ここで定義した責務境界に合わせて既存コードを寄せる。  
 
-## 8. 設定反映メッセージの仕様（F-4 関連・残件）
+また、将来着手項目や再評価待ちの残件はこの文書に戻さない。  
+それらは将来作業計画側で管理し、この仕様書は「今回確定したものだけ」を保つ。
 
-### 8-1. 基本方針
 
-設定保存後の反映は、background → content のメッセージ経路を使う。  
-ただし Apple TV+ の SPA 遷移や content script 再注入の都合で、  
-送信直後に content 側がいないことがありうる。
-
-### 8-2. recoverable error の扱い
-
-以下のエラーは、現時点では recoverable と扱う。
-
-- `Receiving end does not exist`
-- `message channel closed before a response was received`
-- `A listener indicated an asynchronous response by returning true`
-
-recoverable な場合は、content script 生存確認・再注入・再送を試みてよい。
-
-### 8-3. 未確定事項
-
-- `SETTINGS_CHANGED` を request-response として厳密運用するか
-- 失敗してもよい fire-and-forget として扱うか
-
-この点は F-4 残件として再整理する。  
-仕様上はまだ固定しない。F-5 完了後も本項は未確定のまま持ち越し。
-
-### 8-4. 確定していること
-
-- `waitForPlaybackReady()` 成功後は、`state.video` / `state.dialogEl` を反映してから ON 側 restart へ進む
-- UI build 停止を避けるため、playback ready と state 反映は同一フロー内で行う
-- `panel host missing` は主因ログではなく、副次的症状ログとして扱う
-
----
-
-## 9. secondary 言語設定の仕様（F-3 確定）
-
-### 9-1. 言語定義の正本
-
-言語候補の正本は `modules/language-definitions.js` とする。  
-popup / options / resolver が独自の言語定義を持たない。
-
-### 9-2. 設定値の正本
-
-設定値の検証・正規化は `modules/settings-schema.js` を正本とする。  
-popup / options / background / content 間で個別の検証ロジックを持たない。
-
-### 9-3. 禁止事項
-
-- `hidden && cuesLength === 0` の track を `ensureSubtitleTracksUsable()` 対象から一律除外しない
-- この条件は日本語 subtitle track の初期 cue 読み込みまで止め、日本語字幕消失を引き起こしたため再導入しない
-
-### 9-4. 期待挙動
-
-- popup 保存だけで `ja → ko`、`ko → ja`、`ja → en` の切替が反映される
-- secondary subtitle の選定・復帰・native menu 同期は、`cue-controller.js` / `subtitle-track-resolver.js` 側の責務で扱う
-
----
-
-## 10. デバッグパネル仕様（F-6 確定）
-
-- デバッグパネルは拡張 ON/OFF に依存せず開ける
-- OFF 状態でもログ確認に到達できる
-- デバッグ機能の可用性は、字幕 overlay / panel の表示状態に従属させない
-
----
-
-## 11. secondary listener リーク対策の仕様（進行中・Step 1〜5 確定分）
-
-**位置づけ:** F-5 完了後に着手した secondary track の listener / rebind / cleanup 整理。  
-本項は Step 1〜4 の完了分と、Step 5 で確定した仕様のみを正本として記載する。  
-Step 6 以降は未確定のため、実装計画側（Bugfix 将来作業計画.md）を参照する。
-
-### 11-1. 責務分離の確定仕様（Step 1〜2）
-
-- secondary track の選択処理は `modules/subtitle-sync-controller.js` 側で selection result として返す形に統一する
-- selection result は `track`、`sameTrackRef`、`requested language change`、`snapshot` を持つ
-- 再bind可否の判定は `sameTrackRef`（identity 比較）を主軸とし、`track.id` はログ補助・`language` は補助情報として扱う
-
-### 11-2. 監視・cleanup の一元化仕様（Step 3〜4）
-
-- secondary listener の start / replace / stop は `modules/cue-track-binder.js` の secondary monitor 経由でのみ行う
-- listener の cleanup は `createTrackListenerBinding()` の `cleanup()` を唯一の解除経路とする
-- `cue-controller.js` 側は個別の cleanup state を保持しない。監視フェーズの orchestration のみを担う
-- `destroy()` 相当の処理は secondary monitor 側に持たせ、`cue-controller.js` は monitor destroy を呼ぶだけにする
-
-### 11-3. unreadable 即 rebind 禁止の仕様（Step 5 確定）
-
-- 同一 track（`sameTrackRef === true`）の一時的な unreadable 状態だけでは secondary の再bindを発生させない
-- `shouldRebindBecauseUnreadable` は bind 判定条件から除外する
-- unreadable の情報自体は削除せず、health 情報（監視用の補助データ）として保持してよい
-- bind 理由は `selected-track-changed`（identity 変化）と `force-rebind`（明示的な強制再接続）を中心にする
-- `sameTrackUnreadable` を根拠とした `mode` の `readability-promote` 分岐（`_resolveSecondaryTrackModePolicy()` 内）は、同一 track の unreadable を rebind 理由にしないという方針と矛盾するため、削除または無効化する対象とする
-- `maybePromoteTrackReadability()` は `sameTrackUnreadable` 依存の補助処理であり、Step 5 の方針上は不要になる想定
-
-**主対象ファイル:** `cue-controller.js`
-
-### 11-4. 未使用退避名の扱い（確定）
-
-以下は削除確定ではなく、今後のステップで使う可能性がある前提で保持する。
-
-- `_resolveSecondarySubtitleTrack`
-- `_pickMostReadableTrack`
-- `_resolveSecondaryTrackModePolicy`（2026-08-21 時点で現行使用中と確認済み）
-
----
-
-## 12. 今後の優先仕様
-
-2026-08-21 時点の優先順位は次の通り。
-
-1. リーク対策 Step 5: `shouldRebindBecauseUnreadable` / `sameTrackUnreadable` 除去（`cue-controller.js`）の適用
-2. リーク対策 Step 6以降: recovery 側の force rebind 条件見直し、`content.js` 配線整理
-3. F-4 残件: message channel closed 系エラーの再整理
-4. F-8: DevConsole の常設ログ削減
-
----
-
-## 13. 補足メモ
-
-- ON 復帰時に `#atv-toggle-btn` と overlay 字幕が出ない問題は、`waitForPlaybackReady()` 後の `state.video` / `state.dialogEl` 未反映が主因だった
-- そのため F-7 は独立 bugfix ではなく、現時点では F-4 修正に吸収された主症状として扱う
-- OFF 時に残す UI は `#atvb-native-toggle` のみ
-- ON 時にのみ存在すべき UI は `#atv-toggle-btn`、`#atv-panel-host`、`#atv-overlay-host`
-- F-5（Bugfix-E）は 2026-08-21 時点で完了済み
-- secondary listener リーク対策は Step 1〜4 完了、Step 5 は仕様確定済み・実装未適用

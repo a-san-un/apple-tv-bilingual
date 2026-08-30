@@ -1,288 +1,228 @@
-# Bugfix 将来作業計画 2026-08-21（整理版）
+# Bugfix 将来作業計画
 
-**ブランチ:** `issue-32-content-core-split`  
-**対応マスタープラン:** Bugfix マスタープラン 2026-08-21（要約版）  
-**このシートの役割:** 現在の実装シートで扱わない残件・後続フェーズ・将来の改善候補を管理する。完了済みの詳細、今回の実装手順、実機ログは持たない。  
-**最終更新:** 2026-08-21
-
-***
-
-## 運用ルール
-
-- この文書には、**未着手・持ち越し・後続フェーズ**だけを残す
-- 今まさに実装する作業は `Bugfix 実装シート.md` に移す
-- Step の全体進捗は `Bugfix マスタープラン.md` を正本とする
-- 詳細な設計は専用設計資料を正本とする
-- 完了した項目はこの文書から削除し、必要なら Git 履歴または archive で参照する
-- 新しい作業テーマが主作業になった時点で、この文書から `Bugfix 実装シート.md` へ移す
+**対象ブランチ:** `issue-32-content-core-split`  
+**文書の役割:** 今回の設計整理と実装修正が完了するまで着手しない項目を退避し、後続フェーズごとに再分類して管理する。  
+**運用方針:** この文書には「今は触らない項目」だけを残し、進行中の設計・実装・検証項目は別の実装系ドキュメントで管理する。  
+**更新方針:** 完了済み事項や今回の整理対象は記載しない。必要になった時点で、この文書から新しい実装シートへ移す。  
 
 ***
 
-## 将来作業の全体像
+## 1. この文書に残すもの
 
-```text
-現在の主作業:
-  [Step 7] secondary 条件統合の実装
-      ↓
-後続フェーズ:
-  [Step 8] content.js を配線専用に寄せる
-      ↓
-  [Step 9] dead code / debug を整理する
-      ↓
-  [Step 10] lifecycle / cleanup を全経路で検証する
-      ↓
-並行残件:
-  [F-4] message channel closed 系エラーの整理
-  [M-1] 長時間再生時の Renderer メモリ増加の再計測・原因切り分け
-  [F-8] decision 導入後のログ体系整理
-      ↓
-後続改善候補:
-  [Bugfix-B / C] 未整理の既存不具合・UI/字幕同期課題を再評価する
-```
+この文書は、**今回の設計整理と修正の完了後に初めて着手する候補**だけを保持する退避先とする。  
+したがって、現在の不具合原因の切り分け、責務再設計、モジュール分割、cleanup 修正、ログ整備の本体作業はここには書かない。  
+
+残してよいのは、次のいずれかに該当する項目のみとする。
+
+- 今回の整理後でないと正しく評価できない項目
+- 今回の責務分離が固まらないと仕様を決められない項目
+- 実装より先に観測条件や検証基盤の整備が必要な項目
+- 安定化後に再計測・再評価すべき継続課題
+- 既存の残件のうち、今は混ぜると主作業の妨げになる項目
 
 ***
 
-## 優先順位
+## 2. この文書に残さないもの
 
-| 優先度 | 作業 | 着手条件 | 目的 |
+以下はこの文書の対象外とし、別文書または Git 履歴で扱う。
+
+- 今回すぐ直す設計課題
+- 進行中の実装修正手順
+- 一時的な観測ログや実機メモ
+- 完了済みの作業記録
+- 途中で不要になった検討メモ
+- 現在の主作業に属するチェックリスト
+
+この方針により、この文書は「未来に回す項目だけが見える状態」を維持する。
+
+***
+
+## 3. 後続フェーズ分類
+
+### A. 安定化後の構造整理
+
+今回の修正で責務境界が安定した後に、モジュール構成全体をさらに整理するフェーズ。  
+目的は、将来の機能追加やバグ調査で `content.js` や controller 系に判断ロジックが再流入しない状態を保つことにある。  
+
+対象例:
+
+- factory / dependency injection の整理
+- 初期化順序と破棄順序の明文化
+- session 境界を前提にした所有責務の固定化
+- controller / binder / recovery / cleanup 間の依存方向の再点検
+
+着手条件:
+
+- 今回の修正で責務の所属先が安定していること
+- 実機検証で重大な回 regress が残っていないこと
+
+***
+
+### B. lifecycle・cleanup の長期検証
+
+今回の cleanup 修正が一通り完了したあと、長時間再生や複数遷移を含む条件で安定性を確認するフェーズ。  
+単発の再現確認ではなく、セッション跨ぎ・SPA 遷移・再起動・OFF/ON を含めた長期挙動の確認を行う。  
+
+主な確認観点:
+
+- listener / observer / timer の増加が継続しないこと
+- old session の watch や retry が新 session に残留しないこと
+- cleanup が多重実行されず、かつ取りこぼしもないこと
+- native subtitle mode の復元が終了経路ごとに安定していること
+- restart / destroy / episode change 後に不整合が残らないこと
+
+着手条件:
+
+- 今回の cleanup 設計と実装修正が完了していること
+- 通常ケースのログが読みやすく整理済みであること
+
+***
+
+### C. ログ体系・観測性の再設計
+
+主作業の修正が固まったあとで、ログの責務と粒度を再設計するフェーズ。  
+今は観測のために残しているログでも、後続では役割別に再編し、恒常運用に耐える形へ絞り込む。  
+
+整理方針:
+
+- `decision` / `binder` / `recovery` / `lifecycle` など責務単位で分類する
+- 同じ判断理由を複数箇所で重複出力しない
+- 通常再生時には過剰ログにならないよう抑制する
+- 問題発生時だけ、bind / keep / clear / cleanup の理由を追跡できる状態を維持する
+
+退避対象の例:
+
+- 一時観測用の debug ログ
+- 移行期だけ必要な rationale ログ
+- 旧分岐前提の補助ログ
+- 恒久設計に載せない probe 出力
+
+着手条件:
+
+- 今回の判断ロジック移設と cleanup 修正が完了していること
+- どのログが一時観測用だったかを切り分けられること
+
+***
+
+### D. message channel / runtime messaging 再整理
+
+message channel closed 系の問題は独立テーマとして残すが、主作業の設計整理を終えるまでは本格着手しない。  
+現在の修正対象と同時進行で深入りすると、原因が lifecycle 問題なのか messaging 設計なのかが混ざりやすいため、後続フェーズへ退避する。  
+
+後続で扱う論点:
+
+- request-response と fire-and-forget の明確な分離
+- `return true` を使う経路の棚卸し
+- `sendResponse` の保証有無の整理
+- content script 再注入と SPA 遷移時の race 条件確認
+- retry / reinjection の上限と発火条件の明文化
+
+着手条件:
+
+- 今回の lifecycle / cleanup / session 管理の修正が安定していること
+- messaging 起因の症状だけを切り出して観測できること
+
+***
+
+### E. メモリ再計測とリーク再評価
+
+Renderer メモリ増加は継続監視対象として保持するが、今すぐ結論は出さない。  
+cleanup と session 境界の修正前に再計測しても解釈がぶれるため、安定化後の定点観測フェーズとして分離する。  
+
+再計測方針:
+
+- 観測時点を固定する
+- 再生条件、字幕条件、遷移回数を固定する
+- listener / observer / timer / DOM ノード / heap 傾向を併せて見る
+- 単なる総量ではなく、増加し続ける対象を特定する
+- 修正前後比較ではなく、「安定化後にまだ増えるか」を先に判定する
+
+主な観測候補:
+
+- 起動直後
+- 30 分後
+- 60 分後
+- 90 分後
+- エピソード遷移後
+- SPA 遷移反復後
+- OFF/ON や restart 反復後
+
+着手条件:
+
+- cleanup の全経路検証が完了していること
+- 観測ログと一時ログが整理されていること
+- 計測条件を毎回同じにできること
+
+***
+
+### F. 既存残件の再評価
+
+過去の Bugfix 系残件は、今回の整理後に一度ゼロベースで再評価する。  
+今の時点で古い症状一覧をそのまま持ち込むと、すでに解消済みのものと構造的に別問題になったものが混ざるため、この文書では「再評価待ち」としてのみ保持する。  
+
+再評価の対象:
+
+- 字幕同期まわりの旧不具合
+- UI と native 字幕の干渉系課題
+- seek / replay / restart 時の旧挙動メモ
+- recovery 導入以前の暫定設計を前提にした不具合メモ
+- 古い branch / log にだけ残っている既知症状
+
+再評価時の方針:
+
+- 現行アーキテクチャで再現するかを最初に確認する
+- 再現しない項目はこの文書から削除する
+- 再現する項目だけを新しい実装シートへ移す
+- 症状名ではなく、発火条件と責務境界で再分類する
+
+***
+
+## 4. 着手順の原則
+
+後続項目の着手順は、原則として次の優先順で判断する。
+
+1. 今回の修正完了後でないと評価不能なもの
+2. 安定性に直結するもの
+3. 原因切り分け基盤を整えるもの
+4. 長期計測・観測性改善
+5. 既存残件の再評価
+
+この順序により、過去の残件回収よりも先に、現行構造の安定化と観測可能性の確保を優先する。
+
+***
+
+## 5. この文書から実装シートへ移す条件
+
+以下を満たした項目だけ、この文書から新しい実装シートへ移す。
+
+- 今回の主作業が完了している
+- 責務の所属先を明確に言語化できる
+- 再現条件または評価条件が定義できる
+- 完了条件をチェックリスト化できる
+- 他の主作業と混ぜずに単独テーマとして扱える
+
+条件を満たさない限り、この文書では詳細化しない。
+
+***
+
+## 6. 保留中テーマ一覧
+
+| 区分 | テーマ | 現在の扱い | 実装へ移す条件 |
 |---|---|---|---|
-| P0 | Step 8 | Step 7 完了 | `content.js` を配線専用に寄せ、判断ロジックの流入を防ぐ |
-| P0 | Step 9 | Step 7 完了 | decision 導入後の dead code / debug / obsolete rationale を整理する |
-| P0 | Step 10 | Step 7〜9 完了 | lifecycle ごとの secondary listener cleanup を全経路で確認する |
-| P1 | F-4 | Step 7 の実機検証を阻害しない時点 | async response / message channel close の送信設計を整理する |
-| P1 | M-1 | Step 10 の検証基盤ができた時点 | 長時間再生時の Renderer メモリ増加を定量的に再計測する |
-| P1 | F-8 | Step 7〜9 完了 | decision / binder / recovery 単位のログ体系へ整理する |
-| P2 | Bugfix-B / C | 上記の安定化完了後 | 未整理の既存不具合を再評価し、必要なものだけを新規実装シートへ切り出す |
+| A | 構造整理の第二段階 | 保留 | 今回の責務分離が安定 |
+| B | lifecycle / cleanup 長期検証 | 保留 | cleanup 修正完了 |
+| C | ログ体系の再設計 | 保留 | 一時ログの役割切り分け完了 |
+| D | message channel / runtime messaging | 保留 | lifecycle 起因の揺れを除去 |
+| E | Renderer メモリ再計測 | 保留 | 長時間検証条件を固定可能 |
+| F | 既存残件の再評価 | 保留 | 現行構造での再現性確認開始 |
 
 ***
 
-## Step 8: content.js を配線専用に寄せる
+## 7. 運用メモ
 
-**位置づけ:** Step 7 完了後の最優先後続作業
+この文書は、作業を増やすための一覧ではなく、**今は混ぜないための隔離リスト**として扱う。  
+項目を増やすときは「今回の整理後でないと触れない理由」を先に書き、理由が弱いものはここに入れない。  
 
-### 目的
+また、完了した項目を残し続けない。  
+着手した時点で実装シートへ移し、この文書からは削除する。
 
-`content.js` を controller、binder、sync controller、recovery manager の生成と接続に限定する。  
-secondary selection、recovery 判断、cleanup 判断、track mode 判断を `content.js` に持ち込まない。
-
-### 対象ファイル
-
-- `content.js`
-- 必要に応じて factory / dependency injection を受ける周辺モジュール
-
-### 着手条件
-
-- Step 7 で `buildSecondarySyncDecision()` と action 実行の責務境界が安定している
-- `cue-controller.js` が secondary 条件の正本でなくなっている
-
-### 完了条件
-
-- [ ] `content.js` が依存性生成・注入・起動・停止配線だけを担う
-- [ ] secondary selection / recovery / cleanup 条件が `content.js` に存在しない
-- [ ] controller / binder / recovery manager の生成順と破棄順が追跡できる
-- [ ] 新規ロジック追加時に `content.js` へ条件分岐を追加しなくて済む
-
-***
-
-## Step 9: dead code / debug 整理
-
-**位置づけ:** Step 7〜8 で不要になった条件・ログを削る整理フェーズ
-
-### 目的
-
-secondary decision 導入前の補助分岐、obsolete rationale、不要な debug 出力を削除または役割別に移動する。
-
-### 対象ファイル
-
-- `cue-controller.js`
-- `modules/subtitle-sync-controller.js`
-- `modules/cue-track-binder.js`
-- `modules/secondary-track-recovery.js`
-- 必要に応じて `modules/subtitle-recovery-manager.js`
-
-### 整理候補
-
-- `if (false)` 系の一時観測コード
-- `sameTrackUnreadable` 前提の補助ログや rationale
-- controller 側に残る旧 `shouldRebind` 系のログ
-- decision 導入後に重複する selection / binder / recovery ログ
-- 通常再生時に意味を持たない probe ログ
-- 役割が不明確なログカテゴリ
-
-### 完了条件
-
-- [ ] 不要分岐と一時コードが削除されている
-- [ ] ログが `decision` / `binder` / `recovery` / `lifecycle` の責務単位で読める
-- [ ] 通常再生時にログが過剰出力されない
-- [ ] 問題発生時に bind・keep・clear・cleanup の理由を追跡できる
-
-***
-
-## Step 10: lifecycle / cleanup 全経路確認
-
-**位置づけ:** secondary listener と cleanup の安定性を確定する検証フェーズ
-
-### 目的
-
-secondary monitor の開始・停止・cleanup・mode restore が、すべての終了経路で 1 回だけ実行されることを確認する。
-
-### 対象ファイル
-
-- `cue-controller.js`
-- `modules/cue-track-binder.js`
-- `modules/playback-session-cleanup.js`
-- `modules/playback-startup-coordinator.js`
-- `content.js`
-
-### 確認対象の終了経路
-
-- panel close
-- playback close
-- extension OFF
-- extension ON 復帰
-- short seek
-- hard seek
-- SPA 遷移
-- destroy
-- restart
-- 別エピソード遷移
-- 別作品遷移
-
-### 完了条件
-
-- [ ] listener attach / cleanup の所有者が binder に一本化されている
-- [ ] cleanup 実体が同一 session に対して多重実行されない
-- [ ] `cleanup skipped` と実 cleanup がログで区別できる
-- [ ] old session の watch / retry / timer が新 session へ持ち越されない
-- [ ] OFF / restart / close 後に native subtitle mode が正しく復元される
-- [ ] 長時間再生と複数回遷移後も listener 数が増加し続けない
-
-***
-
-## F-4: message channel close の整理
-
-**位置づけ:** UI 復旧済みの持ち越し残件。Step 7〜10 を止めるブロッカーではない。
-
-### 現在の状態
-
-- `background.js` には recoverable error 判定と再送処理がある
-- `waitForPlaybackReady()` の結果を反映してから restart する流れは導入済み
-- 初回付近で次のエラーが残る場合がある
-
-```text
-A listener indicated an asynchronous response by returning true,
-but the message channel closed before a response was received
-```
-
-### 再調査の方針
-
-1. `APPLY_SETTINGS_TO_APPLE_TV` / `SETTINGS_CHANGED` ごとに、応答必須か fire-and-forget かを決める
-2. `onRuntimeMessage` で `return true` している全経路を確認する
-3. `sendResponse` が必ず呼ばれる経路と、応答不要な経路を分ける
-4. content script 再注入、SPA 遷移、tab activation と送信タイミングの race をログで確認する
-5. 再送・再注入の条件と上限を明確化する
-
-### 対象ファイル候補
-
-- `background.js`
-- `settings-runtime.js`
-- `content.js`
-- message listener を持つ関連モジュール
-
-### 完了条件
-
-- [ ] 初回付近でも message channel closed 系エラーが出ない
-- [ ] 通常経路で不要な再送・再注入が走らない
-- [ ] request-response と fire-and-forget の送信設計が明確に分かれている
-- [ ] page 遷移・再注入時にも未処理 Promise が残らない
-
-***
-
-## M-1: Renderer メモリ増加の再計測
-
-**位置づけ:** cleanup 安定化後に定量評価する継続課題
-
-### 背景
-
-Chrome Renderer プロセスで 6GB 級のメモリ消費を観測している。  
-secondary listener の cleanup、多重 bind、old session の watch / retry が原因候補だが、Step 6.5 までの修正後に再計測して判断する必要がある。
-
-### 着手条件
-
-- Step 10 で lifecycle cleanup の経路確認が完了している
-- debug ログを必要最小限に整理できている
-- 再現手順と観測時間を固定できている
-
-### 計測方針
-
-1. 起動直後、30 分、60 分、90 分などの測定時点を固定する
-2. 通常再生、short seek 反復、hard seek 反復、SPA 遷移反復を別シナリオにする
-3. Renderer memory、EventListener、V8EventListener、RegisteredEventListener の推移を記録する
-4. session cleanup、secondary bind、secondary cleanup の回数を同じテストログで照合する
-5. 増加が継続する場合は listener、observer、timer、DOM node を分けて heap snapshot へ進む
-
-### 完了条件
-
-- [ ] テストシナリオごとのメモリ推移が記録されている
-- [ ] listener / observer / timer / DOM のどれが増加源かを分類できている
-- [ ] 修正前後の差分を比較できる
-- [ ] 必要なら原因別の新しい実装シートを作成できる
-
-***
-
-## F-8: ログ体系の再整理
-
-**位置づけ:** Step 7〜9 完了後に行う観測品質改善
-
-### 目的
-
-secondary の action 決定、bind / cleanup、recovery、lifecycle を役割別に追跡可能にし、通常再生時のログ量を抑える。
-
-### ログカテゴリ案
-
-| カテゴリ | 出す内容 |
-|---|---|
-| `decision` | selection / readability / monitor / recovery 入力、action type、action reason |
-| `binder` | bind、keep、replace、cleanup、mode apply / restore |
-| `recovery` | missing 継続時間、debounce、missCount、force rebind 判定 |
-| `lifecycle` | startup、session switch、hard seek、SPA 遷移、destroy、restart |
-| `debug` | 一時観測専用。通常時は無効または抑制する |
-
-### 完了条件
-
-- [ ] action type と reason が追跡できる
-- [ ] cleanup skip と実 cleanup を区別できる
-- [ ] 通常再生で probe ログが連続出力されない
-- [ ] 1 セッションの lifecycle を時系列で追える
-- [ ] 一時調査ログを恒久ログへ混在させない
-
-***
-
-## Bugfix-B / C 再評価
-
-**位置づけ:** secondary lifecycle の安定化後に再評価する未整理課題
-
-### 再評価方針
-
-- 現在の動作に再現する問題だけを対象にする
-- 現行 architecture に照らして原因を再分類する
-- 修正対象が独立している場合のみ、新しい `Bugfix 実装シート` を作る
-- 再現しない過去ログ・既に解消した仮説は持ち込まない
-
-### 着手条件
-
-- Step 10 の lifecycle 検証が完了している
-- M-1 の一次再計測が完了している
-- 既存の F-4 / F-8 と重複しないことを確認している
-
-***
-
-## 参照資料
-
-- `docs/Bugfix/Bugfix マスタープラン.md`
-- `docs/Bugfix/Bugfix 実装シート.md`
-- `docs/Bugfix/Secondary 条件統合メモ.md`
-- `docs/Bugfix/Secondary 統合後の責務再定義一覧.md`
-- `docs/Bugfix/コードベース現状スナップショット.md`
-
-情報源
