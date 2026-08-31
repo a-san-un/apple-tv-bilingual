@@ -3,12 +3,13 @@
 // version: 2.6.4
 //
 // 役割:
-// - playback page の高レベル coordinator / bridge として、settings・observer・UI・
-//   subtitle pipeline の接続点を束ねる。
-// - subtitle block / panel UI / reinitialize の実装詳細は各 owner module へ委譲し、
-//   content.js は entry point と orchestration に寄せる。
-// - VTT 正規化・logger・panel UI・subtitle block・reinitialize などの個別実装をつなぎ、
-//   再生画面で必要な初期化順序とイベント入口を管理する。
+// - playback page の高レベル wiring hub として、settings・startup coordinator・
+//   cleanup coordinator・UI・subtitle pipeline の接続点を束ねる。
+// - settings runtime には state 反映と request 発行、startup coordinator には
+//   target / readiness / retry / attach 判断、reinitialize coordinator には
+//   rebuild reason の分類と要求発行を委譲する。
+// - subtitle block / panel UI / debug runtime / reinitialize などの実装詳細は
+//   各 owner module へ委譲し、content.js 自体は DI・entry point・logger / probe 注入に寄せる。
 // - current subtitle view を panel / overlay 向けに組み立て、
 //   primary / secondary の表示更新を高レベル側から調停する。
 // =============================================================
@@ -66,7 +67,7 @@
     booted: false,
     bilingualSessionSeq: 0,
     activeBilingualSessionId: null,
-    sessionRebuildInProgress: false,
+    sessionRebuildInProgress: false, // cleanup / rebuild 中の重複 interval・retry を抑止する
     video: null,
     dialogEl: null,
     extensionEnabled: false,
@@ -2451,7 +2452,9 @@ function forwardContentLog(...args) {
   });
 
   const { createSettingsRuntime } = root.settingsRuntime;
-  // settings-runtime.js が利用する DI のみを渡す。
+  // [wiring: lifecycle coordinators]
+  // settings runtime は state 反映と request 発行だけを持ち、
+  // direct start せず startup coordinator へ再評価要求を委譲できる依存だけを受ける。
   const settingsRuntime = createSettingsRuntime({
     state,
     DEFAULT_SETTINGS,
@@ -2474,6 +2477,8 @@ function forwardContentLog(...args) {
     get cueController() { return cueController; },
     get syncIntervalOrchestrator() { return syncIntervalOrchestrator; },
     get panelUi() { return panelUi; },
+    // settings 側から direct start させず、必要時だけ startup coordinator へ
+    // 再評価要求を委譲できるよう getter で受け渡す。
     getPlaybackStartupCoordinator: () => playbackStartupCoordinator || null,
     mountToggleOnlyUi: () => panelUi?.mountToggleOnlyUi?.(),
   });
@@ -2486,6 +2491,8 @@ function forwardContentLog(...args) {
 
   ensureMessageListener();
 
+  // reinitialize coordinator は subtitle pipeline 再構築本体ではなく、
+  // rebuild reason の分類・settings reload 要否判定・再評価要求の入口をまとめる。
   const createReinitializeCoordinator =
     root.createReinitializeCoordinator || null;
   const reinitializeCoordinator = createReinitializeCoordinator
@@ -2546,8 +2553,8 @@ function forwardContentLog(...args) {
       },
     }) ?? null;
 
-  // playback 起動前段の coordination を担当する。
-  // 初回 boot だけでなく、playback target 切替時の cleanup → 再 attach → 再 start もここへ寄せる。
+  // playback startup coordinator は起動前段の判断を担当する。
+  // settings / SPA / retry など複数入口を attach → readiness → start 判定へ収束させる。
   const playbackStartupCoordinator =
     window.ATVB?.createPlaybackStartupCoordinator?.({
       state,

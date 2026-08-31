@@ -3,30 +3,29 @@
 // version: 2.7.0
 //
 // 役割:
-// - subtitle pipeline の再初期化フローを coordinator としてまとめる。
-// - content.js / sync interval / panel reopen など複数入口からの
-//   「現在の playback へ再接続したい」要求を共通オーケストレーションへ寄せる。
+// - subtitle pipeline rebuild request の reason 分類と要求発行を coordinator としてまとめる。
+// - content.js / sync interval / panel reopen など複数入口からの rebuild 要求を
+//   共通 reason / option 形式へ正規化し、settings reload 要否を含めて扱う。
 // - settings reload が必要なケースと、すでに state に反映済み設定を使って
-//   再初期化だけしたいケースを options で切り替える。
+//   再評価だけ進めたいケースを options で切り替える。
 // - video object 変更 / currentSrc 変更のような video-change 系 reason では、
-//   track 解決が遅れた場合の retry をこの coordinator が一元管理する。
-// - retry は毎回 current playback を取り直してから実行し、
-//   stale な video へ再接続しないことを優先する。
+//   stale な playback を再利用しないよう current playback を取り直してから進める。
+// - UI teardown や startup readiness wait そのものは担当せず、
+//   rebuild request の分類・再評価要求・retry 制御に限定する。
 //
 // 設計メモ:
-// - restart / detach の UI teardown までは担当しない。
-//   ここでは subtitle pipeline の再構築と、その結果に応じた retry 制御に限定する。
-// - reloadSettingsAndReinitialize() は文字列 reason と options object の両方を受ける。
-//   既存 call site 互換を保ちつつ、video-change 経路の suppressSettingsReload を扱える。
+// - cleanup owner の teardown 責務や startup coordinator の readiness wait は侵食しない。
+// - reloadSettingsAndReinitialize() は文字列 reason と options object の両方を受け、
+//   既存 call site 互換を保ちつつ reason / option 正規化と video-change 経路の suppressSettingsReload を扱える。
 // =============================================================
 
 (function () {
   "use strict";
 
   /**
-   * subtitle pipeline の再初期化 coordinator を生成する。
-   * settings snapshot の state 反映、current playback の再取得、
-   * track 再解決、listener 再接続、retry 制御をまとめて提供する。
+   * subtitle pipeline rebuild request coordinator を生成する。
+   * settings reload 要否の判定、reason / option の正規化、
+   * current playback の再取得、retry 制御をまとめて提供する。
    *
    * @param {Object} deps coordinator 依存関係。
    * @param {Object} deps.state content runtime state。
@@ -148,17 +147,15 @@
       };
     }
 
-    // -----------------------------------------------------------------------------
-    // Subtitle Pipeline: Flow Coordinator
-    // 再初期化フロー本体。状態クリア → track 再解決 → listener 再接続 →
-    // panel 反映までの手順を束ねる。
-    // 判定本体や resolver / binder の実装詳細は deps 側へ委譲する。
-    // -----------------------------------------------------------------------------
-
     /**
-     * 現在の playback target を使って subtitle pipeline を再初期化する。
+     * 正規化済み reason を使って、現在の state / playback に対する
+     * subtitle pipeline の再評価を実行する。
      *
-     * @param {string} [reason="unknown"] 再初期化 reason。
+     * reloadSettingsAndReinitialize() などの上位入口から呼ばれ、
+     * track 再解決・listener 再接続・panel state 再適用と、
+     * その結果に応じた retry 判定材料の生成を担う。
+     *
+     * @param {string} [reason="unknown"] 正規化済み rebuild reason。
      * @returns {Promise<{
      *   reason: string,
      *   primaryTrackFound: boolean,
@@ -166,7 +163,7 @@
      *   primaryListenerBound: boolean,
      *   secondaryListenerBound: boolean,
      *   ready: boolean,
-     * }>} 再初期化結果。
+     * }>} 現在の playback に対する再評価結果。
      */
     async function reinitializeSubtitlePipeline(reason = "unknown") {
       const switched = syncHistoryContextWithPlayback(reason);
@@ -394,13 +391,10 @@
     }
 
     /**
-     * settings reload → state reflect → reinitialize 起動の橋渡し。
+     * rebuild reason を正規化し、必要なら settings を再読込してから
+     * 現在の playback に対する再評価 / 再接続経路を進める。
      *
-     * 文字列 reason と options object の両方を受け付ける。
-     * video-change 経路では suppressSettingsReload=true を使い、
-     * 既存 state をそのまま使って current playback へ再接続する。
-     *
-     * @param {string|Object} [input="unknown"] 再初期化入力。
+     * @param {string|Object} [input="unknown"]
      * @returns {void}
      */
     function reloadSettingsAndReinitialize(input = "unknown") {
