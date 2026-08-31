@@ -282,6 +282,26 @@
     // -------------------------------------------------------
 
     /**
+     * startup coordinator からの target attach 前 cleanup 用 thin wrapper。
+     * 旧 playback target から新 target へ attach し直す直前に、
+     * 現在の session を再生成前提の teardown へ収束させる。
+     *
+     * clearPlaybackSessionUiState() のような完全終了 cleanup ではなく、
+     * resetForContentSwitch() と同系統の「旧 session を持ち越さない」用途で使う。
+     *
+     * @param {object} [options={}] 実行オプション。
+     * @param {string} [options.reason="startup_target_attach_cleanup"] cleanup reason。
+     */
+    function clearSubtitlesForStartup(options = {}) {
+      const reason =
+        typeof options.reason === "string" && options.reason
+          ? options.reason
+          : "startup_target_attach_cleanup";
+
+      resetForContentSwitch(reason);
+    }
+
+    /**
      * restart teardown 用の cleanup owner 入口。
      * startup coordinator などからの rebuild 要求で、現在の playback session を
      * 再生成前提の teardown へ収束させる。
@@ -576,6 +596,7 @@
     // playback session teardown はこの公開 API 群へ収束させる。
     return {
       teardownForRestart,
+      clearSubtitlesForStartup,
       detachForDisabled,
       prepareForRestart,
       resetForContentSwitch,

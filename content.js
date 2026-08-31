@@ -2571,7 +2571,9 @@ function forwardContentLog(...args) {
         attachTracks,
         startBilingual,
         clearSubtitles: () =>
-          clearInternalSubtitleState({ preserveSecondaryDom: false }),
+          playbackSessionCleanup?.clearPlaybackSessionUiState?.(
+            "startup-clear-subtitles",
+          ),
         playbackSessionCleanup,
       },
     }) ?? null;
@@ -2787,6 +2789,7 @@ function forwardContentLog(...args) {
   });
 
   // options オブジェクト形式で呼び出し可能。
+  // playback session cleanup owner が利用する subtitle state reset helper。
   // 後方互換のため reason 文字列も受け付けるが、
   // 新規呼び出しは { preserveSecondaryDom: bool } 形式を使うこと。
   //
@@ -2794,6 +2797,9 @@ function forwardContentLog(...args) {
   // 完全リセット経路へ切り替える。
   // subtitle-state-reset.js 側の resetSubtitleStateForToggle() を使い、
   // 古い字幕 block / snapshot / text 参照を次回 session へ持ち越さない。
+  //
+  // content.js から direct cleanup API としては公開せず、
+  // playback-session-cleanup.js からの内部利用を主用途とする。
   function clearInternalSubtitleState(reasonOrOptions = {}) {
     let preserveSecondaryDom = false;
     let resetReason = "clear-internal-subtitle-state";
@@ -3132,11 +3138,14 @@ function forwardContentLog(...args) {
 
     const requestedSettings = state.requestedContentSettings || {};
 
-    // 言語設定が未完了なら panelOpen=false に寄せて UI を閉じる
+    // 言語設定が未完了なら panelOpen=false に寄せ、
+    // cleanup owner 経由で現在の session UI を再生成可能状態へ戻す。
     if (!isLanguageSelectionReady(requestedSettings)) {
       state.panelOpen = false;
       stopSecondaryTrackSyncInterval("manual-restart-cleanup");
-      panelUi.dispose({ reason: "manual-restart-cleanup" });
+      playbackSessionCleanup?.prepareForRestart?.({
+        reason: "manual-restart-cleanup",
+      });
       applyLayout(false);
       showLanguageSetupNotice();
       logContentSettings(

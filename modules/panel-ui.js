@@ -5,20 +5,22 @@
 // - 右側字幕パネルの UI host / ShadowRoot を作る
 // - 字幕パネル開閉ボタンを作る
 // - ネイティブトグルを再生画面へ差し込む
-// - panel host / ShadowRoot / renderer 入力組み立て / render state の owner を担う
+// - playback session に従属する panel UI module として、
+//   panel host / ShadowRoot / renderer 入力組み立て / render state を管理する
 //
 // 位置づけ:
-// - `content.js` から panel build の「順序知識」と panel render 実行知識を引き受ける owner。
-// - `mountForPlayback()` が再生画面用 panel UI 一式の唯一の入口となり、
+// - `content.js` から panel build の順序知識を受け取り、
+//   mount / render / dispose の受け口を提供する session 従属 UI module。
+// - `mountForPlayback()` は再生画面用 panel UI 一式を構築する入口であり、
 //   `ensurePanelToggleButton()` / `createRightPanel()` / `watchForPlayerTabs()` /
 //   popup host / debug panel の呼び出し順序をこのファイル内に閉じ込める。
 // - visibility の正本は `modules/panel-visibility-state.js` 側にあり、
-//   このファイルは DOM 表示切り替え・render state 所有・renderer 呼び出し owner に留める。
+//   このファイルは DOM 表示切り替え・render state 管理・renderer 呼び出しに留める。
 // - panel-renderer.js は描画専用とし、state 収集・snapshot 保持・seek 後再描画予約はこのファイルが担う。
-// - subtitle block sequence / current block / meta などの block state は subtitle 側 owner が持ち、
+// - subtitle block sequence / current block / meta などの block state は subtitle 側が持ち、
 //   このファイルは panel 描画入力として読み取るだけに留める。
 // - overlay には「表示状態を空にして隠す」軽量 cleanup と「DOM / layout tracking を完全に破棄する」
-//   完全 cleanup の 2 段階があり、このファイルは後者の破棄入口を担う。
+//   完全 cleanup の 2 段階があり、このファイルは subordinate UI 側の破棄処理を提供する。
 // =============================================================
 
 (function () {
@@ -34,10 +36,10 @@
    * @param {(...args: any[]) => void} [deps.logContent] - content ログを記録する関数。
    * @param {(message: string, payload?: any) => void} [deps.logPanelProbe] - panel/UI 観測用 probe ログ関数。
    * @param {(reason: string) => void} [deps.applyPanelStateEffects] - panel open 時の補助 effects。
-   *   panel block 再構築や外部副作用が必要な場合に owner 外から注入する。
+   *   panel block 再構築や外部副作用が必要な場合に上位 module から注入する。
    * @param {() => void} deps.destroyOverlay - overlay UI を完全破棄する関数。
    *   overlay text / visibility を一時的に空にする軽量 cleanup ではなく、
-   *   DOM と layout tracking を取り除く完全 cleanup の入口を受け取る。
+   *   DOM と layout tracking を取り除く完全 cleanup 関数を受け取る。
    * @param {() => void} [deps.mountPopupHost] - popup host（単語ポップアップ等）を mount する関数。
    * @param {() => void} [deps.mountDebugPanel] - debug panel を mount する関数。
    * @param {object} [deps.panelRenderer] - createPanelRenderer() が返した renderer API。
@@ -444,22 +446,23 @@
     }
 
     /**
-     * panel UI 一式を破棄する。
+     * panel session UI を撤収する。
      * panel host / toggle button / native observer / resize listener / render timer /
-     * render snapshot / renderer owner state / overlay DOM を対称に cleanup する。
+     * render snapshot / renderer state / overlay DOM を対称に cleanup する。
      *
-     * panel 系 cleanup の入口はこの関数に寄せる。
-     * 再起動・拡張 OFF・content switch は playback-session-cleanup.js 経由でここへ到達し、
-     * 手動再起動 cleanup は content.js から直接ここを呼ぶ。
+     * 再起動・拡張 OFF・content switch を含む session teardown では、
+     * playback-session-cleanup.js など上位 lifecycle から呼ばれる
+     * subordinate UI 側の dispose として使う。
      *
-     * この関数は panel 系 cleanup の高レベル入口であり、低レベルな host 除去は
-     * `removeHost()` を内部利用して行う。
+     * この関数は panel host / toggle button / overlay DOM / render artifacts などの
+     * panel UI 内部資源を解放する撤収口であり、session cleanup の owner にはしない。
+     * 低レベルな host 除去は `removeHost()` を内部利用して行う。
      *
      * overlay については、表示テキストや visible state を空にして隠す軽量 cleanup
      * ではなく、DOM と layout tracking を取り除く完全破棄を担当する。
      *
      * 一方で subtitle block sequence / current block / block meta などの block state は
-     * subtitle 側 owner の責務であり、この関数では破棄しない。
+     * subtitle 側の責務であり、この関数では破棄しない。
      *
      * 冪等に呼べることを前提とし、対象が未生成・未接続でも安全に復帰する。
      *

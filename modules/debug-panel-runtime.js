@@ -3,10 +3,11 @@
 // version: 2.6.8
 // -------------------------------------------------------------
 // 役割:
-// - debug panel の runtime を提供する。
+// - playback session に従属する debug panel runtime を提供する。
 // - panel / options の variant ごとに UI 更新先を切り替える。
-// - shell 上のイベント配線、再描画、clear、unmount を担う。
-// - shadow root / document 単位で handler/state を管理する。
+// - shell 上のイベント配線、再描画、clear、unmount を内部で閉じる。
+// - 起動・撤収の判断は上位 lifecycle に従い、
+//   shadow root / document 単位の handler / timer / observer / state を管理・解放する。
 // =============================================================
 (function () {
   "use strict";
@@ -353,7 +354,10 @@
   }
 
   /**
-   * runtime を unmount する。
+   * debug panel runtime を撤収する。
+   *
+   * playback session cleanup owner など上位 lifecycle から呼ばれ、
+   * runtime 内部の handler / timer / observer / DOM 結び付きを解放する。
    *
    * @param {ShadowRoot|Document|Element|null} root
    * @returns {void}
