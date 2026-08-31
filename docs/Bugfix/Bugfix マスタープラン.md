@@ -1,17 +1,17 @@
-# Bugfix マスタープラン 2026-08-30（要約版）
+# Bugfix マスタープラン 2026-08-31（要約版）
 
-**作成日:** 2026-08-13 ／ **最終更新:** 2026-08-30 ／ **ブランチ:** `issue-32-content-core-split`  
+**作成日:** 2026-08-13 ／ **最終更新:** 2026-08-31 ／ **ブランチ:** `issue-32-content-core-split`  
 **入口資料:** 新しいスレッドでもこの資料 1 枚を読めば、プロジェクトの目標・現在地・優先順位・次に着手する作業が分かる状態を保つ。  
-**反映済みの主な節目:** Step 15 の `lane-recovery-state` 命名整理、Step 16 の `cue-sequence-builder` への導出集約、Step 17-A-7 / 17-A-8 / 17-A-9 / 17-A-10 の panel 系整理、Step 17-A-11 の `extensionEnabled` runtime state 分離、Panel / Startup / Recovery の詳細観測ログの既存 probe への追加移管、Step17-C として残存 `logContent` の棚卸しと probe 制御方針整理メモの作成まで反映済みである。現在は、**playback session lifecycle の owner を単一路線へ寄せる責務再設計に着手した段階**である。次回は**責務移管チェックリストに沿って起動入口と cleanup 入口の一本化を進めるところから着手する**。
+**反映済みの主な節目:** Step 15 の `lane-recovery-state` 命名整理、Step 16 の `cue-sequence-builder` への導出集約、Step 17-A-7 / 17-A-8 / 17-A-9 / 17-A-10 の panel 系整理、Step 17-A-11 の `extensionEnabled` runtime state 分離、Panel / Startup / Recovery の詳細観測ログの既存 probe への追加移管、Step17-C として残存 `logContent` の棚卸しと probe 制御方針整理メモの作成、さらに playback session lifecycle の責務再設計として **startup owner の一本化、cleanup owner 側の API / 説明層整備、`content.js` の主要 direct cleanup callsite 集約** まで反映済みである。 現在は、**cleanup owner 一本化の残差整理フェーズ**に入っており、`reinitialize-coordinator.js` に残る `clearInternalSubtitleState(...)` 直呼びと、`content.js` に残る helper / DI の最終整理を進める段階である。
 
 ***
 
 ## この資料の役割
 
-この資料は、Bugfix 系作業全体の**入口資料**である。  
+この資料は、Bugfix 系作業全体の**入口資料**である。
 ここでは、全体目標、現在地、優先順位、正本の所在、次スレッドで最初に着手すべき作業だけを示す。
 
-この資料では、個別ファイルの詳細実装手順、JSDoc 案、調査メモ、実機ログの細部は持たない。  
+この資料では、個別ファイルの詳細実装手順、JSDoc 案、調査メモ、実機ログの細部は持たない。
 それらは `Bugfix 実装シート.md`、各 Step 方針整理メモ、または専用資料を正本とする。
 
 ***
@@ -20,12 +20,11 @@
 
 | # | 資料名 | 役割 | 更新頻度 |
 | :-- | :-- | :-- | :-- |
-| 資料① | `docs/Bugfix/Bugfix マスタープラン.md` | 全体俯瞰・目標・優先順位・次スレッドの入口  | 節目ごとに更新  |
-| 資料② | `docs/Bugfix/Bugfix 実装シート.md` | 今やっている作業の対象・実装順・検証手順・作業メモ  | 作業中に更新、完了後は整理  |
-| 資料③ | `docs/Bugfix/Bugfix 将来作業計画.md` | 後続ステップや保留課題の一覧  | 予定変更時に更新  |
-| 資料④ | `docs/Bugfix/Bugfix-仕様確定書.md` | 確定仕様の正本  | 仕様変更時のみ更新  |
-| 資料⑤ | `docs/Bugfix/字幕同期・切り替え条件統合と責務再設計メモ.md` | primary / secondary 字幕同期、monitor、recovery、native fallback の統合設計メモ  | 字幕同期設計変更時に更新  |
-
+| 資料① | `docs/Bugfix/Bugfix マスタープラン.md` | 全体俯瞰・目標・優先順位・次スレッドの入口 | 節目ごとに更新 |
+| 資料② | `docs/Bugfix/Bugfix 実装シート.md` | 今やっている作業の対象・実装順・検証手順・作業メモ | 作業中に更新、完了後は整理 |
+| 資料③ | `docs/Bugfix/Bugfix 将来作業計画.md` | 後続ステップや保留課題の一覧 | 予定変更時に更新 |
+| 資料④ | `docs/Bugfix/Bugfix-仕様確定書.md` | 確定仕様の正本 | 仕様変更時のみ更新 |
+| 資料⑤ | `docs/Bugfix/字幕同期・切り替え条件統合と責務再設計メモ.md` | primary / secondary 字幕同期、monitor、recovery、native fallback の統合設計メモ | 字幕同期設計変更時に更新 |
 
 ***
 
@@ -43,15 +42,15 @@
 
 | 変数名 | 保存先 | 役割 | 備考 |
 | :-- | :-- | :-- | :-- |
-| `state.extensionEnabled` | ランタイムメモリ | 現在の playback session における拡張全体の ON/OFF  | native toggle / runtime 設定反映で更新する。`chrome.storage.sync` には保存しない（Step 17-A-11 で完全に分離済み）。  |
-| `panelOpen` | `chrome.storage.local` | 現在の字幕パネル開閉状態  | `modules/panel-visibility-state.js` が load / persist を担当する。  |
-| `panelDefaultOpen` | `chrome.storage.sync` | 通常起動時の `panelOpen` 初期値  | ランタイムの現在状態ではない。  |
-| `subtitleBlockState.sequence` | ランタイムメモリ | sequence / blocks / currentIndex / meta の正本  | `modules/subtitle-block-state.js` が取得、current block 解決、panel open 時の再同期を担当する。  |
-| `state.currentSubtitleBlock` | ランタイムミラー | 現在字幕 block の互換参照  | 既存 renderer / overlay 互換のために残すが正本ではない。  |
-| `state.lastPanelRenderSnapshot` | 観測用ランタイム情報 | panel 最終描画 snapshot  | debug / 観測用途。保存・clear は panel owner 側で扱う。  |
+| `state.extensionEnabled` | ランタイムメモリ | 現在の playback session における拡張全体の ON/OFF | native toggle / runtime 設定反映で更新する。`chrome.storage.sync` には保存しない（Step 17-A-11 で完全に分離済み）。 |
+| `panelOpen` | `chrome.storage.local` | 現在の字幕パネル開閉状態 | `modules/panel-visibility-state.js` が load / persist を担当する。 |
+| `panelDefaultOpen` | `chrome.storage.sync` | 通常起動時の `panelOpen` 初期値 | ランタイムの現在状態ではない。 |
+| `subtitleBlockState.sequence` | ランタイムメモリ | sequence / blocks / currentIndex / meta の正本 | `modules/subtitle-block-state.js` が取得、current block 解決、panel open 時の再同期を担当する。 |
+| `state.currentSubtitleBlock` | ランタイムミラー | 現在字幕 block の互換参照 | 既存 renderer / overlay 互換のために残すが正本ではない。 |
+| `state.lastPanelRenderSnapshot` | 観測用ランタイム情報 | panel 最終描画 snapshot | debug / 観測用途。保存・clear は panel owner 側で扱う。 |
 
 **補足**  
-`extensionEnabled` は永続設定ではなく、現在の playback session に限定した runtime state である。ページ再読込または SPA 遷移後の新しい playback session では、前セッションの ON/OFF 状態を `chrome.storage.sync` から復元しない。Step 17-A-11 で、`modules/settings-store.js` / `modules/settings-schema.js` / popup / options の全経路からこの前提を確定済みである。
+`extensionEnabled` は永続設定ではなく、現在の playback session に限定した runtime state である。 ページ再読込または SPA 遷移後の新しい playback session では、前セッションの ON/OFF 状態を `chrome.storage.sync` から復元しない。 Step 17-A-11 で、`modules/settings-store.js` / `modules/settings-schema.js` / popup / options の全経路からこの前提を確定済みである。
 `panelOpen` は現在、`chrome.storage.local` に保存する設計で実装されている。
 `panelDefaultOpen` は未保存時の初期値であり、`panelOpen` と混同しない。
 
@@ -61,13 +60,13 @@
 
 | 正式名称 | DOM ID | 役割 |
 | :-- | :-- | :-- |
-| ネイティブトグル | `atvb-native-toggle` | 現在の playback session における拡張全体の runtime ON/OFF。`state.extensionEnabled` を切り替え、OFF 時も残す。  |
-| 字幕パネル開閉ボタン | `atv-toggle-btn` | 右側字幕パネルの開閉のみ。設定保存に関与しない。  |
-| 字幕パネル本体 host | `atv-panel-host` | 右側字幕パネル host。表示/非表示と矩形計測の正本。  |
-| 字幕パネル本体 root | `atv-panel-root` | 右側字幕パネル本体。  |
-| オーバーレイ host | `atv-overlay-host` | 学習補助オーバーレイ host。位置・幅・矩形計測の正本。  |
-| オーバーレイ inner root | `data-atvb-overlay-root` | overlay 内部コンテナ。文字要素の親。  |
-| 単語詳細 UI host | `atv-term-inspector-host` | term inspector の host。  |
+| ネイティブトグル | `atvb-native-toggle` | 現在の playback session における拡張全体の runtime ON/OFF。`state.extensionEnabled` を切り替え、OFF 時も残す。 |
+| 字幕パネル開閉ボタン | `atv-toggle-btn` | 右側字幕パネルの開閉のみ。設定保存に関与しない。 |
+| 字幕パネル本体 host | `atv-panel-host` | 右側字幕パネル host。表示/非表示と矩形計測の正本。 |
+| 字幕パネル本体 root | `atv-panel-root` | 右側字幕パネル本体。 |
+| オーバーレイ host | `atv-overlay-host` | 学習補助オーバーレイ host。位置・幅・矩形計測の正本。 |
+| オーバーレイ inner root | `data-atvb-overlay-root` | overlay 内部コンテナ。文字要素の親。 |
+| 単語詳細 UI host | `atv-term-inspector-host` | term inspector の host。 |
 
 ***
 
@@ -88,32 +87,66 @@
 - Step 17-A-11 として、`extensionEnabled` を `chrome.storage.sync` から切り離し、playback session 限定の runtime state として確定済みである。
 - Panel / Startup / Recovery の詳細観測ログは、既存 probe への追加移管が進み、ブラウザテスト前提となる観測経路の整備は一通り完了している。
 - Step 17-C の前提として、残存 `logContent` の棚卸しと probe 制御方針整理メモの作成は完了している。
+- playback session lifecycle の責務再設計について、`settings-runtime.js` に残っていた readiness wait / `addtrack` watch / direct start / `restartBilingual(...)` は整理され、起動要求は `coordinator.attachAndMaybeStart(...)` へ集約済みである。
+- `modules/playback-session-cleanup.js` は session cleanup owner の受け皿として API と説明層が整備され、`content.js` 側の主要 direct cleanup callsite であった `clearSubtitles` と manual restart cleanup は cleanup owner API 経由へ置換済みである。
+- `modules/panel-ui.js` と `modules/debug-panel-runtime.js` は、cleanup owner ではなく playback session に従属する subordinate UI module / runtime として、ヘッダーおよび dispose / unmount の説明層を更新済みである。
 
 ### いま着手している主作業
 
-現在の主作業は、**playback session lifecycle の owner を単一路線へ寄せる責務再設計**である。これは、起動・再起動・UI 再マウント・cleanup の入口が複数箇所に分散している状態を解消し、`1 playback target = 1 playback session`、`1 session = 1 owner` の原則に寄せるための作業である。
+現在の主作業は、**playback session lifecycle の owner を単一路線へ寄せる責務再設計の残差整理**である。 これは、起動 owner の一本化が完了したあとに、cleanup owner 一本化をコード上でも完全に読める状態へ寄せるための後半フェーズである。
 
-今回の責務再設計では、`modules/playback-startup-coordinator.js` を唯一の起動前段 owner に寄せ、`settings-runtime.js` から直接 start する経路、tracks readiness 待ち、`addtrack` listener、poll / timeout 起動などの分散入口を外していく。あわせて、`reinitialize-coordinator.js` を再起動理由判定と再評価要求の薄い層へ縮退し、`modules/playback-session-cleanup.js` を session teardown の唯一入口へ寄せる方針で進める。
+この段階では、`modules/playback-startup-coordinator.js` を唯一の起動前段 owner とする方針は実装に反映済みであり、`settings-runtime.js` から直接 start する経路は整理済みである。 一方で、cleanup 側は `modules/playback-session-cleanup.js` を teardown owner とする受け皿整備と主要 callsite 集約までは完了したが、`reinitialize-coordinator.js` に残る `clearInternalSubtitleState(...)` 直呼びと、`content.js` に残る helper / DI の縮退がまだ残っている。
 
-また、`panel-ui.js` と `debug-panel-runtime.js` は session 従属 UI として cleanup 配下へ揃え、startup / panel / recovery probe を使って rebuild 経路が一筆書きで読める状態を目指す。今回の作業は、字幕同期アルゴリズム自体の全面改修や probe 全面移行の完了、ブラウザテスト結果の確定までは含まず、まず owner と入口の整理を正本化して進める段階である。
+したがって、現時点の表現として正確なのは、**startup owner 一本化は完了、cleanup owner 一本化は一部完了**である。 完了済み事項は「owner 側受け皿と主要 callsite 集約まで」、残課題は「cleanup 内部専用 helper への格下げと、reinitialize / content 側の残存直呼び整理」として扱う。
+
+### 次回の着手点
+
+次回は、cleanup owner 一本化の残課題から再開する。
+
+優先順位は次のとおりである。
+
+1. `reinitialize-coordinator.js` に残る `clearInternalSubtitleState(...)` 直呼びを除去し、cleanup owner 経由へ置換する。
+2. `content.js` に残る `clearInternalSubtitleState(...)` の helper / DI を、cleanup 内部専用 helper として読める形へ縮退する。
+3. 上記整理の完了後、不要になった watcher / timer / wrapper / 補助 cleanup を物理削除する。
+4. その後、関連ドキュメント間で「startup = coordinator」「cleanup = playback-session-cleanup」「content.js = wiring」「panel/debug = subordinate module」という表現を揃える。
 
 ***
 
 ## 優先順位
 
-1. playback session lifecycle の owner 単一化と、起動入口・再起動入口・cleanup 入口の一本化を進める。
-2. `settings-runtime.js` / `reinitialize-coordinator.js` / `modules/playback-startup-coordinator.js` / `modules/playback-session-cleanup.js` の責務境界を再整理し、不要経路を段階的に除去する。
-3. session 従属 UI と probe 経路を cleanup 配下へ揃え、rebuild 経路の観測可能性を保ったままブラウザテスト前提を整える。
-4. 上記の責務移管が安定した段階で、ブラウザテストに戻って実機で lifecycle / cleanup / recovery の整合性を検証する。
+### いま最優先の作業
+
+最優先は、**playback session lifecycle の owner 一本化を cleanup 側まで完結させること**である。 現在は起動入口の一本化が済んでいるため、残る重点は cleanup owner の境界を `reinitialize-coordinator.js` / `content.js` / `modules/playback-session-cleanup.js` 間で完全にそろえることにある。
+
+### その次にやる作業
+
+その次は、不要になった watcher / timeout / wrapper / 補助 cleanup を物理削除し、実装と設計文書の差分を詰めることである。 あわせて、`Bugfix 実装シート.md`、`Bugfix 将来作業計画.md`、`Bugfix 設計整理対応表.md` 側の進捗表記も、今回完了した範囲に合わせて更新する。
+
+### 後続の作業
+
+owner 一本化が完了したら、次は browser test とログ確認を通じて、settings 変更・SPA 遷移・track invalidation・restart 要求のどれから入っても同じ rebuild 経路へ収束することを再確認する。 そのうえで、残存 `logContent` 整理と probe 制御方針に沿った観測経路の軽量化を継続する。
 
 ***
 
-## 次回着手
+## 今回の判断基準
 
-次回は、`Bugfix 実装シート.md` にある責務移管チェックリストを正本として、**起動入口と cleanup 入口の一本化を具体的に進めるところから着手する**。特に、`settings-runtime.js` に残る直接 start 経路、tracks readiness 待ち、`addtrack` listener、poll / timeout 起動の削減対象を確認し、`modules/playback-startup-coordinator.js` を唯一の起動前段 owner に寄せる。
+今回の責務再設計で重視している判断基準は次のとおりである。
 
-そのうえで、`reinitialize-coordinator.js` を再起動理由判定と再評価要求の薄い層へ縮退できるかを見直し、`modules/playback-session-cleanup.js` を session teardown の唯一入口として固定する。並行して、`panel-ui.js` と `debug-panel-runtime.js` を cleanup 配下の session 従属 UI として揃え、startup / panel / recovery probe で rebuild 経路が一筆書きで追える状態を確認する。
+- **1 playback target = 1 playback session = 1 owner** を説明と実装の両方で読めること。
+- settings 変更、SPA 遷移、track invalidation、restart 要求のどれから入っても、最終的に同じ rebuild 経路へ流れること。
+- `content.js` が wiring / request のハブに戻り、start / cleanup の owner 顔をしないこと。
+- `panel-ui.js` / `debug-panel-runtime.js` は subordinate UI module として mount / render / dispose に責務を限定し、session owner を名乗らないこと。
+- `clearInternalSubtitleState(...)` は物理削除を急ぐのではなく、cleanup 内部専用 helper へ格下げして owner 境界を明確にすること。
 
-ブラウザテストは、これらの責務移管で入口構造が整理された後に再開する。つまり次回の最初の着手点は「テスト実施」ではなく、**テスト前提を安定化させるための責務再設計の実装反映**である。
+***
 
+## 次スレッド開始時の確認ポイント
+
+次スレッドでは、まず次の 3 点を確認する。
+
+- `reinitialize-coordinator.js` に `clearInternalSubtitleState(...)` の直呼びが残っていないか。
+- `content.js` に残る `clearInternalSubtitleState(...)` が、外向き cleanup API ではなく cleanup 内部 helper として読める状態か。
+- cleanup 完了後の rebuild 経路が、`request → cleanup owner → attachAndMaybeStart(...) → startBilingual(...)` の順で追えるか。
+
+この 3 点が揃えば、playback session lifecycle の owner 一本化は cleanup 側までかなり前進したと判断できる。
 

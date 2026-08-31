@@ -1,16 +1,16 @@
-# Bugfix 設計整理対応表 2026-08-30
+# Bugfix 設計整理対応表 2026-08-31
 
 **目的:**  
 再構築の入口を `modules/playback-startup-coordinator.js` に一本化し、終了処理を `modules/playback-session-cleanup.js` に一本化するために、各ファイルで「残す責務」「移す責務」「削除対象関数」「置換先 API」「確認ログ」を明確化する。
 
 **設計原則:**  
-目指す形は **1 playback target = 1 playback session = 1 owner** であり、settings 変更・SPA 遷移・track invalidation・restart 要求のどれから入っても、最終的に同じ rebuild 経路へ流すことにある。
+目指す形は **1 playback target = 1 playback session = 1 owner** であり、settings 変更・SPA 遷移・track invalidation・restart 要求のどれから入っても、最終的に同じ rebuild 経路へ流すことにある。  
 一方で、UI 再マウントは単独で session rebuild 理由にはせず、session / target / track 条件の変化を伴う場合だけ rebuild 判定へ接続する。
 
-**現状の観測要点:**  
-すでに `modules/playback-startup-coordinator.js` には `attachAndMaybeStart(video, reason, options)`、target change 検知、`addtrack` と poll を使った readiness 待ちが存在し、起動一本化の受け皿がある。
-一方で `settings-runtime.js` には `startBilingualWhenTracksReady()`、直接 `startBilingual(...)`、`textTracks.addEventListener("addtrack", ...)`、`restartBilingual(...)` がまだ残っており、起動 owner が分散している。
-また、`reinitialize-coordinator.js` と `content.js` と `modules/playback-session-cleanup.js` の間で `clearInternalSubtitleState(...)` がまたがっており、cleanup owner の境界もまだ曖昧である。
+**進捗要約:**  
+起動入口の一本化は完了している。`settings-runtime.js` にあった tracks readiness 待ち、`addtrack` 監視、直接 `startBilingual(...)`、`restartBilingual(...)` の実 start 経路は coordinator 側へ集約済みである。  
+cleanup owner 側は、`modules/playback-session-cleanup.js` を session teardown の唯一入口として説明・API の両面で整理し、`content.js` の主要 direct cleanup callsite も owner API 経由へ置換済みである。  
+ただし、`reinitialize-coordinator.js` に残る `clearInternalSubtitleState(...)` の直呼び、および `content.js` に残る helper / DI の縮退は未完了である。したがって cleanup owner 一本化は完了扱いにせず、**owner 側受け皿と主要 callsite 集約が完了し、残差整理フェーズへ移行した状態**として扱う。
 
 ***
 
@@ -59,6 +59,7 @@
 - `settings-runtime.js` の `addtrack` listener や timeout / polling がその場で start owner になること
 - `reinitialize-coordinator.js` が実 cleanup を実行してそのまま再構築まで行うこと
 - `content.js` が手動で panel だけ dispose して session cleanup を代替すること
+- `content.js` が cleanup owner を通さずに外向き API として subtitle state clear を提供すること
 - UI 再マウントを session rebuild と同義に扱うこと
 
 この流れ以外の start / rebuild / teardown 経路は、段階的に削除対象とする。
@@ -67,475 +68,251 @@
 
 ## 対応表
 
-| ファイル | 残す責務 | 移す責務 | 削除対象関数・経路 | 置換先 API / 呼び出し先 | 確認ログ |
-|---|---|---|---|---|---|
-| `modules/playback-startup-coordinator.js` | playback target change 検知、readiness 待ち、delayed retry、起動要求の一本化 | `settings-runtime.js` 側に残る tracks readiness 待ち、start 補助用 `addtrack` / poll / timeout | coordinator 以外からの個別 start 入口 | `attachAndMaybeStart(video, reason, options)` | `playback target changed`、`cleanup skipped`、readiness wait、retry、start attempt  |
-| `content.js` 内 `startBilingual(...)` 本体 | session 実構築、tracks 解決、listener 接続、secondary DOM 構築、panel 初期化 | readiness 判定、再起動判断、target change 監視 | 外側の rebuild 判断を抱え込む構造 | `startBilingual(options)` を build 専用に縮退 | start begin、track resolved、listener attached、panel mounted  |
-| `modules/playback-session-cleanup.js` | session teardown、dispose 入口、session 単位の cleanup 集約 | `reinitialize-coordinator.js` の実 cleanup、散在した timer / listener / observer / DOM 解放 | session 外からの部分 teardown、各所の個別 cleanup 主導 | `disposeCurrentSession(reason)` または同等の唯一入口へ整理 | cleanup requested、cleanup begin、cleanup skipped、cleanup done  |
-| `settings-runtime.js` | 設定読込、設定保存、runtime state 更新、再評価依頼 | readiness 待ち、`addtrack` listener、直接 start、独自 retry / timeout | `startBilingualWhenTracksReady()`、直接 `startBilingual(...)`、`restartBilingual(...)` の実 start 部分 | `coordinator.attachAndMaybeStart(...)`、将来的に `requestStartupReevaluation(reason)` / `requestRebuild(reason)` | settings changed、state applied、rebuild requested  |
-| `reinitialize-coordinator.js` | 再起動理由の分類、reason code の整形、rebuild 要求発行 | 実 cleanup、内部 state 強制破棄、実再構築 | `clearInternalSubtitleState(...)` の実 cleanup owner 化、二重 teardown / rebuild | `requestRebuild(reason, options)` だけを残す方向 | rebuild reason、reason classified、rebuild requested  |
-| `modules/panel-ui.js` | panel lifecycle、render、state apply、UI dispose 実装 | session 全体 cleanup 統括 | panel から session 全体 start / rebuild / cleanup を逆流制御する経路 | cleanup 層から `panelUi.dispose(...)` を呼ぶ | panel mounted、panel refreshed、panel disposed  |
-| `modules/debug-panel-runtime.js` | debug UI の mount / subscribe / dispose | dispose 呼び出し統括、session owner 判断 | debug runtime が session 寿命を支配する構造 | cleanup 層から dispose 呼び出し | debug mounted、debug unsubscribed、debug disposed（新設候補） |
-| `content.js` 内 `clearInternalSubtitleState(...)` | 低レベル状態クリア実装の素材としてのみ残すか再配置検討 | cleanup owner 判断、呼び出し統括 | coordinator / reinitialize / content 本体からの直呼び増殖 | cleanup モジュール経由に限定 | internal state clear begin / done（新設候補） |
+| ファイル | 残す責務 | 移す責務 | 削除対象関数・経路 | 置換先 API / 呼び出し先 | 進捗 | 確認ログ |
+|---|---|---|---|---|---|---|
+| `modules/playback-startup-coordinator.js` | playback target change 検知、readiness 待ち、delayed retry、起動要求の一本化 | `settings-runtime.js` 側に残る tracks readiness 待ち、start 補助用 `addtrack` / poll / timeout | coordinator 以外からの個別 start 入口 | `attachAndMaybeStart(video, reason, options)` | **完了**。起動 owner の受け皿として運用する | `playback target changed`、`cleanup skipped`、readiness wait、retry、start attempt |
+| `content.js` 内 `startBilingual(...)` 本体 | session 実構築、tracks 解決、listener 接続、secondary DOM 構築、panel 初期化 | readiness 判定、再起動判断、target change 監視 | 外側の rebuild 判断を抱え込む構造 | `startBilingual(options)` を build 専用に縮退 | **一部完了**。主要 direct cleanup は owner 経由へ置換済み。helper / DI 縮退が残る | start begin、track resolved、listener attached、panel mounted |
+| `modules/playback-session-cleanup.js` | session teardown、dispose 入口、panel / debug / subtitle state / observer の cleanup 集約 | `reinitialize-coordinator.js` の実 cleanup、散在した timer / listener / observer / DOM 解放 | session 外からの部分 teardown、各所の個別 cleanup 主導 | `detachForDisabled(...)`、`prepareForRestart(...)`、`resetForContentSwitch(...)`、`clearPlaybackSessionUiState(...)` | **一部完了**。owner API と説明層は整備済み、残存 direct cleanup の最終集約が残る | cleanup requested、cleanup begin、cleanup skipped、cleanup done |
+| `settings-runtime.js` | 設定読込、設定保存、runtime state 更新、再評価依頼 | readiness 待ち、`addtrack` listener、直接 start、独自 retry / timeout | `startBilingualWhenTracksReady()`、直接 `startBilingual(...)`、`restartBilingual(...)` の実 start 部分 | `coordinator.attachAndMaybeStart(...)`、`requestStartupReevaluation(reason)` / `requestRebuild(reason)` | **完了**。direct start 経路を coordinator へ移管済み | settings changed、state applied、rebuild requested |
+| `reinitialize-coordinator.js` | 再起動理由の分類、reason code の整形、rebuild 要求発行 | 実 cleanup、内部 state 強制破棄、実再構築 | `clearInternalSubtitleState(...)` の direct call、二重 teardown / rebuild | `requestRebuild(reason, options)`、cleanup owner API | **未完了**。cleanup owner 境界の残差整理の主対象 | rebuild reason、reason classified、rebuild requested |
+| `modules/panel-ui.js` | panel lifecycle、render、state apply、UI dispose 実装 | session 全体 cleanup 統括 | panel から session 全体 start / rebuild / cleanup を逆流制御する経路 | cleanup owner から `panelUi.dispose(...)` を呼ぶ | **説明層完了**。session subordinate UI module として整理済み | panel mounted、panel refreshed、panel disposed |
+| `modules/debug-panel-runtime.js` | debug UI の mount / subscribe / dispose | dispose 呼び出し統括、session owner 判断 | debug runtime が session 寿命を支配する構造 | cleanup owner から dispose 呼び出し | **説明層完了**。session subordinate debug runtime として整理済み | debug mounted、debug updated、debug disposed |
 
 ***
 
-## ファイル別詳細
+## cleanup owner の責務境界
 
-## `modules/playback-startup-coordinator.js`
+### `modules/playback-session-cleanup.js`
 
-このファイルは、今回の再設計で**起動 owner**に固定する。  
-すでに `attachAndMaybeStart(video, reason, options)`、playback target change 検知、`addtrack + poll` による readiness 待ちを持っているため、起動前段の責務はここへ集約する。
+`modules/playback-session-cleanup.js` は playback session cleanup owner の唯一入口である。  
+panel UI、debug runtime、subtitle state、observer、timer、listener、secondary DOM など、session にひも付く状態の撤収は、原則としてこの module の公開 API を経由する。
 
-### 残す責務
+公開 API の役割は次のように固定する。
 
-- playback target の検知
-- target change の抑制と重複防止
-- readiness 待ち
-- delayed retry
-- start 入口の一本化
-- startup attempt の再入防止
+| API | 用途 | 呼び出し元の扱い |
+|---|---|---|
+| `detachForDisabled(...)` | 拡張 OFF 時の session teardown | OFF 要求は owner に渡し、個別 dispose を行わない |
+| `prepareForRestart(...)` | restart 前の session teardown | manual restart や再初期化前の撤収に使う |
+| `resetForContentSwitch(...)` | content / episode / target 切替時の teardown | 旧 session を次 target へ持ち越さない |
+| `clearPlaybackSessionUiState(...)` | session に属する UI / subtitle state の撤収 | `content.js` からの clear 要求はこの API に委譲する |
 
-### 移す責務
+`content.js` は wiring / request の責務を持つが、panel / debug / subtitle state の direct cleanup owner にはならない。  
+`clearInternalSubtitleState(...)` は残してよいが、cleanup owner が利用する内部 helper として扱い、外向き cleanup API として渡さない。
 
-- `settings-runtime.js` に残る readiness 待ち
-- `settings-runtime.js` に残る `addtrack` 起点 start
-- `settings-runtime.js` に残る timeout / polling による起動補助
+### `modules/panel-ui.js`
 
-### 削除・縮退対象
+`modules/panel-ui.js` は session 従属 UI module である。  
+panel の mount、render、state apply、dispose はこの module が実装するが、session 全体の cleanup 判断や teardown 開始の owner にはしない。
 
-- coordinator 外からの独自 start owner
-- 「必要そうだから start する」系の分散入口
-- 同じ target に対する重複 start 判定
+`dispose()` は panel session UI の撤収を担当する。  
+呼び出し元の増加を許容せず、通常は `modules/playback-session-cleanup.js` の配下から呼ばれる構造を維持する。
 
-### 置換方針
+### `modules/debug-panel-runtime.js`
 
-- 起動要求は最終的に `attachAndMaybeStart(video, reason, options)` に集約する
-- 直接 `startBilingual(...)` を呼ぶ箇所は、原則 coordinator 呼び出しへ置換する
+`modules/debug-panel-runtime.js` は session 従属の debug UI runtime である。  
+observer、timer、DOM、subscription の内部 cleanup は runtime 内に閉じるが、session を終了するかどうかの判断や teardown の開始は持たない。
 
-### 確認ログ
-
-- startup probe
-- playback target changed
-- readiness wait
-- retry scheduled / retry fire
-- start attempt
-- start suppressed / duplicate prevented
+debug runtime の lifecycle は playback session cleanup owner に従う。  
+`dispose()` は debug runtime 自身の撤収に限定し、session cleanup owner と同じ意味の用語や責務を持たせない。
 
 ***
 
-## `content.js`
+## 進捗整理
 
-このファイルは**配線と DI のハブ**へ戻す。  
-現状では `startBilingual(...)` と `clearInternalSubtitleState(...)` を持ち、さらに手動 cleanup 経路も抱えているため、lifecycle owner 的な責務を剥がす必要がある。
+### 完了済み
 
-### 残す責務
+| 区分 | 完了内容 |
+|---|---|
+| 起動入口 | `settings-runtime.js` から readiness wait、`addtrack` watch、direct start、実 start を伴う `restartBilingual(...)` 経路を外し、`coordinator.attachAndMaybeStart(...)` へ集約した |
+| cleanup owner 説明層 | `modules/playback-session-cleanup.js` を session cleanup owner の唯一入口として明示し、公開 API の JSDoc を session cleanup reason の入口文脈へ整理した |
+| content.js の主要 cleanup callsite | `clearSubtitles` を cleanup owner API 呼び出しへ差し替え、manual restart cleanup の direct `panelUi.dispose(...)` を `prepareForRestart(...)` 経由へ置換した |
+| panel UI | `modules/panel-ui.js` を cleanup owner ではなく、session 従属 UI module として説明した |
+| debug runtime | `modules/debug-panel-runtime.js` を cleanup owner ではなく、session 従属 debug UI runtime として説明した |
 
-- 依存性生成
-- module wiring
-- logger / probe 注入
-- 生成順管理
-- 公開 API の接続
+### 未完了
 
-### 移す責務
-
-- owner 判定
-- lifecycle 実装本体
-- start / cleanup 直統括
-- 再起動判断
-
-### 削除・縮退対象
-
-- `startBilingual(...)` のうち readiness 判定、再起動判断、target change 監視を抱え込む部分
-- `clearInternalSubtitleState(...)` を owner 的に扱う構造
-- `panelUi.dispose({ reason: "manual-restart-cleanup" })` のような直 cleanup
-- 分散した start / rebuild / cleanup 条件分岐
-
-### 置換方針
-
-- `startBilingual(...)` は build 専用関数として残す
-- cleanup 系は `modules/playback-session-cleanup.js` 経由に限定する
-- `content.js` は接続のみ行う
-
-### 確認ログ
-
-- wiring start
-- dependency ready
-- module connected
-- coordinator injected
-- cleanup injected
-- start delegated
-- cleanup delegated
+| 区分 | 残タスク | 完了条件 |
+|---|---|---|
+| `reinitialize-coordinator.js` | `clearInternalSubtitleState(...)` の直呼びを cleanup owner API へ置換する | coordinator が reason 分類と rebuild request に限定される |
+| `content.js` helper | `clearInternalSubtitleState(...)` の位置づけを cleanup owner 内部 helper として明確化する | content.js が外向き direct cleanup API を提供しない |
+| `content.js` DI | subtitle clear 関連の injection を cleanup owner API 基準へ縮退する | `clearInternalSubtitleState(...)` を外部 module へ直接渡さない |
+| 不要コード削除 | 旧 watcher / timer / wrapper / 補助 cleanup を削除する | 使用箇所がなく、owner API へ移行済みである |
+| 経路検証 | OFF / ON、manual restart、content switch、SPA 遷移、track invalidation を検証する | 多重 cleanup、旧 session 残留、native subtitle 復元不整合がない |
 
 ***
 
-## `modules/playback-session-cleanup.js`
+## 削除・縮退順
 
-このファイルは、**session teardown の唯一入口**に固定する。  
-`clearInternalSubtitleState(...)` を複数箇所から叩く構造をやめ、session cleanup はここ経由でのみ実行する形へ寄せる。
+### 1. `settings-runtime.js` の start 経路を coordinator へ移管
 
-### 残す責務
+**状態: 完了**
 
-- session teardown
-- cleanup 再入防止
-- session 所有物の解放
-- UI / listener / observer / timer / retry / DOM の cleanup 集約
-- cleanup 実行済み管理
+削除・縮退対象:
 
-### 移す責務
+- `startBilingualWhenTracksReady()`
+- 直接 `startBilingual(...)`
+- `textTracks.addEventListener("addtrack", ...)`
+- local poll / timeout / retry による start owner 化
+- 実 start を伴う `restartBilingual(...)` 経路
 
-- `reinitialize-coordinator.js` の実 cleanup
-- `content.js` 側の手動 cleanup
-- UI 個別モジュールからの owner 不明 dispose 統括
+置換先:
 
-### 削除・縮退対象
+- `coordinator.attachAndMaybeStart(video, reason, options)`
+- `requestStartupReevaluation(reason)`
+- `requestRebuild(reason, options)`
 
-- session cleanup を通らず UI だけ落とす経路
-- 外部からの部分 teardown の乱立
-- 各モジュールが自前 owner 顔で cleanup する構造
+### 2. `content.js` の主要 subtitle clear を cleanup owner へ委譲
 
-### 置換方針
+**状態: 完了**
 
-- `disposeCurrentSession(reason)` または同等の唯一入口へ整理する
-- `clearInternalSubtitleState(...)` は cleanup 内部実装へ閉じ込める
+削除・縮退対象:
 
-### 確認ログ
+- `clearSubtitles: () => clearInternalSubtitleState({ preserveSecondaryDom: false })` のような、外向き direct subtitle state clear
 
-- cleanup requested
-- cleanup skipped
-- cleanup begin
-- cleanup done
-- session disposed
-- stale resource dropped
+置換先:
 
-***
+- `playbackSessionCleanup.clearPlaybackSessionUiState(...)`
 
-## `settings-runtime.js`
+### 3. `content.js` の manual panel dispose を cleanup owner へ委譲
 
-このファイルは、今回の整理で**設定管理層**へ縮退させる。  
-現状では `startBilingualWhenTracksReady()`、直接 `startBilingual(...)`、`textTracks.addEventListener("addtrack", ...)`、`restartBilingual(...)` が残っており、起動 owner を奪っている。
+**状態: 完了**
 
-### 残す責務
+削除・縮退対象:
 
-- 設定読込
-- 設定保存
-- runtime state 更新
-- ON / OFF や設定変更の反映要求
-- coordinator への再評価依頼
+- language selection incomplete 分岐などでの `panelUi.dispose({ reason: "manual-restart-cleanup" })`
 
-### 移す責務
+置換先:
 
-- tracks readiness 待ち
-- `addtrack` listener ベースの start
-- timeout / interval による独自 start 待機
-- 実 start 本体
-- 実 rebuild 本体
+- `playbackSessionCleanup.prepareForRestart({ reason: "manual-restart-cleanup" })`
 
-### 削除・縮退対象
+### 4. `panel-ui.js` / `debug-panel-runtime.js` の説明層を subordinate 化
 
-- `startBilingualWhenTracksReady(reason = "unknown")`
-- `textTracks.addEventListener("addtrack", onAddTrack)` を使う start watcher
-- `textTracks.removeEventListener("addtrack", onAddTrack)` を含む start watcher cleanup 一式
-- 関数内部の poll / timeout ベースの readiness 待機
-- `restartBilingual(settings, reason, options)` のうち実起動・実再構築部分
-- 直接 `startBilingual(...)` を呼ぶ経路
+**状態: 完了**
 
-### 置換方針
+整理内容:
 
-- 当面は `coordinator.attachAndMaybeStart(video, reason, options)` に寄せる
-- 将来的には `requestStartupReevaluation(reason)` または `requestRebuild(reason, options)` に統一する
-- 「start する」ではなく「再評価または rebuild を依頼する」に責務文言を揃える
+- `panel-ui.js` は session 従属 UI module として mount / render / dispose に限定する
+- `debug-panel-runtime.js` は session 従属 debug runtime として mount / update / dispose に限定する
+- session cleanup の開始判断は両 module に持たせない
+- dispose の最終呼び出しは cleanup owner 配下に寄せる
 
-### 確認ログ
+### 5. `reinitialize-coordinator.js` の direct cleanup を除去
 
-- settings changed
-- state applied
-- startup reevaluation requested
-- rebuild requested
-- direct start removed
+**状態: 未完了**
 
-***
+削除・縮退対象:
 
-## `reinitialize-coordinator.js`
+- `clearInternalSubtitleState(...)` の direct call
+- coordinator 自身が実 cleanup を担う構造
+- cleanup と rebuild request が同一層で混在する経路
 
-このファイルは、**薄い判定層**として再定義する。  
-再起動理由の分類と要求発行に責務を限定し、実 cleanup や実再構築は持たせない。
+置換先:
 
-### 残す責務
+- `playbackSessionCleanup.prepareForRestart(...)`
+- `playbackSessionCleanup.resetForContentSwitch(...)`
+- reason を正規化した `requestRebuild(reason, options)`
 
-- 再起動理由の分類
-- reason code の正規化
-- rebuild 要求の発行
-- 判定入口の提供
+### 6. `content.js` の subtitle helper / DI を cleanup owner 内部へ寄せる
 
-### 移す責務
+**状態: 未完了**
 
-- 実 cleanup
-- session 破棄
-- 内部 state の直接クリア
-- 実再構築
+整理対象:
 
-### 削除・縮退対象
+- `clearInternalSubtitleState(reasonOrOptions = {})` の関数コメント
+- subtitle clear 関連 dependency injection
+- cleanup owner を通さない helper の公開・受け渡し
 
-- `reinitializeSubtitlePipeline(reason)` のうち実 cleanup と実再構築を行う部分
-- `clearInternalSubtitleState(...)` の直接呼び出し
-- 「理由判定したついでに全部やる」構造
-- teardown と rebuild を両方 owner する構造
+完了後の位置づけ:
 
-### 置換方針
+- `clearInternalSubtitleState(...)` は session subtitle state reset の内部 helper
+- owner が preserveSecondaryDom を含む cleanup 方針を決定する
+- `content.js` は helper の実装を保持しても、外部へ direct cleanup API として公開しない
 
-- `requestRebuild(reason, options)` のような要求専用 API に寄せる
-- cleanup は `modules/playback-session-cleanup.js`
-- start は `modules/playback-startup-coordinator.js` / `startBilingual(...)`
+### 7. 旧 watcher / timer / wrapper / 補助 cleanup を物理削除
 
-### 確認ログ
+**状態: 未完了**
 
-- rebuild reason received
-- reason classified
-- rebuild requested
-- cleanup delegated
-- start delegated
+削除候補:
+
+- coordinator と cleanup owner の責務移管後に不要になった local watcher
+- timeout / polling の重複経路
+- 旧 direct cleanup を補助する thin wrapper
+- reason の重複変換や既存 owner を迂回する helper
+
+完了条件:
+
+- 呼び出し元が残っていない
+- owner API が同じ用途を担える
+- 実機ログで cleanup / rebuild 経路を追跡できる
+
+### 8. 長期 lifecycle 検証と観測整理
+
+**状態: 未着手**
+
+対象条件:
+
+- cleanup owner 一本化の残差整理が完了している
+- 旧 watcher / wrapper / helper が削除済みである
+- 通常ケースのログが経路別に読める状態である
+
+検証対象:
+
+- 長時間再生
+- SPA 遷移反復
+- episode / content switch
+- OFF / ON 反復
+- manual restart 反復
+- track invalidation と secondary track recovery
+- listener / observer / timer / DOM の残留有無
 
 ***
 
-## `modules/panel-ui.js`
+## 関数別の最終責務
 
-このモジュールは panel の UI 実装に責務を絞る。  
-`removeHost(id)` のような低レベル DOM 除去は残してよいが、session 全体 cleanup の owner にはしない。
-
-### 残す責務
-
-- panel mount
-- panel render
-- panel state apply
-- panel dispose
-- host 除去の低レベル実装
-
-### 移す責務
-
-- session 全体 cleanup 統括
-- rebuild owner
-- start owner
-- 他モジュール cleanup の呼び出し統括
-
-### 削除・縮退対象
-
-- panel から session 全体の start / rebuild / cleanup を制御する経路
-- panel 起点で session owner を振る舞う構造
-
-### 置換方針
-
-- cleanup 層から `panelUi.dispose(...)` を呼ぶ
-- `removeHost(id)` は DOM 低レベル helper に限定する
-
-### 確認ログ
-
-- panel mounted
-- panel refreshed
-- panel disposed
-- panel host removed
-
-***
-
-## `modules/debug-panel-runtime.js`
-
-このモジュールは、**session 従属 UI**として扱う。  
-debug runtime 自体が session の寿命を支配する構造は持たせず、dispose は cleanup owner 経由に揃える。
-
-### 残す責務
-
-- debug panel mount
-- 購読開始
-- 描画更新
-- dispose 実装
-
-### 移す責務
-
-- dispose 呼び出し統括
-- session owner 判断
-- stale session 切断判断
-
-### 削除・縮退対象
-
-- debug runtime が session 生存判定や cleanup owner を兼ねる構造
-- stale session を掴み続ける購読
-- cleanup 統括を debug runtime 側が持つ経路
-
-### 置換方針
-
-- cleanup 層から dispose 呼び出しに統一する
-
-### 確認ログ
-
-- debug mounted
-- debug unsubscribed
-- debug disposed
-- stale debug subscription dropped
-
-***
-
-## `content.js` 内 `startBilingual(...)`
-
-`startBilingual(...)` は**建設担当**として残すが、readiness 判定や rebuild 判断は持たせない。  
-coordinator が attach と start 要否を確定したあとに、session 実構築だけを引き受ける関数へ縮退する。
-
-### 残す責務
-
-- session 実構築
-- tracks 解決
-- listener 接続
-- secondary DOM 構築
-- panel 初期化
-- debug runtime 初期化
-- session 所有物の登録
-
-### 移す責務
-
-- readiness 判定
-- 再起動判断
-- target change 監視
-- settings 変化からの直接 start 判断
-
-### 削除・縮退対象
-
-- tracks が足りないから自分で待つ構造
-- rebuild すべきかを自分で決める構造
-- target 監視と build を兼務する構造
-
-### 置換方針
-
-- coordinator からのみ呼ばれる build API として固定する
-
-### 確認ログ
-
-- start bilingual begin
-- target attached
-- tracks resolved
-- listener attached
-- secondary DOM mounted
-- panel mounted
-- debug mounted
-- session registered
-
-***
-
-## `content.js` 内 `clearInternalSubtitleState(...)`
-
-`clearInternalSubtitleState(...)` は、現状のままでは cleanup owner を曖昧にする。  
-したがって、物理削除を急ぐのではなく、**cleanup 内部専用の低レベル helper** へ格下げする。
-
-### 残す責務
-
-- 低レベル状態クリア実装の素材
-- cleanup 内部からの限定利用
-
-### 移す責務
-
-- cleanup owner 判断
-- 呼び出し統括
-- session 境界判定
-
-### 削除・縮退対象
-
-- `reinitialize-coordinator.js` からの直呼び
-- `content.js` 本体からの owner 的呼び出し
-- 複数 owner から直接叩ける構造
-- cleanup 以外の経路からの利用
-
-### 置換方針
-
-- cleanup モジュール経由に限定する
-- export / injection / 外部直呼びを段階的に止める
-
-### 確認ログ
-
-- internal state clear begin
-- internal state clear done
-- internal state clear delegated
-
-***
-
-## 削除順
-
-削除・縮退・移管は、次の順で進める。
-
-1. `settings-runtime.js` の `startBilingualWhenTracksReady(...)` を停止する
-2. `settings-runtime.js` の `addtrack` start watcher を停止する
-3. `settings-runtime.js` の直接 `startBilingual(...)` を coordinator 呼び出しへ置換する
-4. `restartBilingual(...)` を薄い rebuild 要求関数へ縮退する
-5. `reinitialize-coordinator.js` から `clearInternalSubtitleState(...)` 直呼びを除去する
-6. `content.js` の手動 cleanup 経路を cleanup owner 経由へ移す
-7. `clearInternalSubtitleState(...)` を cleanup 内部専用 helper へ格下げする
-8. 最後に不要になった watcher、timer、wrapper、補助 cleanup を物理削除する
-
-***
-
-## 関数別削除・縮退一覧
-
-| ファイル | 関数 / 経路 | ステータス | 処置 |
+| 関数・API | 最終責務 | 許可する呼び出し元 | 禁止する使い方 |
 |---|---|---|---|
-| `settings-runtime.js` | `startBilingualWhenTracksReady(reason)` | 削除 | coordinator へ移管 |
-| `settings-runtime.js` | `textTracks.addEventListener("addtrack", onAddTrack)` | 削除 | coordinator の readiness 待ちへ統合 |
-| `settings-runtime.js` | `textTracks.removeEventListener("addtrack", onAddTrack)` | 削除 | 上記 watcher 廃止に伴い不要 |
-| `settings-runtime.js` | 直接 `startBilingual(...)` | 直呼び禁止 | `attachAndMaybeStart(...)` へ置換 |
-| `settings-runtime.js` | `restartBilingual(settings, reason, options)` | 縮退 | rebuild 要求 wrapper 化 |
-| `reinitialize-coordinator.js` | `reinitializeSubtitlePipeline(reason)` | 縮退 | 理由分類 + rebuild 要求のみ残す |
-| `reinitialize-coordinator.js` | `clearInternalSubtitleState(...)` 呼び出し | 削除 | cleanup owner へ移管 |
-| `content.js` | `clearInternalSubtitleState(reasonOrOptions)` | 移管 / 縮退 | cleanup 内部 helper 化 |
-| `content.js` | `startBilingual(options)` の readiness / rebuild 判断部 | 削除 | coordinator へ移管 |
-| `content.js` | `panelUi.dispose({ reason: "manual-restart-cleanup" })` | 削除 | cleanup owner 経由へ置換 |
-| `modules/panel-ui.js` | `removeHost(id)` | 残す | UI 低レベル helper に限定 |
+| `coordinator.attachAndMaybeStart(video, reason, options)` | target 確認、readiness 待ち、start 要求の一本化 | settings runtime、target change 検知、rebuild 後 attach | settings runtime が独自 readiness wait を実装する |
+| `startBilingual(options)` | session 実構築 | startup coordinator 経由 | settings runtime / UI 層が直接 start する |
+| `playbackSessionCleanup.detachForDisabled(...)` | 拡張 OFF 時の teardown | extension enabled state の変更経路 | panel 単体を直接 dispose して代替する |
+| `playbackSessionCleanup.prepareForRestart(...)` | restart 前の teardown | restart request、manual restart cleanup | content.js が `panelUi.dispose(...)` を直接呼ぶ |
+| `playbackSessionCleanup.resetForContentSwitch(...)` | content / target switch 時の teardown | target change、content switch 経路 | coordinator が subtitle helper を直呼びする |
+| `playbackSessionCleanup.clearPlaybackSessionUiState(...)` | session UI / subtitle state の撤収 | content.js の clear 要求 | `clearInternalSubtitleState(...)` を外部 API として渡す |
+| `clearInternalSubtitleState(...)` | cleanup owner が利用する subtitle state reset helper | cleanup owner 経由 | reinitialize coordinator や外部 module が直接呼ぶ |
+| `panelUi.dispose(...)` | panel session UI の撤収 | cleanup owner | content.js の個別分岐から直接呼ぶ |
+| `debugPanelRuntime.dispose(...)` | debug runtime の内部 resource 解放 | cleanup owner | debug runtime 自身が session teardown を開始する |
+| `requestRebuild(reason, options)` | reason を伴う rebuild 要求発行 | reinitialize coordinator、settings 変更経路 | request 層で実 cleanup を行う |
 
 ***
 
-## 削除対象の見つけ方
+## 実装後の確認観点
 
-優先度が高いのは、次の経路である。
+### 起動経路
 
-- `settings-runtime.js` に残る直接 start 経路
-- `settings-runtime.js` に残る tracks readiness 待ち
-- `settings-runtime.js` に残る `addtrack` listener 起動
-- `reinitialize-coordinator.js` に残る実 cleanup
-- session cleanup を通らず UI だけ落とす経路
-- owner が曖昧な timeout / interval / observer
-- 古い session の state を持ったまま残る panel / debug runtime
+- settings 変更時に `settings-runtime.js` が独自に `startBilingual(...)` を呼ばない
+- `addtrack`、polling、timeout による readiness 待ちが coordinator 以外に残っていない
+- target change、SPA 遷移、track invalidation、restart request が coordinator の再評価へ集約される
+- 同一 video / 同一 target に対して start が重複しない
+- readiness 未達時の retry が旧 session に残留しない
 
-一時的な印として、該当箇所に次のコメントを付ける。
+### cleanup 経路
 
-- `TODO: owner migration`
-- `TODO: move to startup coordinator`
-- `TODO: move to session cleanup`
-- `TODO: replace with requestRebuild(...)`
-- `TODO: remove direct start path`
+- `content.js` が panel / debug / subtitle state を direct cleanup しない
+- `reinitialize-coordinator.js` が `clearInternalSubtitleState(...)` を direct call しない
+- cleanup owner の公開 API が reason ごとの teardown 入口として使われる
+- OFF、manual restart、content switch、SPA 遷移で旧 session の listener / observer / timer / DOM が残らない
+- `preserveSecondaryDom` を含む subtitle state reset 方針が cleanup owner 側で判断される
 
-***
+### UI 経路
 
-## 確認すべきログ軸
+- panel 再描画だけでは session rebuild が起きない
+- debug panel の mount / update / dispose が session lifecycle に従う
+- panel / debug runtime の dispose が session cleanup owner 配下に収束する
+- native subtitle UI と拡張 UI の表示切替で teardown 経路が二重に走らない
 
-最終的にログは、少なくとも次の責務単位で一筆書きに追える必要がある。
+### 実機ログ
 
-- `startup`: target 検知、readiness、retry、start attempt
-- `decision`: rebuild 要否、reason、bind / keep / clear
-- `cleanup`: request、begin、skipped、done
-- `panel`: mount、refresh、dispose
-- `debug`: mount、unsubscribe、dispose
-- `session`: sessionId、target、owner、active / disposed
+- start / rebuild / cleanup の reason が一貫した形式で出力される
+- `cleanup requested`、`cleanup begin`、`cleanup skipped`、`cleanup done` の順序が追跡できる
+- old session の retry、watch、observer、timer が新 session に残留していないことを確認できる
+- restart / content switch 後に secondary subtitle の復帰状態を追跡できる
 
-理想の読み順は次のとおりである。
-
-1. rebuild requested
-2. startup coordinator evaluate
-3. cleanup requested
-4. cleanup done
-5. attach new target
-6. start bilingual begin
-7. session mounted
-
-***
-
-## 完了条件
-
-この整理の完了条件は、**どのイベントから入っても同じ rebuild 経路しか通らないこと**である。  
-settings 変更でも SPA 遷移でも track invalidation でも、最終的に「要求 → coordinator 評価 → cleanup → attach → start」の一本線に収束する必要がある。
-
-さらに、timer・listener・observer・secondary DOM・panel UI・debug runtime の寿命が、すべて 1 つの playback session owner で説明できる状態になれば、設計と実装が一致したと判断できる。

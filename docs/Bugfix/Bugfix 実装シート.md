@@ -1,19 +1,19 @@
-# Bugfix 実装シート 2026-08-30（責務移管チェックリスト版）
+# Bugfix 実装シート 2026-08-31（責務移管チェックリスト版）
 
 **ブランチ:** `issue-32-content-core-split`  
 **対応マスタープラン:** `docs/Bugfix/Bugfix マスタープラン.md`  
 **対応方針メモ:** `docs/Bugfix/字幕同期・切り替え条件統合と責務再設計メモ.md`、`docs/Bugfix/Step17-A_panel系統合_方針整理メモ.md`、`docs/Bugfix/Step17-B_visibility-lifecycle_方針整理メモ.md`、`docs/Bugfix/Step17-C_残存ログprobe制御_方針整理メモ.md`  
-**最新反映コミット:** `1077e4f refactor: startup・panel・recovery の詳細ログを probe 経由へ追加整理する`  
-**現在の作業:** Step 17-B / Step 17-C の前提整理として、playback session lifecycle の owner を単一路線へ寄せる責務移管チェックリストを正本化し、`settings-runtime.js`・`reinitialize-coordinator.js`・`modules/playback-startup-coordinator.js`・`modules/playback-session-cleanup.js` を中心に起動入口と cleanup 入口の一本化を進める。
+**最新反映コミット:** startup owner 一本化、cleanup owner API / 説明層整備、`content.js` の主要 direct cleanup callsite 集約まで反映した時点のローカル状態に更新する。
+**現在の作業:** Step 17-B / Step 17-C の前提整理として進めてきた playback session lifecycle の owner 再設計は、**起動入口一本化と cleanup owner 側受け皿の整備までは完了**している。 現在は、`reinitialize-coordinator.js` に残る `clearInternalSubtitleState(...)` 直呼びと、`content.js` に残る helper / DI の縮退を中心とした cleanup owner 一本化の残差整理フェーズである。
 
 ***
 
 ## このシートの役割
 
-このシートは、**責務移管を伴う実装作業の作業台兼チェックリスト正本**である。  
+このシートは、**責務移管を伴う実装作業の作業台兼チェックリスト正本**である。
 変更対象、残す責務、移す責務、削除対象経路、確認観点、実装順、およびブラウザテスト前提の確認項目を記録する。
 
-全体目標、過去 Step の完了履歴、将来作業、各資料の役割は `Bugfix マスタープラン.md` を参照する。  
+全体目標、過去 Step の完了履歴、将来作業、各資料の役割は `Bugfix マスタープラン.md` を参照する。
 責務再設計の基本原則は `字幕同期・切り替え条件統合と責務再設計メモ.md` を正本とし、Step 17-A の panel owner / API 境界は `Step17-A_panel系統合_方針整理メモ.md`、Step 17-B の visibility / lifecycle 整理は `Step17-B_visibility-lifecycle_方針整理メモ.md`、probe 整理は `Step17-C_残存ログprobe制御_方針整理メモ.md` を参照する。
 
 ***
@@ -32,7 +32,7 @@
 - `panel-ui.js` と `debug-panel-runtime.js` を session 従属 UI として cleanup 配下に揃える。
 - startup / panel / recovery probe を使い、最終的な rebuild 経路が一筆書きで読める状態を目指す。
 
-今回の作業では、字幕同期アルゴリズム自体の全面改修や、probe 全面移行の完了、ブラウザテスト結果の確定までは扱わない。  
+今回の作業では、字幕同期アルゴリズム自体の全面改修や、probe 全面移行の完了、ブラウザテスト結果の確定までは扱わない。
 まずは責務境界を整理し、各ファイルがどこまでを持つべきかを実装可能な粒度まで落とし込むことを優先する。
 
 ***
@@ -48,6 +48,15 @@
 - `modules/playback-session-cleanup.js` が session teardown の唯一入口として機能する。
 - panel UI、debug panel、secondary subtitle DOM、timer、listener、observer が session cleanup 経由で説明できる。
 - startup / panel / recovery probe で経路が読み分けできる。
+
+### ここまでの到達状況
+
+- `settings-runtime.js` からの readiness wait / `addtrack` watch / direct start / `restartBilingual(...)` は整理され、起動要求は `coordinator.attachAndMaybeStart(...)` へ集約済みである。
+- `modules/playback-startup-coordinator.js` は `attachAndMaybeStart(video, reason, options)` を単一 start 入口として持ち、`addtrack` と poll による readiness 待ちも coordinator 内へ集約している。
+- `modules/playback-session-cleanup.js` は owner API 群と説明層の整備が進み、session teardown の受け皿として読める状態に揃っている。
+- `content.js` に残っていた主要 direct cleanup callsite である `clearSubtitles` と manual restart cleanup は、cleanup owner API 経由へ置換済みである。
+- `modules/panel-ui.js` と `modules/debug-panel-runtime.js` は、session cleanup owner 配下の subordinate UI module / runtime としてヘッダーと JSDoc を更新済みである。
+- 一方で、`reinitialize-coordinator.js` に残る `clearInternalSubtitleState(...)` 直呼びと、`content.js` に残る helper / DI の縮退は未完了である。
 
 ### 今回あえてやらないこと
 
@@ -72,22 +81,22 @@
 - `modules/panel-renderer.js` は共有 state を直接読まず、入力から描画結果と snapshot を返す。
 - `modules/panel-visibility-state.js` は `panelOpen` の load / persist 専用であり、DOM、render、snapshot、block state を持たない。
 
-また、今回の整理では `content.js` を probe / logger DI の集約点として維持する。  
+また、今回の整理では `content.js` を probe / logger DI の集約点として維持する。
 module ごとに独自 logger を増やさず、既存の debug flag と probe 注入の流儀を崩さない。
 
 ***
 
 ## 対象ファイル
 
-| ファイル | 今回の主責務 | 今回やること |
-| :-- | :-- | :-- |
-| `modules/playback-startup-coordinator.js` | playback target 変化、startup readiness、起動前段の統制 | 単一 start 入口に寄せる |
-| `settings-runtime.js` | runtime 設定反映、再評価要求 | 直接 start 経路を外す |
-| `reinitialize-coordinator.js` | 再起動理由判定、再評価要求 | 実 cleanup / 実再構築を外す |
-| `modules/playback-session-cleanup.js` | session teardown、再入防止 | 唯一の cleanup 入口に寄せる |
-| `modules/panel-ui.js` | panel lifecycle、render、dispose | session cleanup 配下に位置づける |
-| `modules/debug-panel-runtime.js` | debug UI lifecycle、購読、解除 | session 従属 UI として cleanup 配下に置く |
-| `content.js` | probe / logger DI ハブ | 既存 probe 注入構造を維持する |
+| ファイル | 今回の主責務 | 今回やること | 現在の状態 |
+| :-- | :-- | :-- | :-- |
+| `modules/playback-startup-coordinator.js` | playback target 変化、startup readiness、起動前段の統制 | 単一 start 入口に寄せる | 完了。`attachAndMaybeStart(...)` 中心の起動入口へ集約済み。 |
+| `settings-runtime.js` | runtime 設定反映、再評価要求 | 直接 start 経路を外す | 完了。direct start / readiness wait / addtrack watch / `restartBilingual(...)` を整理済み。 |
+| `reinitialize-coordinator.js` | 再起動理由判定、再評価要求 | 実 cleanup / 実再構築を外す | 一部完了。理由分類層への縮退方針は明確だが、`clearInternalSubtitleState(...)` 直呼びが残る。 |
+| `modules/playback-session-cleanup.js` | session teardown、再入防止 | 唯一の cleanup 入口に寄せる | 一部完了。owner API / 説明層整備と主要 callsite 集約は完了。 |
+| `modules/panel-ui.js` | panel lifecycle、render、dispose | session cleanup 配下に位置づける | 完了。session 従属 UI module として説明層更新済み。 |
+| `modules/debug-panel-runtime.js` | debug UI lifecycle、購読、解除 | session 従属 UI として cleanup 配下に置く | 完了。subordinate runtime として説明層更新済み。 |
+| `content.js` | probe / logger DI ハブ | 既存 probe 注入構造を維持する | 一部完了。主要 direct cleanup callsite は cleanup owner 経由へ置換済みだが、helper / DI の縮退が残る。 |
 
 ***
 
@@ -95,22 +104,22 @@ module ごとに独自 logger を増やさず、既存の debug flag と probe �
 
 ### 単一路線を優先する
 
-今回の判断基準は、個々の module をきれいにすることよりも、**起動と teardown の経路を一本化できるか**を優先する。  
+今回の判断基準は、個々の module をきれいにすることよりも、**起動と teardown の経路を一本化できるか**を優先する。
 部分最適で helper を増やすより、owner を減らし、どこから session が始まりどこで終わるかを明確にする方を優先する。
 
 ### state 層と lifecycle 層を分ける
 
-設定反映や requested language 更新のような state 操作と、session の start / cleanup のような lifecycle 操作を混ぜない。  
+設定反映や requested language 更新のような state 操作と、session の start / cleanup のような lifecycle 操作を混ぜない。
 `settings-runtime.js` は state 側、`modules/playback-startup-coordinator.js` と `modules/playback-session-cleanup.js` は lifecycle 側として整理する。
 
 ### UI を session 従属物として扱う
 
-panel UI や debug panel runtime は独立 owner を持つ UI として扱わず、session に従属する UI として扱う。  
+panel UI や debug panel runtime は独立 owner を持つ UI として扱わず、session に従属する UI として扱う。
 session が終わるときは UI も必ず同じ owner が dispose する。
 
 ### probe の読みやすさを壊さない
 
-今回の責務移管後も、startup / panel / recovery probe を見れば rebuild 経路が追える状態を保つ。  
+今回の責務移管後も、startup / panel / recovery probe を見れば rebuild 経路が追える状態を保つ。
 責務整理のために観測性を落とさないことを前提に進める。
 
 ***
@@ -121,141 +130,134 @@ session が終わるときは UI も必ず同じ owner が dispose する。
 
 #### 残す責務
 
-- playback target 変化検知。
-- startup readiness 判定。
+- playback target の検知。
+- target change の抑制と重複防止。
 - readiness 待ち。
 - delayed retry。
-- start attempt token / 再入防止。
-- cleanup 後の attach / start 仲介。
+- start 入口の一本化。
+- startup attempt の再入防止。
 
 #### 移す責務
 
-- `settings-runtime.js` に残っている tracks readiness 待ち。
-- `settings-runtime.js` に残っている `addtrack` 起点の起動判断。
-- settings 側の poll / timeout ベース起動補助。
+- `settings-runtime.js` に残っていた readiness 待ち。
+- `settings-runtime.js` に残っていた `addtrack` 起点 start。
+- `settings-runtime.js` に残っていた timeout / polling による起動補助。
 
 #### 消す経路
 
-- coordinator を通らずに start する入口。
-- settings / reinitialize / UI 層からの直接 start owner 化。
+- coordinator 外からの独自 start owner。
+- 「必要そうだから start する」系の分散入口。
+- 同じ target に対する重複 start 判定。
 
 #### 実装チェック
 
-- [ ] 単一 start 入口 API を決める。
-- [ ] settings 変更時の再評価要求をこの API に集める。
-- [ ] track invalidation 時の再評価要求をこの API に集める。
-- [ ] delayed retry の owner が coordinator だけになるよう確認する。
-- [ ] startup probe で起動前段の流れが追えることを確認する。
+- [x] 単一 start 入口を `attachAndMaybeStart(video, reason, options)` に揃えた。
+- [x] readiness 待ちを coordinator 側へ寄せた。
+- [x] settings changed 時の起動要求が coordinator 経由で読める状態になった。
 
 ### 2. `settings-runtime.js`
 
 #### 残す責務
 
-- 保存設定の読込。
-- runtime state 反映。
-- language / mode / enabled 状態の更新。
-- coordinator への再評価依頼。
+- 設定読込。
+- 設定保存。
+- runtime state 更新。
+- 再評価依頼。
 
 #### 移す責務
 
-- `startBilingualWhenTracksReady()` 相当の起動待機。
-- `startBilingual()` の直接呼び出し。
-- `textTracks.addEventListener("addtrack")` による start 経路。
-- `setInterval` / `setTimeout` による readiness 待ち。
+- readiness 待ち。
+- `addtrack` listener。
+- 直接 start。
+- 独自 retry / timeout。
 
 #### 消す経路
 
-- settings 変更時に自前で start する経路。
-- settings 層が起動 owner になる構造。
+- `startBilingualWhenTracksReady()`。
+- 直接 `startBilingual(...)`。
+- `restartBilingual(...)` の実 start 部分。
 
 #### 実装チェック
 
-- [ ] 直接 `startBilingual()` を呼んでいる箇所を全件洗い出す。
-- [ ] `startBilingualWhenTracksReady()` があれば削除または coordinator 呼び出しへ置換する。
-- [ ] `addtrack` listener が start のために使われていれば coordinator 側へ移す。
-- [ ] poll / timeout による起動待機が settings 側に残っていないか確認する。
-- [ ] settings changed 時の動作が「start」ではなく「re-evaluate request」になるよう揃える。
+- [x] settings runtime 自身が readiness wait / addtrack watch / retry を持たない状態になった。
+- [x] 起動要求が `coordinator.attachAndMaybeStart(...)` に集約された。
+- [x] `restartBilingual(...)` は削除済みである。
 
 ### 3. `reinitialize-coordinator.js`
 
 #### 残す責務
 
 - 再起動理由の分類。
-- rebuild 要求の発行。
-- reason / option の橋渡し。
+- reason code の整形。
+- rebuild 要求発行。
 
 #### 移す責務
 
-- `clearInternalSubtitleState()` のような実 cleanup。
-- 自前の再接続処理。
-- 実 teardown と実再構築の owner 判断。
+- 実 cleanup。
+- 内部 state 強制破棄。
+- 実再構築。
 
 #### 消す経路
 
-- 判定層がそのまま session を壊して作り直す経路。
-- cleanup 層と競合する二重 owner 構造。
+- `clearInternalSubtitleState(...)` の実 cleanup owner 化。
+- 二重 teardown / rebuild。
 
 #### 実装チェック
 
-- [ ] 実 cleanup をしている関数を洗い出す。
-- [ ] cleanup 実装を `modules/playback-session-cleanup.js` へ移す。
-- [ ] start 実装を coordinator / start 本体へ寄せる。
-- [ ] このファイルは reason 判定と rebuild request 中心になるよう整理する。
-- [ ] reset options 契約を壊さず責務だけ薄くする。
+- [ ] `clearInternalSubtitleState(...)` の直呼びを除去する。
+- [ ] 理由分類 + rebuild request 中心の薄い層として読めることを確認する。
+- [ ] cleanup owner を `modules/playback-session-cleanup.js` へ完全移譲する。
 
 ### 4. `modules/playback-session-cleanup.js`
 
 #### 残す責務
 
-- session 単位の teardown。
-- 再入防止。
-- dispose 順序の統制。
+- session teardown。
+- cleanup 再入防止。
 - session 所有物の解放。
+- UI / listener / observer / timer / retry / DOM の cleanup 集約。
+- cleanup 実行済み管理。
 
 #### 移す責務
 
-- 各 module に散っている timer / listener / observer 解放。
-- UI 側に散っている session teardown の統括。
-- `reinitialize-coordinator.js` に残る実 cleanup。
+- `reinitialize-coordinator.js` の実 cleanup。
+- `content.js` 側の手動 cleanup。
+- UI 個別モジュールからの owner 不明 dispose 統括。
 
 #### 消す経路
 
-- どこかが独自に少しずつ cleanup する経路。
-- session cleanup を通らない部分 teardown。
+- session cleanup を通らず UI だけ落とす経路。
+- 外部からの部分 teardown の乱立。
+- 各モジュールが自前 owner 顔で cleanup する構造。
 
 #### 実装チェック
 
-- [ ] cleanup の単一入口 API を決める。
-- [ ] session 所有物一覧を明文化する。
-- [ ] timer / listener / observer / DOM / UI dispose がここ経由になるよう揃える。
-- [ ] cleanup 多重実行防止を確認する。
-- [ ] lifecycle probe 候補として高レベル cleanup ログの位置づけを整理する。
+- [x] owner API 群の公開と JSDoc 文脈を cleanup owner に揃えた。
+- [x] `content.js` の主要 direct cleanup callsite を owner API 経由へ寄せた。
+- [ ] `reinitialize-coordinator.js` 側の残存直呼びがなくなり、唯一入口として読めることを確認する。
 
 ### 5. `modules/panel-ui.js`
 
 #### 残す責務
 
 - panel lifecycle。
-- panel render。
-- state 適用。
-- `panelUi.dispose()` 実装。
+- render。
+- state apply。
+- UI dispose 実装。
 
 #### 移す責務
 
-- session 全体 cleanup の統括。
-- panel から session lifecycle を逆流制御する責務。
+- session 全体 cleanup 統括。
 
 #### 消す経路
 
-- panel UI が独自 owner として session start / rebuild / cleanup を支配する経路。
+- panel から session 全体 start / rebuild / cleanup を逆流制御する経路。
 
 #### 実装チェック
 
-- [ ] `panelUi.dispose()` は UI dispose 実装として残す。
-- [ ] 呼び出し統括は cleanup 層へ寄せる。
-- [ ] `removeHost()` は低レベル DOM 除去専用のまま維持する。
-- [ ] `applyPanelState()` と `refreshPanel()` の責務境界を崩さない。
-- [ ] panel probe の読み方が変わらないことを確認する。
+- [x] ヘッダーと factory 文脈を session 従属 UI module に揃えた。
+- [x] `dispose()` JSDoc を subordinate UI 側の撤収口として整理した。
+- [x] cleanup owner ではなく dispose される側として読める状態を確認した。
 
 ### 6. `modules/debug-panel-runtime.js`
 
@@ -277,9 +279,9 @@ session が終わるときは UI も必ず同じ owner が dispose する。
 
 #### 実装チェック
 
-- [ ] session start 時 mount、session cleanup 時 dispose の形に揃える。
-- [ ] 購読解除・listener 解放・DOM 撤収が cleanup 経由になるよう確認する。
-- [ ] stale session 参照が残らないことを確認する。
+- [x] session 従属 debug runtime としてヘッダー文脈を更新した。
+- [x] unmount / dispose の説明を cleanup owner 配下の撤収へ揃えた。
+- [x] stale session を支配する owner ではなく subordinate runtime として読める状態を確認した。
 
 ### 7. `content.js`
 
@@ -300,9 +302,10 @@ session が終わるときは UI も必ず同じ owner が dispose する。
 
 #### 実装チェック
 
-- [ ] probe 注入構造を維持する。
-- [ ] 新たな owner ロジックを `content.js` に戻さない。
-- [ ] startup / panel / recovery の観測点が引き続き切り替え可能であることを確認する。
+- [x] `clearSubtitles` を `clearPlaybackSessionUiState("startup-clear-subtitles")` へ差し替えた。
+- [x] manual restart cleanup を `prepareForRestart({ reason: "manual-restart-cleanup" })` へ差し替えた。
+- [x] `clearInternalSubtitleState(...)` のコメントを cleanup owner が使う内部 helper 文脈へ更新した。
+- [ ] helper / DI の残存が、外向き cleanup API ではなく内部 helper として読める最終形になっているかを確認する。
 
 ***
 
@@ -310,15 +313,15 @@ session が終わるときは UI も必ず同じ owner が dispose する。
 
 | Step | 対象ファイル | 状態 | 実装内容 | 確認結果 |
 | :-- | :-- | :-- | :-- | :-- |
-| 1 | `settings-runtime.js` | 未着手 | 直接 `startBilingual()` を呼ぶ経路、tracks readiness 待ち、`addtrack` listener、poll / timeout 起動経路を棚卸しする。 | start owner が settings 側に残っている箇所を一覧化できること。 |
-| 2 | `modules/playback-startup-coordinator.js` | 未着手 | 単一 start 入口 API を決め、settings / reinitialize / track invalidation からの要求をここに寄せる。 | coordinator が起動前段 owner として読めること。 |
-| 3 | `settings-runtime.js` | 未着手 | 棚卸しした start 経路を coordinator 呼び出しへ置換し、settings 層から直接起動責務を外す。 | settings changed 時の動作が re-evaluate request に揃うこと。 |
-| 4 | `reinitialize-coordinator.js` | 未着手 | 実 cleanup と実再構築を外し、reason 判定と rebuild request 中心へ縮退する。 | 再起動理由の判定層として読めること。 |
-| 5 | `modules/playback-session-cleanup.js` | 未着手 | session teardown の単一入口 API を決め、所有物と dispose 順序を明文化する。 | cleanup がここ経由で説明できること。 |
-| 6 | `modules/panel-ui.js` | 未着手 | `panelUi.dispose()` の呼び出し統括を cleanup 層へ寄せ、session 従属 UI として位置づけ直す。 | panel UI が独自 owner になっていないこと。 |
-| 7 | `modules/debug-panel-runtime.js` | 未着手 | debug runtime を session cleanup 配下へ寄せ、stale session 参照が残らないようにする。 | debug panel が session 従属 UI として読めること。 |
-| 8 | `content.js` | 未着手 | probe / logger DI の配線を必要最小限だけ調整し、観測性を維持する。 | startup / panel / recovery probe の読み方を維持できること。 |
-| 9 | ブラウザテスト | 未着手 | ON / OFF、SPA 遷移、track invalidation、panel 開閉、debug panel 開閉を実機確認する。 | rebuild 経路が一筆書きで読め、二重化や stale session が出ないこと。 |
+| 1 | `settings-runtime.js` | 完了 | 直接 `startBilingual()` を呼ぶ経路、tracks readiness 待ち、`addtrack` listener、poll / timeout 起動経路を整理した。 | start owner が settings 側に残らない状態になった。 |
+| 2 | `modules/playback-startup-coordinator.js` | 完了 | 単一 start 入口 API を固定し、settings / target change 系要求をここへ寄せた。 | coordinator が起動前段 owner として読める。 |
+| 3 | `settings-runtime.js` | 完了 | start 経路を coordinator 呼び出しへ置換し、settings 層から直接起動責務を外した。 | settings changed 時の動作が re-evaluate request に揃った。 |
+| 4 | `reinitialize-coordinator.js` | 一部完了 | 実 cleanup / 実再構築を外す方向へ縮退中。 | 理由分類層への寄せは進んだが、`clearInternalSubtitleState(...)` 直呼びが残る。 |
+| 5 | `modules/playback-session-cleanup.js` | 一部完了 | session teardown の owner API と説明層を整備し、所有物と dispose 文脈を明文化した。 | cleanup 受け皿としては読めるが、唯一入口化は残差整理待ちである。 |
+| 6 | `modules/panel-ui.js` | 完了 | `panelUi.dispose()` の呼び出し統括を cleanup 層配下の subordinate UI 文脈へ寄せた。 | panel UI が独自 owner になっていないことを説明層で確認した。 |
+| 7 | `modules/debug-panel-runtime.js` | 完了 | debug runtime を session cleanup 配下の subordinate runtime 文脈へ寄せた。 | debug panel が session 従属 UI として読める。 |
+| 8 | `content.js` | 一部完了 | probe / logger DI の配線を維持しつつ、主要 direct cleanup callsite を cleanup owner API へ置換した。 | 観測性は維持されているが、helper / DI 縮退が残る。 |
+| 9 | ブラウザテスト | 未着手 | ON / OFF、SPA 遷移、track invalidation、panel 開閉、debug panel 開閉を実機確認する。 | rebuild 経路が一筆書きで読め、二重化や stale session が出ないことを確認する。  |
 
 ***
 
@@ -329,7 +332,7 @@ session が終わるときは UI も必ず同じ owner が dispose する。
 - [ ] settings changed から同じ rebuild 経路に入る。
 - [ ] target change から同じ rebuild 経路に入る。
 - [ ] track invalidation から同じ rebuild 経路に入る。
-- [ ] coordinator 以外が直接 start owner になっていない。
+- [x] coordinator 以外が直接 start owner になっていない。
 
 ### cleanup / stale session
 
@@ -341,8 +344,8 @@ session が終わるときは UI も必ず同じ owner が dispose する。
 ### panel / debug UI
 
 - [ ] panel 開閉だけでは session owner が増えない。
-- [ ] panel UI dispose が cleanup 経由で説明できる。
-- [ ] debug panel dispose が cleanup 経由で説明できる。
+- [x] panel UI dispose が cleanup 経由で説明できる。
+- [x] debug panel dispose が cleanup 経由で説明できる。
 
 ### probe / 観測
 
@@ -355,10 +358,11 @@ session が終わるときは UI も必ず同じ owner が dispose する。
 
 ## 今回の作業メモ
 
-- いま優先すべきなのは helper 追加ではなく owner 削減である。
-- 特に `settings-runtime.js` の start 系責務と `reinitialize-coordinator.js` の実 cleanup 責務を外すことが最優先である。
-- `modules/playback-startup-coordinator.js` と `modules/playback-session-cleanup.js` を両端の正本入口にすることで、途中の module は薄くしやすくなる。
-- panel / debug panel / secondary subtitle DOM を session 従属物として扱うと、UI 残留問題を説明しやすくなる。
+- 起動入口一本化は、`settings-runtime.js` 側の direct start 経路を外し、`coordinator.attachAndMaybeStart(...)` に寄せるところまで完了している。
+- cleanup owner 側は、`modules/playback-session-cleanup.js` の owner API / JSDoc / 説明層整備と、`content.js` の主要 direct cleanup callsite 集約までは完了している。
+- `panel-ui.js` / `debug-panel-runtime.js` は cleanup owner ではなく、session 従属 UI module / runtime として読める状態に更新済みである。
+- 現在の最優先は、`reinitialize-coordinator.js` に残る `clearInternalSubtitleState(...)` 直呼びを除去し、cleanup 経路を完全に owner 側へ寄せることである。
+- `content.js` の `clearInternalSubtitleState(...)` は物理削除を急ぐのではなく、cleanup 内部専用 helper へ格下げして owner 境界を明確にする方針で進める。
 - 今回の整理は、メモリーリーク対策そのものというより、stale な半死状態 session を残さないための lifecycle 整理として扱う。
 
 ***
@@ -367,14 +371,12 @@ session が終わるときは UI も必ず同じ owner が dispose する。
 
 次回は次の順に着手する。
 
-1. `settings-runtime.js` の start 経路棚卸し。
-2. `modules/playback-startup-coordinator.js` の単一入口 API 固定。
-3. `settings-runtime.js` から直接 start 経路を除去。
-4. `reinitialize-coordinator.js` の縮退。
-5. `modules/playback-session-cleanup.js` の単一 cleanup 入口化。
-6. panel / debug runtime の session cleanup 配下への統合。
-7. probe を見ながらブラウザテスト。
+1. `reinitialize-coordinator.js` の `clearInternalSubtitleState(...)` 直呼びを cleanup owner 経由へ置換する。
+2. `content.js` に残る `clearInternalSubtitleState(...)` の helper / DI を cleanup 内部専用 helper 文脈へさらに縮退する。
+3. `modules/playback-session-cleanup.js` が実装・説明の両方で唯一入口として読めることを再確認する。
+4. 不要になった watcher / timer / wrapper / 補助 cleanup を物理削除する。
+5. probe を見ながらブラウザテストを実施する。
 
-この順番で進める理由は、最初に start owner を減らし、その後に cleanup owner を固定した方が、経路差分を追いやすいからである。  
-cleanup 側から先に大きく動かすより、起動入口を先に揃えた方が安全に検証しやすい。
+この順番で進める理由は、起動入口はすでに揃っているため、残りは cleanup 側の owner 境界を詰める方が差分を追いやすいからである。
+start owner を再度触るより、cleanup 残差を片付けたうえで browser test に入る方が安全に検証しやすい。
 
