@@ -2,23 +2,22 @@
 // Apple TV+ Bilingual Subtitles - modules/playback-startup-coordinator.js
 //
 // 役割:
-// - video 検出後の attachTracks と自動 startBilingual をまとめる。
-// - 保存済み settings が有効な場合だけ、自動起動の可否を判定する。
-// - textTracks が実際に利用可能になるまで待ってから startBilingual を呼ぶ。
-// - readiness は「requested track が存在するか」だけを見る（cue readiness は見ない）。
-// - 待機がtimeoutした場合も、track自体は見えていればfallbackでstartBilingualへ進む。
-// - SPA直後に初回 start が空振りした場合に備えて、1回だけ delayed retry を入れる。
-// - playback target の変化を監視し、content switch 時の cleanup と再起動を仲介する。
-// - playback target change が短時間に連発しても、同じ旧セッションへの cleanup は一度だけに絞る。
-// - startBilingual 本体の feature logic は持たず、起動前段の coordination に留める。
+// - playback startup / rebuild request の唯一入口として、target / readiness / retry / attach を調停する。
+// - settings change・SPA target change・delayed retry など複数入口を同じ起動判定経路へ収束させる。
+// - textTracks readiness はこの coordinator だけが待機し、settings-runtime.js など他入口へ待機責務を持たせない。
+// - readiness は「requested track が存在するか」を基準に判定し、cue readiness までは扱わない。
+// - readiness 待機が timeout しても、requested track が見えていれば fallback で attach / start へ進める。
+// - playback target change を監視し、旧 session cleanup の一度化と新 target への再接続を仲介する。
+// - delayed retry は startup request の補助手段として扱い、同じ target への重複再試行を抑える。
+// - startBilingual 本体の feature logic や UI 構築は持たず、起動前段の coordination に限定する。
 // =============================================================
 (() => {
   "use strict";
 
   const root = (window.ATVB = window.ATVB || {});
 
-  // 再生開始前後の attach / auto start / playback target 切替監視をまとめる。
-  // startBilingual 本体には踏み込まず、起動前段の coordination だけを担う。
+  // playback startup / rebuild request 前段の調停をまとめる。
+  // settings・SPA・retry など複数入口を同じ attach → readiness → start 判定へ収束させる。
   function createPlaybackStartupCoordinator({
     state,
     services = {},
@@ -54,10 +53,10 @@
     let lastCleanedUpVideoSrcKey = "";
 
     // -------------------------------------------------------
-    // cleanup helpers
+    // startup lifecycle cleanup helpers
     // -------------------------------------------------------
 
-    /** textTracks readiness 待ちの watch を止める */
+    /** startup request に紐づく textTracks readiness watch を解除する */
     function cleanupStartupWatch() {
       if (typeof startupWatchCleanup === "function") {
         try {
@@ -67,7 +66,7 @@
       startupWatchCleanup = null;
     }
 
-    /** delayed retry timer を止める */
+    /** 現在の startup request に紐づく delayed retry timer を解除する */
     function cleanupDelayedRetry() {
       if (delayedRetryTimer) {
         clearTimeout(delayedRetryTimer);
@@ -76,7 +75,7 @@
       delayedRetryVideoSrcKey = "";
     }
 
-    /** playback target 監視用 MutationObserver と debounce timer を止める */
+    /** playback target change 監視と、その派生 startup request タイマー群を解除する */
     function cleanupTargetObserver() {
       if (targetObserver) {
         try {
@@ -95,8 +94,8 @@
     }
 
     /**
-     * startup watch / delayed retry の世代を進める。
-     * 旧 video にぶら下がる非同期経路をまとめて失効させたいときに使う。
+     * 現在の startup request 世代を進め、旧 target にぶら下がる watch / retry を失効させる。
+     * target 切替や rebuild request の再発行時に、古い非同期経路が attach / start へ進まないようにする。
      */
     function invalidateStartupAttempts() {
       startupAttemptToken += 1;
@@ -105,15 +104,15 @@
     }
 
     // -------------------------------------------------------
-    // saved settings / startup gating
+    // startup request gating
     // -------------------------------------------------------
 
-    /** 保存済み settings から自動起動可能かどうかを返す */
+    /** 現在の requested settings で startup request を進められるか判定する */
     function canAutoStartFromSavedSettings() {
       return isLanguageSelectionReady?.(state.requestedContentSettings || {});
     }
 
-    /** startup 判定ログ用の requestedContentSettings snapshot を返す */
+    /** startup request 判定ログ用の requestedContentSettings snapshot を返す */
     function getRequestedContentSettingsSnapshot() {
       return {
         primaryLang: state.requestedContentSettings?.primaryLang || "",
@@ -244,8 +243,16 @@
     }
 
     /**
-     * textTracks が ready なら startBilingual を呼ぶ。
-     * ready でない場合は false を返して watch 継続へ回す。
+     * 現在の startup request について track readiness を評価し、
+     * requested track が揃っていれば attach 済み target で startBilingual を起動する。
+     *
+     * @param {Object} input
+     * @param {number} input.token
+     * @param {HTMLVideoElement|null} input.video
+     * @param {string} input.startupReason
+     * @param {string} input.triggerReason
+     * @param {boolean} [input.keepPanelOpen]
+     * @returns {boolean}
      */
     function tryStartWhenTracksReady({
       token,
@@ -277,9 +284,9 @@
 
       if (!ready) return false;
 
-      // tracks ready 経由で startBilingual を呼ぶ場合、
-      // SPA直後の保険として仕掛けていた delayed retry は不要になる。
-      // 同じ video に対する startBilingual 重複実行を防ぐ。
+      // readiness 判定で起動条件を満たした時点で、
+      // 同じ target に対する delayed retry は不要になる。
+      // 同一 target への重複 startup request / start 実行を防ぐ。
       cleanupDelayedRetry();
       cleanupStartupWatch();
 
@@ -294,10 +301,9 @@
     }
 
     /**
-     * textTracks が遅れて生えるケースに備えて、
-     * addtrack + poll で readiness を待つ。
-     * 待機が timeout した場合も、requested track 自体が見えていれば
-     * fallback で startBilingual まで進める（詰まりを防ぐ）。
+     * 現在の startup request について textTracks readiness を待機する。
+     * addtrack と poll を使って requested track の出現を監視し、
+     * timeout 時も起動条件を満たしていれば fallback で start へ進める。
      */
     function watchTrackReadiness(video, startupReason, options = {}) {
       cleanupStartupWatch();
@@ -346,8 +352,8 @@
       }, 250);
 
       timeoutTimer = window.setTimeout(() => {
-        // requested track が揃わないまま timeout したケースを残す。
-        // SPA 遷移直後の track 遅延か、resolver 側の言語一致条件かを切り分けるためのログ。
+        // startup request が readiness 未達のまま timeout したケースを残す。
+        // SPA 遷移直後の track 遅延か、resolver 側の一致条件かを切り分けるためのログ。
         const readiness = getTrackReadinessSnapshot(video);
 
         logStartupProbe?.("startup coordinator track wait timeout", {
@@ -366,8 +372,8 @@
 
         if (shouldAbortStartupAttempt(token, video)) return;
 
-        // track 自体が見えているなら、fallback として startBilingual まで進める。
-        // ready にならず watch が終了したまま何も起動しない状態を避けるための保険。
+        // requested track が見えているなら、fallback として start へ進める。
+        // readiness watch だけ終了して startup request が詰まる状態を避けるための保険。
         const canFallbackStart =
           readiness.subtitleLikeTrackCount > 0 &&
           readiness.hasRequestedPrimaryTrack &&
@@ -375,8 +381,8 @@
 
         if (!canFallbackStart) return;
 
-        // timeout fallback 経由で startBilingual まで進める場合も、
-        // 同時に走っている delayed retry を止めて重複起動を防ぐ。
+        // timeout fallback で start へ進める場合も、
+        // 同時に走っている delayed retry を止めて同一 target への重複起動を防ぐ。
         cleanupDelayedRetry();
 
         logTrackSnapshot(video, `timeout_fallback:${startupReason}`);
@@ -442,13 +448,15 @@
     // -------------------------------------------------------
 
     /**
-     * video を attach し、保存済み settings が有効なら
-     * tracks ready 待ちを経由して startBilingual まで進める。
+     * 指定された playback target を attach し、
+     * 現在の requested settings で起動条件を満たせる場合は
+     * tracks readiness wait と delayed retry を含む startup request を開始する。
      *
      * playback startup coordinator は、
-     * saved settings 起点の playback auto-start における primary owner。
-     * settings-runtime.js 側は、この関数へ委譲できる場合は
-     * 独自の track wait / auto-start を開始しない。
+     * settings change / SPA target change / retry など複数入口に対する
+     * attach → readiness → start 判定の primary owner。
+     * settings-runtime.js など他入口は、独自の track wait / direct start を持たず、
+     * この関数経由の startup request に収束させる。
      */
     function attachAndMaybeStart(video, reason = "unknown", options = {}) {
       if (!video) return;
@@ -481,7 +489,7 @@
     }
 
     // -------------------------------------------------------
-    // playback target change detection
+    // playback target change handling
     // -------------------------------------------------------
 
     /**
@@ -549,8 +557,8 @@
      *
      * 重要:
      * - MutationObserver の burst や SPA 中間状態で target change が連発しても、
-     *   同じ旧 session に対する cleanup は一度だけにする。
-     * - cleanup 自体を skip しても、新しい target 探索と attach は継続する。
+     *   同じ旧 session に対する cleanup request は一度だけにする。
+     * - cleanup を skip しても、新しい target の探索と次の startup request 判定は継続する。
      */
     function handlePlaybackTargetChange(reason = "unknown") {
       const nextTarget = getPlaybackTargetSnapshot();
@@ -586,8 +594,8 @@
         alreadyCleanedUp,
       });
 
-      // 古い delayed retry はここで止める。
-      // cleanup を skip する場合でも、旧 video 向け retry は残さない。
+      // 古い target に紐づく delayed retry はここで止める。
+      // cleanup を skip する場合でも、旧 target 向け retry は残さない。
       cleanupDelayedRetry();
 
       if (!alreadyCleanedUp) {
@@ -680,7 +688,8 @@
 
     /**
      * coordinator の起動エントリ。
-     * 初回の attach/start と playback target 監視開始をまとめて行う。
+     * 現在の playback target に対する最初の起動評価と、
+     * 以後の playback target change 監視開始をまとめて行う。
      */
     function boot() {
       startPlaybackTargetObserver();
