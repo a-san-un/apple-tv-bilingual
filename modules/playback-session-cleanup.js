@@ -2,13 +2,16 @@
 // Apple TV+ Bilingual Subtitles - modules/playback-session-cleanup.js
 //
 // 役割:
-// - 再生セッションに紐づく一時的な UI / observer / subtitle state を片付ける。
+// - playback session cleanup owner の唯一入口として、再生セッションに紐づく
+//   一時的な UI / observer / subtitle state / track binding の teardown を束ねる。
 // - popup / options で保存した永続設定
 //   （primaryLang / secondaryLang / panelDefaultOpen など）は保持する。
 // - runtime state の extensionEnabled はこの cleanup では保存・復元せず、
 //   呼び出し元の state.extensionEnabled を前提に teardown だけを担当する。
 // - restart 用 cleanup と extension OFF 用 cleanup を分け、
 //   再起動時は再生成前提の撤収、OFF 時は再生画面の拡張 UI 完全破棄を担当する。
+// - content.js や panel/debug runtime から direct cleanup させず、
+//   session teardown はこの owner API 経由へ収束させる。
 // - content switch 時の resetForContentSwitch() は、同一タイミングで重複して呼ばれても
 //   teardown が壊れないよう最小限の再入ガードを持つ。
 // - cleanup 前後で、どの参照 / timer / observer / track binding を保持していたかを
@@ -25,8 +28,11 @@
   const root = (window.ATVB = window.ATVB || {});
 
   /**
-   * 再生セッション終了・再起動・無効化で使う cleanup 関数群を生成する。
-   * 永続設定は保持し、playback session に紐づく一時 state の撤収だけを担当する。
+   * playback session cleanup owner を生成する。
+   * 永続設定は保持し、playback session に紐づく一時 state と session UI の撤収だけを担当する。
+   *
+   * content.js や session 従属 UI module から direct cleanup させず、
+   * restart / disable / content switch / UI clear の入口をこの API 群へ集約する。
    *
    * @param {object} params cleanup 生成に必要な依存関係。
    * @param {object} params.state playback runtime state。
@@ -41,7 +47,7 @@
    *   clearPlaybackSessionUiState: (reason?: string) => void,
    *   handleNavigationTargetMissing: (options?: object) => void,
    *   restoreDefaultLayout: () => void,
-   * }} playback session cleanup API。
+   * }} playback session cleanup owner API。
    */
   function createPlaybackSessionCleanup({
     state,
@@ -68,7 +74,7 @@
     // resetForContentSwitch() の同期的な再入だけを防ぐフラグ。
     // 同一旧セッションへの cleanup 一度化そのものは
     // playback-startup-coordinator.js 側で行い、
-    // ここでは「呼ばれても壊れない」ための保険に留める。
+    // cleanup owner であるこのモジュールでは「呼ばれても壊れない」ための保険に留める。
     let isResettingForContentSwitch = false;
 
     // -------------------------------------------------------
@@ -276,9 +282,9 @@
     // -------------------------------------------------------
 
     /**
-     * restart 前に、現在の playback session に紐づく UI / observer をいったん撤収する。
-     * 直後に startBilingual() で再生成する前提なので、字幕制御はネイティブへ戻すが
-     * secondary track の mode 復元までは行わない。
+     * restart teardown 用の cleanup owner 入口。
+     * startup coordinator などからの rebuild 要求で、現在の playback session を
+     * 再生成前提の teardown へ収束させる。
      *
      * @param {object} [options={}] 実行オプション。
      * @param {string} [options.toggleOpId] toggle 操作相関 ID。
@@ -305,8 +311,9 @@
     }
 
     /**
-     * extensionEnabled=false 用の cleanup。
-     * 再生画面に出していた拡張 UI を完全に外し、secondary subtitle の mode も元へ戻す。
+     * extensionEnabled=false 時の cleanup owner 入口。
+     * 再生画面に出していた session UI / observer / subtitle state を完全撤収し、
+     * secondary subtitle の mode も元へ戻す。
      *
      * @param {object} [options={}] 実行オプション。
      * @param {string} [options.toggleOpId] toggle 操作相関 ID。
@@ -333,12 +340,13 @@
     }
 
     // -------------------------------------------------------
-    // restart preparation
+    // cleanup owner: restart preparation
     // -------------------------------------------------------
 
     /**
-     * 再起動前に、再生セッション由来の一時 state だけを初期化する。
-     * 保存済み設定は保持し、直後の startBilingual() で新しい字幕状態を積み直す前提で使う。
+     * restart 前の cleanup owner 入口。
+     * 保存済み設定は保持したまま、直後の startBilingual() で再生成できるよう
+     * 再生セッション由来の一時 state と session UI の参照を初期化する。
      *
      * @param {object} [options={}] 実行オプション。
      * @param {string} [options.toggleOpId] toggle 操作相関 ID。
@@ -389,12 +397,12 @@
     }
 
     // -------------------------------------------------------
-    // session cleanup
+    // cleanup owner: session cleanup
     // -------------------------------------------------------
 
     /**
-     * SPA で別コンテンツへ切り替わるときの cleanup。
-     * 設定は保持したまま、旧 playback session に紐づく UI / track / subtitle state を撤収する。
+     * content switch 時の cleanup owner 入口。
+     * 設定は保持したまま、旧 playback session に紐づく session UI / track / subtitle state を撤収する。
      * clearPlaybackSessionUiState よりは「次の再生へすぐ繋ぐ前提」の軽い cleanup として扱う。
      *
      * ここでは同期的な再入だけを防ぎ、
@@ -465,8 +473,9 @@
     }
 
     /**
-     * 再生 UI と字幕 state を完全に外す。
-     * close / navigation / hard reset など「今の playback session を完全終了する」用途。
+     * session UI clear 用の cleanup owner 入口。
+     * close / navigation / hard reset など「今の playback session を完全終了する」用途で、
+     * 再生 UI / observer / subtitle state を完全に外す。
      *
      * @param {string} [reason="clear_playback_session_ui_state"] cleanup reason。
      */
@@ -545,7 +554,7 @@
     }
 
     // -------------------------------------------------------
-    // layout reset
+    // cleanup owner: layout restore
     // -------------------------------------------------------
 
     /**
@@ -560,9 +569,11 @@
     }
 
     // -------------------------------------------------------
-    // エクスポート
+    // cleanup owner API export
     // -------------------------------------------------------
 
+    // content.js や session 従属 UI module から direct cleanup せず、
+    // playback session teardown はこの公開 API 群へ収束させる。
     return {
       teardownForRestart,
       detachForDisabled,
@@ -575,7 +586,7 @@
   }
 
   // -------------------------------------------------------
-  // エクスポート
+  // module export
   // -------------------------------------------------------
   root.createPlaybackSessionCleanup = createPlaybackSessionCleanup;
 })();
