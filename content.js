@@ -66,7 +66,7 @@
     booted: false,
     bilingualSessionSeq: 0,
     activeBilingualSessionId: null,
-    restarting: false,
+    sessionRebuildInProgress: false,
     video: null,
     dialogEl: null,
     extensionEnabled: false,
@@ -792,7 +792,7 @@ function forwardContentLog(...args) {
 
     secondaryTrackSyncInterval = window.setInterval(async () => {
       if (isSecondaryTrackSyncIntervalRunning) return;
-      if (state.restarting) return;
+      if (state.sessionRebuildInProgress) return;
       if (syncIntervalOrchestrator?.isPaused?.()) return;
 
       isSecondaryTrackSyncIntervalRunning = true;
@@ -3395,9 +3395,9 @@ function forwardContentLog(...args) {
     ensureSecondaryTrackSyncInterval();
 
     } finally {
-      if (state.restarting) {
-        state.restarting = false;
-        logContent("startBilingual restarting flag cleared", {
+      if (state.sessionRebuildInProgress) {
+        state.sessionRebuildInProgress = false;
+        logContent("startBilingual session rebuild flag cleared", {
           reason: options.reason || "",
           toggleOpId:
             typeof options.toggleOpId === "string" && options.toggleOpId

@@ -290,7 +290,7 @@
 
       TRACK_RESOLVE_RETRY_DELAYS_MS.forEach((delayMs, retryIndex) => {
         const timerId = window.setTimeout(async () => {
-          if (state.restarting || !state.video) return;
+          if (state.sessionRebuildInProgress || !state.video) return;
 
           const attempt = retryIndex + 1;
 
@@ -404,7 +404,7 @@
      * @returns {void}
      */
     function reloadSettingsAndReinitialize(input = "unknown") {
-      if (state.restarting) return;
+      if (state.sessionRebuildInProgress) return;
 
       const {
         reason,

@@ -2,17 +2,16 @@
 // Apple TV+ Bilingual Subtitles - settings-runtime.js
 //
 // 役割:
-// - content 側の設定読み込み・設定反映・再起動開始の流れをまとめて扱う。
+// - content 側の設定読み込み・設定反映・再評価要求の流れをまとめて扱う。
 // - 保存済み設定から requested settings と effective settings を組み立て、
 //   どの設定がユーザー入力そのままの値で、どの設定が補完後の実行値かを分けて保持する。
 // - runtime message 経由の SETTINGS_CHANGED / GET_LANGUAGES を受け取り、
-//   再生中の設定変更を content 側へ安全に反映する。
-// - 拡張 OFF 時は、native 字幕へ制御を戻しつつ、
-//   settings-runtime.js が直接持つ playback 参照を明示的に手放す。
-// - 拡張 ON 時は、現在の playback 参照を取り直してから
-//   bilingual 再起動へつなぎ、古い video / track 参照を再利用しないようにする。
+//   再生中の設定変更を content 側 state へ安全に反映する。
+// - 拡張 OFF 時は native 字幕へ制御を戻し、関連 state を teardown 側へ引き渡す。
+// - 拡張 ON 時や設定変更時は playback startup coordinator へ再評価要求を出し、
+//   direct start や独自 readiness 待ちは持たない。
 // - トグル操作ごとの相関ログを出し、OFF 側の処理完了と
-//   ON 側の再起動完了を同じ操作単位で追跡できるようにする。
+//   ON 側の再評価要求を同じ操作単位で追跡できるようにする。
 //
 // このファイルのメンテナンス方針:
 // - storage から読んだ設定値と、実際に動作へ使う設定値を混同しない。
@@ -21,12 +20,12 @@
 //   併記して、設定値の問題か補完後の反映問題かを切り分けやすくする。
 // - runtime message の sendResponse は 1 回だけ返す前提を守り、
 //   分岐ごとの多重応答や応答漏れを防ぐ。
-// - ON/OFF 切り替え時は「既存参照を片付けてから取り直す」順序を崩さず、
-//   古い playback state を次の起動へ持ち越さない。
+// - ON/OFF 切り替え時は「既存参照を片付けてから再評価要求を出す」順序を崩さず、
+//   古い playback state を次の session へ持ち越さない。
 // =============================================================
 (function (root) {
   // settings 関連の runtime 処理一式を生成するファクトリ。
-  // content 側 state と各種依存関数を受け取り、設定反映と再起動の入口をまとめて返す。
+  // content 側 state と各種依存関数を受け取り、設定反映と再評価要求の入口をまとめて返す。
   function createSettingsRuntime(deps) {
     const {
       state,
@@ -38,20 +37,12 @@
       logStartupProbe,
       detachForDisabled,
       prepareForRestart,
-      startBilingual,
       isPlaybackPageReady,
       getVideoAndDialog,
       mountToggleOnlyUi,
       getPlaybackStartupCoordinator,
     } = deps;
 
-    // cueController / syncIntervalOrchestrator / panelUi は content.js 側で
-    // getter 経由の遅延代入になっているため、ここで destructure せず、
-    // 使用箇所ごとに deps.cueController などで最新値を取得する。
-
-    let initialAutoStartCleanup = null;
-    let initialAutoStartToken = 0;
-    let lastDelegatedAutoStartVideoSrcKey = "";
 
     // -------------------------------------------------------
     // トグル操作ログ相関
@@ -83,95 +74,44 @@
     }
 
     // -------------------------------------------------------
-    // 初回 auto-start 用ヘルパー
+    // startup coordinator への再評価要求
     // -------------------------------------------------------
 
-    // 初回 auto-start のために張った監視を解除する。
-    // addtrack / polling / timeout の残留を防ぎ、古い video 監視を次回へ持ち越さない。
-    function cleanupInitialAutoStartWatch() {
-      if (typeof initialAutoStartCleanup === "function") {
-        try {
-          initialAutoStartCleanup();
-        } catch {
-        }
-      }
-      initialAutoStartCleanup = null;
-      resetInitialAutoStartDelegation("cleanup_watch");
-    }
-
-    function resetInitialAutoStartDelegation(reason = "unknown") {
-      if (!lastDelegatedAutoStartVideoSrcKey) return;
-      logStartupProbe?.("initial auto-start delegation reset", {
-        reason,
-        previousVideoSrcKey: lastDelegatedAutoStartVideoSrcKey,
-      });
-      lastDelegatedAutoStartVideoSrcKey = "";
-    }
-
-    // textTracks から字幕候補になりうる track だけを抽出する。
-    // metadata や id3 を除外し、subtitles / captions / language 付き track を返す。
-    function getSubtitleLikeTracks(video) {
-      const tracks = Array.from(video?.textTracks || []);
-      return tracks.filter((track) => {
-        const kind = String(track?.kind || "").toLowerCase();
-        const label = String(track?.label || "").toLowerCase();
-        const language = String(track?.language || "").trim();
-
-        if (kind === "metadata") return false;
-        if (label === "id3") return false;
-
-        return (
-          kind === "subtitles" ||
-          kind === "captions" ||
-          Boolean(language)
-        );
-      });
-    }
-
-    // 起動に使える字幕系 track が存在するかだけを返す。
-    // 初回起動や再取得待ちの readiness 判定を 1 箇所で揃えるための小さな helper。
-    function _hasUsableSubtitleTracks(video) {
-      return getSubtitleLikeTracks(video).length > 0;
-    }
-
     /**
-     * playback startup coordinator が同一 video の auto-start owner になれるなら、
-     * settings runtime 側の初回 auto-start は委譲して二重起動を避ける。
+     * 現在の playback target について startup coordinator へ再評価要求を出す。
+     * settings runtime 自身は readiness wait / addtrack watch / retry を持たず、
+     * 起動前段の判断は coordinator に委譲する。
      *
-     * @param {HTMLVideoElement|null} video
      * @param {string} reason
+     * @param {{ keepPanelOpen?: boolean }} [options]
      * @returns {boolean}
      */
-    function delegateInitialAutoStartToCoordinator(video, reason = "unknown") {
+    function requestStartupReevaluation(
+      reason = "unknown",
+      options = {},
+    ) {
       const coordinator = getPlaybackStartupCoordinator?.() || null;
-      if (!coordinator?.canAutoStartFromSavedSettings) return false;
-      if (!coordinator?.attachAndMaybeStart) return false;
-      if (!video || state.video !== video) return false;
-      if (!coordinator.canAutoStartFromSavedSettings()) return false;
-
-      const delegatedVideoSrcKey = state.lastVideoSrcKey || "";
-      if (!delegatedVideoSrcKey) return false;
-
-      if (delegatedVideoSrcKey === lastDelegatedAutoStartVideoSrcKey) {
-        logStartupProbe?.("initial auto-start delegation skipped", {
+      if (!coordinator?.attachAndMaybeStart) {
+        logStartupProbe?.("settings runtime startup request skipped", {
           reason,
-          skipReason: "same_video_already_delegated",
-          videoSrcKey: delegatedVideoSrcKey,
-          requestedContentSettings: {
-            primaryLang: state.requestedContentSettings?.primaryLang || "",
-            secondaryLang: state.requestedContentSettings?.secondaryLang || "",
-            panelDefaultOpen:
-              state.requestedContentSettings?.panelDefaultOpen ?? null,
-          },
+          skipReason: "startup_coordinator_unavailable",
         });
-        return true;
+        return false;
       }
 
-      lastDelegatedAutoStartVideoSrcKey = delegatedVideoSrcKey;
+      const video = state.video || getVideoAndDialog?.()?.video || null;
+      if (!video) {
+        logStartupProbe?.("settings runtime startup request skipped", {
+          reason,
+          skipReason: "no_video",
+        });
+        return false;
+      }
 
-      logStartupProbe?.("initial auto-start delegated to coordinator", {
+      logStartupProbe?.("settings runtime startup request", {
         reason,
-        videoSrcKey: delegatedVideoSrcKey,
+        videoSrcKey: state.lastVideoSrcKey || "",
+        keepPanelOpen: options.keepPanelOpen ?? state.panelOpen,
         requestedContentSettings: {
           primaryLang: state.requestedContentSettings?.primaryLang || "",
           secondaryLang: state.requestedContentSettings?.secondaryLang || "",
@@ -181,110 +121,9 @@
       });
 
       coordinator.attachAndMaybeStart(video, `settings_runtime:${reason}`, {
-        keepPanelOpen: state.panelOpen,
+        keepPanelOpen: options.keepPanelOpen ?? state.panelOpen,
       });
       return true;
-    }
-
-    // 字幕 track が揃うまで待ってから startBilingual する。
-    // 初回読み込み直後の「track はまだ無いが video はある」状態で早すぎる起動を避ける。
-    function startBilingualWhenTracksReady(reason = "unknown") {
-      cleanupInitialAutoStartWatch();
-      initialAutoStartToken += 1;
-      const token = initialAutoStartToken;
-
-      const video = state.video;
-      if (!video) {
-        logContent?.("initial auto-start skipped: no video", { reason });
-        return;
-      }
-
-      const currentVideoSrcKey = state.lastVideoSrcKey || "";
-      if (
-        currentVideoSrcKey &&
-        currentVideoSrcKey !== lastDelegatedAutoStartVideoSrcKey
-      ) {
-        lastDelegatedAutoStartVideoSrcKey = "";
-      }
-
-      if (delegateInitialAutoStartToCoordinator(video, reason)) {
-        return;
-      }
-
-      const maybeStart = (triggerReason) => {
-        if (token !== initialAutoStartToken) return false;
-        if (!state.video || state.video !== video) return false;
-
-        const subtitleLikeTrackCount = getSubtitleLikeTracks(video).length;
-        const ready = subtitleLikeTrackCount > 0;
-
-        logStartupProbe?.("initial auto-start track readiness", {
-          reason,
-          triggerReason,
-          ready,
-          totalTrackCount: video?.textTracks?.length ?? 0,
-          subtitleLikeTrackCount,
-        });
-
-        if (!ready) return false;
-
-        cleanupInitialAutoStartWatch();
-
-        logStartupProbe?.("initial auto-start firing", {
-          reason,
-          triggerReason,
-          totalTrackCount: video?.textTracks?.length ?? 0,
-          subtitleLikeTrackCount,
-        });
-
-        startBilingual({
-          reason: `settings_runtime:${reason}:${triggerReason}`,
-          keepPanelOpen: state.panelOpen,
-        });
-
-        return true;
-      };
-
-      if (maybeStart("immediate")) return;
-
-      const textTracks = video?.textTracks || null;
-      let pollTimer = null;
-      let timeoutTimer = null;
-
-      const onAddTrack = () => {
-        maybeStart("textTracks_addtrack");
-      };
-
-      if (textTracks && typeof textTracks.addEventListener === "function") {
-        textTracks.addEventListener("addtrack", onAddTrack);
-      }
-
-      pollTimer = window.setInterval(() => {
-        maybeStart("poll");
-      }, 250);
-
-      timeoutTimer = window.setTimeout(() => {
-        logStartupProbe?.("initial auto-start track wait timeout", {
-          reason,
-          totalTrackCount: video?.textTracks?.length ?? 0,
-          subtitleLikeTrackCount: getSubtitleLikeTracks(video).length,
-        });
-        cleanupInitialAutoStartWatch();
-      }, 8000);
-
-      initialAutoStartCleanup = () => {
-        if (textTracks && typeof textTracks.removeEventListener === "function") {
-          textTracks.removeEventListener("addtrack", onAddTrack);
-        }
-        if (pollTimer) {
-          window.clearInterval(pollTimer);
-          pollTimer = null;
-        }
-        if (timeoutTimer) {
-          window.clearTimeout(timeoutTimer);
-          timeoutTimer = null;
-        }
-      };
     }
 
     // -------------------------------------------------------
@@ -396,20 +235,22 @@
       }
 
       if (!isLanguageSelectionReady?.(effectiveSettings)) {
-        logContent?.("language selection not ready yet; skip start");
+        logContent?.("language selection not ready yet; skip startup request");
         return;
       }
 
-      startBilingualWhenTracksReady("load_settings_from_sync");
+      requestStartupReevaluation("load_settings_from_sync", {
+        keepPanelOpen: state.panelOpen,
+      });
     }
 
     // -------------------------------------------------------
-    // restart orchestration
+    // rebuild request orchestration
     // -------------------------------------------------------
 
     /**
-     * restart 前に state 上の設定値を更新する。
-     * requested / effective / panelOpen を揃え、次の startBilingual が参照する値を整える。
+     * rebuild request 前に state 上の設定値を更新する。
+     * requested / effective / panelOpen を揃え、次の startup coordinator が参照する値を整える。
      *
      * @param {Object} settings
      * @param {Object} [options]
@@ -445,7 +286,7 @@
     }
 
     /**
-     * 設定反映後に bilingual の再起動を始める。
+     * 設定反映後に startup coordinator へ再評価要求を発行する。
      * runtime の enable / disable 判定は state.extensionEnabled を使う。
      *
      * @param {Object} settings
@@ -453,7 +294,7 @@
      * @param {Object} [options]
      * @returns {void}
      */
-    function restartBilingual(settings, reason = "unknown", options = {}) {
+    function requestBilingualRestart(settings, reason = "unknown", options = {}) {
       const toggleOpId =
         typeof options.toggleOpId === "string" && options.toggleOpId
           ? options.toggleOpId
@@ -462,16 +303,19 @@
       applyRestartSettings(settings, options);
 
       if (state.extensionEnabled === false) {
-        logContent?.("restartBilingual skipped because extension is disabled", {
-          reason,
-          toggleOpId,
-        });
+        logContent?.(
+          "requestBilingualRestart skipped because extension is disabled",
+          {
+            reason,
+            toggleOpId,
+          },
+        );
         return;
       }
 
-      state.restarting = true;
+      state.sessionRebuildInProgress = true;
 
-      logContent?.("restartBilingual restarting flag set", {
+      logContent?.("requestBilingualRestart request flag set", {
         reason,
         toggleOpId,
         keepPanelOpen: state.panelOpen,
@@ -482,16 +326,8 @@
         toggleOpId,
       });
 
-      startBilingual({
-        reason,
-        toggleOpId,
+      requestStartupReevaluation(reason, {
         keepPanelOpen: state.panelOpen,
-      }).catch((error) => {
-        logContentError?.("restartBilingual start failed", {
-          reason,
-          toggleOpId,
-          error: String(error),
-        });
       });
     }
 
@@ -535,7 +371,7 @@
 
     /**
      * Apple TV+ 側の secondary 字幕選択を現在設定へ同期する。
-     * settings 変更後の再起動前に、native 側の字幕状態を拡張設定と揃えるために使う。
+     * settings 変更後の再評価要求前に、native 側の字幕状態を拡張設定と揃えるために使う。
      *
      * @param {string} secondaryLang
      * @param {string} triggerReason
@@ -583,7 +419,7 @@
 
     /**
      * runtime message を受け取り、設定変更や言語一覧要求を処理する。
-     * SETTINGS_CHANGED は非同期で処理し、sendResponse は必ず 1 回だけ返す。
+     * SETTINGS_CHANGED は state 反映と再評価要求を非同期で処理し、sendResponse は必ず 1 回だけ返す。
      *
      * @param {Object} message
      * @param {chrome.runtime.MessageSender} sender
@@ -692,7 +528,6 @@
             });
 
             deps.syncIntervalOrchestrator?.stop?.();
-            cleanupInitialAutoStartWatch();
 
             logContentSettings("ネイティブトグル OFF cleanup delegated", {
               toggleOpId,
@@ -752,7 +587,7 @@
 
           const { toggleOpId, pairedWithOff } = resolveToggleOnOp();
 
-          logContentSettings("ネイティブトグル ON restart begin", {
+          logContentSettings("ネイティブトグル ON startup request begin", {
             toggleOpId,
             pairedWithOff,
             triggerReason,
@@ -761,7 +596,7 @@
             hasVideo: !!state.video,
           });
 
-          restartBilingual(
+          requestBilingualRestart(
             {
               ...state.contentSettings,
             },
@@ -772,7 +607,7 @@
             }
           );
 
-          logContentSettings("ネイティブトグル ON restart done", {
+          logContentSettings("ネイティブトグル ON startup request dispatched", {
             toggleOpId,
             pairedWithOff,
             triggerReason,
@@ -785,7 +620,7 @@
             secondaryTrackFound: !!state.secondaryTrack,
           });
 
-          logContentSettings("content applied settings to tracks", {
+          logContentSettings("content applied settings before startup request", {
             toggleOpId,
             triggerReason,
             hasVideo: !!state.video,
@@ -846,10 +681,9 @@
       loadSettingsSnapshot,
       loadSettingsFromSync,
       applyRestartSettings,
-      restartBilingual,
+      requestBilingualRestart,
       onRuntimeMessage,
       ensureMessageListener,
-      resetInitialAutoStartDelegation,
     };
   }
 
