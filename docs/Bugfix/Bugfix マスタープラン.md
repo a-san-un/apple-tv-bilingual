@@ -1,17 +1,18 @@
-# Bugfix マスタープラン 2026-08-31（要約版）
+# Bugfix マスタープラン 2026-09-01（要約版）
 
-**作成日:** 2026-08-13 ／ **最終更新:** 2026-08-31 ／ **ブランチ:** `issue-32-content-core-split`  
+**作成日:** 2026-08-13 ／ **最終更新:** 2026-09-01 ／ **ブランチ:** `issue-32-content-core-split`  
 **入口資料:** 新しいスレッドでもこの資料 1 枚を読めば、プロジェクトの目標・現在地・優先順位・次に着手する作業が分かる状態を保つ。  
-**反映済みの主な節目:** Step 15 の `lane-recovery-state` 命名整理、Step 16 の `cue-sequence-builder` への導出集約、Step 17-A-7 / 17-A-8 / 17-A-9 / 17-A-10 の panel 系整理、Step 17-A-11 の `extensionEnabled` runtime state 分離、Panel / Startup / Recovery の詳細観測ログの既存 probe への追加移管、Step17-C として残存 `logContent` の棚卸しと probe 制御方針整理メモの作成、さらに playback session lifecycle の責務再設計として **startup owner の一本化、cleanup owner 側の API / 説明層整備、`content.js` の主要 direct cleanup callsite 集約** まで反映済みである。 現在は、**cleanup owner 一本化の残差整理フェーズ**に入っており、`reinitialize-coordinator.js` に残る `clearInternalSubtitleState(...)` 直呼びと、`content.js` に残る helper / DI の最終整理を進める段階である。
+**反映済みの主な節目:** Step 15 の `lane-recovery-state` 命名整理、Step 16 の `cue-sequence-builder` への導出集約、Step 17-A-7 / 17-A-8 / 17-A-9 / 17-A-10 の panel 系整理、Step 17-A-11 の `extensionEnabled` runtime state 分離、Panel / Startup / Recovery の詳細観測ログの既存 probe への追加移管、Step17-C として残存 `logContent` の棚卸しと probe 制御方針整理メモの作成、さらに playback session lifecycle の責務再設計として **startup owner の一本化、cleanup owner 側の API / 説明層整備、`content.js` の主要 direct cleanup callsite 集約、`reinitialize-coordinator.js` の direct teardown 除去** まで反映済みである。  
+現在は、**cleanup owner 一本化の残差整理後半**に入りつつ、実機ログで見えた **起動多重発火の観測強化** と、70/30 レイアウト時の **ネイティブ UI 幅追従の原因調査** を先に進め、その後に **未設定時ノーティス限定化** を行う段階である。
 
 ***
 
 ## この資料の役割
 
-この資料は、Bugfix 系作業全体の**入口資料**である。
+この資料は、Bugfix 系作業全体の**入口資料**である。  
 ここでは、全体目標、現在地、優先順位、正本の所在、次スレッドで最初に着手すべき作業だけを示す。
 
-この資料では、個別ファイルの詳細実装手順、JSDoc 案、調査メモ、実機ログの細部は持たない。
+この資料では、個別ファイルの詳細実装手順、JSDoc 案、調査メモ、実機ログの細部は持たない。  
 それらは `Bugfix 実装シート.md`、各 Step 方針整理メモ、または専用資料を正本とする。
 
 ***
@@ -50,8 +51,8 @@
 | `state.lastPanelRenderSnapshot` | 観測用ランタイム情報 | panel 最終描画 snapshot | debug / 観測用途。保存・clear は panel owner 側で扱う。 |
 
 **補足**  
-`extensionEnabled` は永続設定ではなく、現在の playback session に限定した runtime state である。 ページ再読込または SPA 遷移後の新しい playback session では、前セッションの ON/OFF 状態を `chrome.storage.sync` から復元しない。 Step 17-A-11 で、`modules/settings-store.js` / `modules/settings-schema.js` / popup / options の全経路からこの前提を確定済みである。
-`panelOpen` は現在、`chrome.storage.local` に保存する設計で実装されている。
+`extensionEnabled` は永続設定ではなく、現在の playback session に限定した runtime state である。ページ再読込または SPA 遷移後の新しい playback session では、前セッションの ON/OFF 状態を `chrome.storage.sync` から復元しない。Step 17-A-11 で、`modules/settings-store.js` / `modules/settings-schema.js` / popup / options の全経路からこの前提を確定済みである。  
+`panelOpen` は現在、`chrome.storage.local` に保存する設計で実装されている。  
 `panelDefaultOpen` は未保存時の初期値であり、`panelOpen` と混同しない。
 
 ***
@@ -88,27 +89,29 @@
 - Panel / Startup / Recovery の詳細観測ログは、既存 probe への追加移管が進み、ブラウザテスト前提となる観測経路の整備は一通り完了している。
 - Step 17-C の前提として、残存 `logContent` の棚卸しと probe 制御方針整理メモの作成は完了している。
 - playback session lifecycle の責務再設計について、`settings-runtime.js` に残っていた readiness wait / `addtrack` watch / direct start / `restartBilingual(...)` は整理され、起動要求は `coordinator.attachAndMaybeStart(...)` へ集約済みである。
-- `modules/playback-session-cleanup.js` は session cleanup owner の受け皿として API と説明層が整備され、`content.js` 側の主要 direct cleanup callsite であった `clearSubtitles` と manual restart cleanup は cleanup owner API 経由へ置換済みである。
-- `modules/panel-ui.js` と `modules/debug-panel-runtime.js` は、cleanup owner ではなく playback session に従属する subordinate UI module / runtime として、ヘッダーおよび dispose / unmount の説明層を更新済みである。
+- cleanup owner 側は `modules/playback-session-cleanup.js` を session teardown の唯一入口として説明・API の両面で整理し、`content.js` の主要 direct cleanup callsite も owner API 経由へ置換済みである。
+- 最新コミット `297b2ba` により、`reinitialize-coordinator.js` に残っていた `clearInternalSubtitleState(...)` の直呼びは `playbackSessionCleanup.teardownForRestart(...)` へ置換され、`content.js` の DI も cleanup owner 基準へ縮退済みである。
 
 ### いま着手している主作業
 
-現在の主作業は、**playback session lifecycle の owner を単一路線へ寄せる責務再設計の残差整理**である。 これは、起動 owner の一本化が完了したあとに、cleanup owner 一本化をコード上でも完全に読める状態へ寄せるための後半フェーズである。
+現在の主作業は、playback session lifecycle の最終収束に向けた **観測強化 → レイアウト原因調査 → notice-only 化** の順序整理である。
 
-この段階では、`modules/playback-startup-coordinator.js` を唯一の起動前段 owner とする方針は実装に反映済みであり、`settings-runtime.js` から直接 start する経路は整理済みである。 一方で、cleanup 側は `modules/playback-session-cleanup.js` を teardown owner とする受け皿整備と主要 callsite 集約までは完了したが、`reinitialize-coordinator.js` に残る `clearInternalSubtitleState(...)` 直呼びと、`content.js` に残る helper / DI の縮退がまだ残っている。
-
-したがって、現時点の表現として正確なのは、**startup owner 一本化は完了、cleanup owner 一本化は一部完了**である。 完了済み事項は「owner 側受け皿と主要 callsite 集約まで」、残課題は「cleanup 内部専用 helper への格下げと、reinitialize / content 側の残存直呼び整理」として扱う。
+- **起動多重発火の観測強化:** 実機ログでは約 0.57 秒の間に `settings runtime startup request`、`attachTracks`、`startup coordinator attach`、`startBilingual session-start` などが各 23 回記録されており、同一 target / 同一設定に対する startup 再入または重複観測の切り分けが必要である。
+- **ネイティブ UI 幅追従の原因調査:** 動画 70 / 字幕パネル 30 のレイアウト時に、Apple TV+ ネイティブ UI が動画領域幅へ追従していないため、`applyLayout(...)` と `watchForPlayerTabs()` 周辺の責務を棚卸しする必要がある。
+- **未設定時ノーティス限定化:** 言語未設定時は notice だけを表示し、toggle-only UI や session 起動経路を呼ばない構成へ整理する。現状は `attachTracks()` の無条件 `mountToggleOnlyUi()` と、settings runtime 側の分岐整理が残っている。
 
 ### 次回の着手点
 
-次回は、cleanup owner 一本化の残課題から再開する。
+次回は次の順で進める。
 
-優先順位は次のとおりである。
+1. **起動多重発火の観測強化**  
+   `modules/playback-startup-coordinator.js`、`content.js`、`modules/playback-session-cleanup.js` に compact probe を追加し、request ID / session ID / teardown 有無を相関可能にする。
 
-1. `reinitialize-coordinator.js` に残る `clearInternalSubtitleState(...)` 直呼びを除去し、cleanup owner 経由へ置換する。
-2. `content.js` に残る `clearInternalSubtitleState(...)` の helper / DI を、cleanup 内部専用 helper として読める形へ縮退する。
-3. 上記整理の完了後、不要になった watcher / timer / wrapper / 補助 cleanup を物理削除する。
-4. その後、関連ドキュメント間で「startup = coordinator」「cleanup = playback-session-cleanup」「content.js = wiring」「panel/debug = subordinate module」という表現を揃える。
+2. **ネイティブ UI 幅追従の原因調査**  
+   `content.js` の `applyLayout(...)` と `modules/panel-ui.js` の `watchForPlayerTabs()` を起点に、どの DOM が 70/30 レイアウトに追従しておらず、どこで補正すべきかを棚卸しする。
+
+3. **未設定時ノーティス限定化**  
+   startup 多重起動と native UI レイアウトの見通しが立ったら、`content.js` / `settings-runtime.js` / `modules/panel-ui.js` を対象に、言語未設定時は notice のみを表示するよう整理する。
 
 ***
 
@@ -116,37 +119,37 @@
 
 ### いま最優先の作業
 
-最優先は、**playback session lifecycle の owner 一本化を cleanup 側まで完結させること**である。 現在は起動入口の一本化が済んでいるため、残る重点は cleanup owner の境界を `reinitialize-coordinator.js` / `content.js` / `modules/playback-session-cleanup.js` 間で完全にそろえることにある。
+**起動多重発火の観測強化** を最優先とする。  
+現状の実機ログは 300 件上限に近く、しかも短時間に同一系イベントが多発しているため、まず startup request / attach / session-start / teardown の対応関係を compact log で読み解ける状態にする必要がある。
 
 ### その次にやる作業
 
-その次は、不要になった watcher / timeout / wrapper / 補助 cleanup を物理削除し、実装と設計文書の差分を詰めることである。 あわせて、`Bugfix 実装シート.md`、`Bugfix 将来作業計画.md`、`Bugfix 設計整理対応表.md` 側の進捗表記も、今回完了した範囲に合わせて更新する。
+**ネイティブ UI 幅追従の原因調査** を行う。  
+70/30 レイアウト自体は成立しているが、Apple TV+ ネイティブ UI が動画領域幅に追従していないため、見た目と責務境界の両面で棚卸しが必要である。
 
 ### 後続の作業
 
-owner 一本化が完了したら、次は browser test とログ確認を通じて、settings 変更・SPA 遷移・track invalidation・restart 要求のどれから入っても同じ rebuild 経路へ収束することを再確認する。 そのうえで、残存 `logContent` 整理と probe 制御方針に沿った観測経路の軽量化を継続する。
+**未設定時ノーティス限定化** を行う。  
+これにより、言語未設定時は notice だけを表示し、toggle-only UI や session 起動を止める構成へ整理する。あわせて `prepareForRestart()` と `teardownForRestart()` の役割差をコードとドキュメントの両面で明文化する。
 
 ***
 
 ## 今回の判断基準
 
-今回の責務再設計で重視している判断基準は次のとおりである。
-
-- **1 playback target = 1 playback session = 1 owner** を説明と実装の両方で読めること。
-- settings 変更、SPA 遷移、track invalidation、restart 要求のどれから入っても、最終的に同じ rebuild 経路へ流れること。
-- `content.js` が wiring / request のハブに戻り、start / cleanup の owner 顔をしないこと。
-- `panel-ui.js` / `debug-panel-runtime.js` は subordinate UI module として mount / render / dispose に責務を限定し、session owner を名乗らないこと。
-- `clearInternalSubtitleState(...)` は物理削除を急ぐのではなく、cleanup 内部専用 helper へ格下げして owner 境界を明確にすること。
+- **1 playback target = 1 playback session = 1 owner** を最優先する。
+- startup / rebuild / cleanup の入口は増やさず、既存 owner API へ収束させる。
+- UI 再マウントだけを単独 rebuild 理由にしない。
+- logger / probe の観測性は壊さず、必要なら compact 化して 300 件ログ制限でも読める形へ寄せる。
+- timer / listener / observer / DOM / panel / debug の owner と cleanup 登録先を明確に保つ。
+- 未設定時の UX は「notice のみ表示」を目標とし、toggle-only UI や session 起動を混ぜない。
+- native UI 追従修正は cleanup owner 整理と混線させず、レイアウト責務として分離して扱う。
 
 ***
 
 ## 次スレッド開始時の確認ポイント
 
-次スレッドでは、まず次の 3 点を確認する。
-
-- `reinitialize-coordinator.js` に `clearInternalSubtitleState(...)` の直呼びが残っていないか。
-- `content.js` に残る `clearInternalSubtitleState(...)` が、外向き cleanup API ではなく cleanup 内部 helper として読める状態か。
-- cleanup 完了後の rebuild 経路が、`request → cleanup owner → attachAndMaybeStart(...) → startBilingual(...)` の順で追えるか。
-
-この 3 点が揃えば、playback session lifecycle の owner 一本化は cleanup 側までかなり前進したと判断できる。
-
+- 最新コミット `297b2ba` が取り込まれた状態か。
+- `reinitialize-coordinator.js` の direct cleanup 除去がドキュメントへ反映済みか。
+- startup 多重発火の compact probe をどこへ追加するか、対象ファイルが固まっているか。
+- `applyLayout(...)` と `watchForPlayerTabs()` のどちらが native UI 幅追従漏れの起点か、調査観点が明確か。
+- 未設定時 notice-only 方針を `content.js` / `settings-runtime.js` / `modules/panel-ui.js` のどこで gate するか、次の作業単位が整理されているか。
