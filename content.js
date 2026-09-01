@@ -3073,181 +3073,294 @@ function forwardContentLog(...args) {
     panelUi?.refreshPanel?.("render-current-snapshot");
   }
 
-  // [startup path: initial bilingual start]
-  // 設定完了時の通常起動入口。
-  // 未設定時は notice 表示と panel close のみを行い、通常の track attach / UI build は進めない。
-  // track 選択・panelOpen 復元・UI 構築をこの経路でまとめて行う。
-  async function startBilingual(options = {}) {
-    try {
-      // 拡張 OFF 中は再生画面の UI 構築を進めない
-      if (state.extensionEnabled === false) {
-        logContent("startBilingual skipped: disabled", {
-          runtimeExtensionEnabled: state.extensionEnabled,
-        });
-        return;
-      }
+  // -----------------------------------------------------------
+  // Section: startup request / session correlation helpers
+  // -----------------------------------------------------------
 
-      // 起動時点の panelOpen / panelDefaultOpen / keepPanelOpen をログへ残す
-    // 起動時点の panelOpen / panelDefaultOpen / keepPanelOpen をログへ残す
-    logStartupProbe("startBilingual trace", {
+  /**
+   * startup coordinator から渡される request context を、
+   * content.js 側の session log で使いやすい形へ正規化する。
+   *
+   * requestId の新規採番は行わず、未指定時は空文字のまま扱う。
+   *
+   * @param {object} [input={}]
+   * @param {string} [input.requestId]
+   * @param {string} [input.reason]
+   * @param {string} [input.source]
+   * @param {string} [input.videoSrcKey]
+   * @param {boolean} [input.keepPanelOpen]
+   * @returns {{
+   *   requestId: string,
+   *   reason: string,
+   *   source: string,
+   *   videoSrcKey: string,
+   *   keepPanelOpen: boolean|undefined,
+   * }}
+   */
+  function normalizeStartupRequestContextForSession(input = {}) {
+    return {
+      requestId:
+        typeof input.requestId === "string" ? input.requestId.trim() : "",
+      reason:
+        typeof input.reason === "string" && input.reason.trim()
+          ? input.reason.trim()
+          : "unknown",
+      source:
+        typeof input.source === "string" && input.source.trim()
+          ? input.source.trim()
+          : "content_start",
+      videoSrcKey:
+        typeof input.videoSrcKey === "string" ? input.videoSrcKey : "",
+      keepPanelOpen:
+        typeof input.keepPanelOpen === "boolean"
+          ? input.keepPanelOpen
+          : undefined,
+    };
+  }
+
+  /**
+   * session 相関ログ用の compact payload を返す。
+   *
+   * @param {object} requestContext
+   * @param {object} [overrides={}]
+   * @returns {object}
+   */
+  function getStartupSessionLogContext(requestContext, overrides = {}) {
+    const currentVideoSrcKey =
+      requestContext?.videoSrcKey ||
+      getCurrentVideoSrcKey?.(state.video) ||
+      state.lastVideoSrcKey ||
+      "";
+
+    return {
+      requestId: requestContext?.requestId || "",
+      reason: requestContext?.reason || "unknown",
+      source: requestContext?.source || "content_start",
+      sessionId: state.activeBilingualSessionId ?? null,
+      videoSrcKey: currentVideoSrcKey,
+      stateVideoSrcKey: state.lastVideoSrcKey || "",
       panelOpen: state.panelOpen,
       keepPanelOpen:
-        typeof options.keepPanelOpen === "boolean"
-          ? options.keepPanelOpen
+        typeof requestContext?.keepPanelOpen === "boolean"
+          ? requestContext.keepPanelOpen
           : null,
-      requestedContentSettings: {
-        primaryLang: state.requestedContentSettings?.primaryLang || "",
-        secondaryLang: state.requestedContentSettings?.secondaryLang || "",
-        panelDefaultOpen:
-          state.requestedContentSettings?.panelDefaultOpen ?? null,
-      },
-      contentSettings: {
-        primaryLang: state.contentSettings?.primaryLang || "",
-        secondaryLang: state.contentSettings?.secondaryLang || "",
-        panelDefaultOpen: state.contentSettings?.panelDefaultOpen ?? null,
-      },
-      requestedSecondaryLang: state.requestedSecondaryLang || "",
+      requestedPrimaryLang: state.requestedContentSettings?.primaryLang || "",
+      requestedSecondaryLang:
+        state.requestedContentSettings?.secondaryLang || "",
+      contentPrimaryLang: state.contentSettings?.primaryLang || "",
+      contentSecondaryLang: state.contentSettings?.secondaryLang || "",
       currentTime: Number.isFinite(state.video?.currentTime)
         ? state.video.currentTime
         : null,
       readyState: state.video?.readyState ?? null,
       paused:
         typeof state.video?.paused === "boolean" ? state.video.paused : null,
-      videoSrc: state.video?.currentSrc || state.video?.src || "",
       textTrackCount: state.video?.textTracks?.length ?? 0,
-    });
+      ...overrides,
+    };
+  }
 
+  /**
+   * bilingual session を採番し、現在の active session として state へ反映する。
+   *
+   * @returns {number}
+   */
+  function activateNextBilingualSession() {
     state.bilingualSessionSeq += 1;
     state.activeBilingualSessionId = state.bilingualSessionSeq;
+    return state.activeBilingualSessionId;
+  }
 
-    logStartupProbe("startBilingual session-start", {
-      sessionId: state.activeBilingualSessionId,
-      reason: options.reason || "",
-      currentTime: Number.isFinite(state.video?.currentTime)
-        ? state.video.currentTime
-        : null,
-      videoSrc: state.video?.currentSrc || state.video?.src || "",
-      textTrackCount: state.video?.textTracks?.length ?? 0,
+  // [startup path: initial bilingual start]
+  // 設定完了時の通常起動入口。
+  // startup coordinator request を受けて track 選択・panelOpen 復元・UI 構築を行う。
+  // 未設定時は notice 表示へ寄せ、通常の track attach / session build は進めない。
+  /**
+   * bilingual session を構築する。
+   *
+   * @param {object} [options={}]
+   * @param {object} [options.requestContext]
+   * @param {string} [options.reason]
+   * @param {boolean} [options.keepPanelOpen]
+   * @returns {Promise<void>}
+   */
+  async function startBilingual(options = {}) {
+    const requestContext = normalizeStartupRequestContextForSession({
+      ...(options?.requestContext || {}),
+      reason:
+        typeof options?.reason === "string" && options.reason.trim()
+          ? options.reason.trim()
+          : options?.requestContext?.reason,
+      keepPanelOpen:
+        typeof options?.keepPanelOpen === "boolean"
+          ? options.keepPanelOpen
+          : options?.requestContext?.keepPanelOpen,
+      videoSrcKey:
+        options?.requestContext?.videoSrcKey ||
+        getCurrentVideoSrcKey?.(state.video) ||
+        state.lastVideoSrcKey ||
+        "",
     });
 
-
-    // console.trace("startBilingual trace");
-
-    // video が無ければここでは初期化できない
-    if (!state.video) return;
-
-    const requestedSettings = state.requestedContentSettings || {};
-
-    // 言語設定が未完了なら panelOpen=false に寄せ、
-    // cleanup owner 経由で現在の session UI を再生成可能状態へ戻す。
-    if (!isLanguageSelectionReady(requestedSettings)) {
-      state.panelOpen = false;
-      stopSecondaryTrackSyncInterval("manual-restart-cleanup");
-      playbackSessionCleanup?.prepareForRestart?.({
-        reason: "manual-restart-cleanup",
-      });
-      applyLayout(false);
-      showLanguageSetupNotice();
-      logContentSettings(
-        "startBilingual skipped: language selection incomplete",
-        {
-          primaryLang: requestedSettings.primaryLang || "",
-          secondaryLang: requestedSettings.secondaryLang || "",
-        },
-      );
-      return;
-    }
-
-    // 言語設定が揃っていれば setup notice は閉じる
-    hideLanguageSetupNotice();
-
-    // 再生画面がまだ未準備なら後続 build を進めない
-    if (!isPlaybackPageReady()) {
-      logContent("startBilingual skipped: playback not ready", {
-        ...getPlaybackContextLogPayload(),
-      });
-      return;
-    }
-
-    // 今回の言語入力値を resolver 前の状態としてログへ残す
-    logStartupProbe("startBilingual language inputs", {
-      requestedContentSettings: {
-        primaryLang: requestedSettings.primaryLang || "",
-        secondaryLang: requestedSettings.secondaryLang || "",
-        panelDefaultOpen: requestedSettings.panelDefaultOpen ?? null,
-      },
-      contentSettings: {
-        primaryLang: state.contentSettings.primaryLang || "",
-        secondaryLang: state.contentSettings.secondaryLang || "",
-        panelDefaultOpen: state.contentSettings.panelDefaultOpen ?? null,
-      },
-      requestedSecondaryLang: state.requestedSecondaryLang || "",
-    });
-
-    // 履歴側の contentKey を現在の playback に合わせる
-    syncHistoryContextWithPlayback("startBilingual");
-
-    // resolver 前の textTracks 生状態をログする
     try {
-      const rawTracks = Array.from(state.video?.textTracks || []);
-
-      const normalizedTracks = rawTracks.map((t, i) => {
-        const cuesLength = (() => {
-          try {
-            return t?.cues ? t.cues.length : 0;
-          } catch (_) {
-            return 0;
-          }
-        })();
-
-        const activeCuesLength = (() => {
-          try {
-            return t?.activeCues ? t.activeCues.length : 0;
-          } catch (_) {
-            return 0;
-          }
-        })();
-
-        return {
-          index: i,
-          language: t?.language || "",
-          label: t?.label || "",
-          kind: t?.kind || "",
-          mode: t?.mode || "",
-          cuesLength,
-          activeCuesLength,
-        };
-      });
-
-      const groupMap = new Map();
-      for (const track of normalizedTracks) {
-        const key = [
-          track.language,
-          track.label,
-          track.kind,
-          track.mode,
-          track.cuesLength > 0 ? "hasCues" : "noCues",
-        ].join(" | ");
-
-        const prev = groupMap.get(key) || {
-          language: track.language,
-          label: track.label,
-          kind: track.kind,
-          mode: track.mode,
-          cueState: track.cuesLength > 0 ? "hasCues" : "noCues",
-          count: 0,
-        };
-
-        prev.count += 1;
-        groupMap.set(key, prev);
+      if (state.extensionEnabled === false) {
+        logContent("startBilingual skipped: disabled", {
+          ...getStartupSessionLogContext(requestContext, {
+            sessionId: null,
+            skipReason: "extension_disabled",
+            runtimeExtensionEnabled: state.extensionEnabled,
+          }),
+        });
+        return;
       }
 
-    } catch (error) {
-      logContentError("textTracks snapshot logging failed", {
-        reason: "startBilingual",
-        error: String(error),
+      if (!state.video) {
+        logStartupProbe(
+          "startBilingual skipped: missing video",
+          getStartupSessionLogContext(requestContext, {
+            sessionId: null,
+            skipReason: "missing_video",
+          }),
+        );
+        return;
+      }
+
+      logStartupProbe(
+        "startBilingual trace",
+        getStartupSessionLogContext(requestContext, {
+          requestedPanelDefaultOpen:
+            state.requestedContentSettings?.panelDefaultOpen ?? null,
+          contentPanelDefaultOpen:
+            state.contentSettings?.panelDefaultOpen ?? null,
+        }),
+      );
+
+      const requestedSettings = state.requestedContentSettings || {};
+
+      if (!isLanguageSelectionReady(requestedSettings)) {
+        state.panelOpen = false;
+        stopSecondaryTrackSyncInterval("manual-restart-cleanup");
+        playbackSessionCleanup?.prepareForRestart?.({
+          reason: "manual-restart-cleanup",
+          requestContext,
+        });
+        applyLayout(false);
+        showLanguageSetupNotice();
+
+        logContentSettings(
+          "startBilingual skipped: language selection incomplete",
+          {
+            ...getStartupSessionLogContext(requestContext, {
+              sessionId: null,
+              skipReason: "language_selection_incomplete",
+            }),
+            primaryLang: requestedSettings.primaryLang || "",
+            secondaryLang: requestedSettings.secondaryLang || "",
+          },
+        );
+        return;
+      }
+
+      hideLanguageSetupNotice();
+
+      if (!isPlaybackPageReady()) {
+        logContent("startBilingual skipped: playback not ready", {
+          ...getStartupSessionLogContext(requestContext, {
+            sessionId: null,
+            skipReason: "playback_not_ready",
+          }),
+          ...getPlaybackContextLogPayload(),
+        });
+        return;
+      }
+
+      activateNextBilingualSession();
+
+      logStartupProbe(
+        "startBilingual session-start",
+        getStartupSessionLogContext(requestContext),
+      );
+
+      logStartupProbe("startBilingual language inputs", {
+        ...getStartupSessionLogContext(requestContext),
+        requestedContentSettings: {
+          primaryLang: requestedSettings.primaryLang || "",
+          secondaryLang: requestedSettings.secondaryLang || "",
+          panelDefaultOpen: requestedSettings.panelDefaultOpen ?? null,
+        },
+        contentSettings: {
+          primaryLang: state.contentSettings.primaryLang || "",
+          secondaryLang: state.contentSettings.secondaryLang || "",
+          panelDefaultOpen: state.contentSettings.panelDefaultOpen ?? null,
+        },
       });
-    }
+
+      syncHistoryContextWithPlayback("startBilingual");
+
+      try {
+        const rawTracks = Array.from(state.video?.textTracks || []);
+
+        const normalizedTracks = rawTracks.map((track, index) => {
+          const cuesLength = (() => {
+            try {
+              return track?.cues ? track.cues.length : 0;
+            } catch (_) {
+              return 0;
+            }
+          })();
+
+          const activeCuesLength = (() => {
+            try {
+              return track?.activeCues ? track.activeCues.length : 0;
+            } catch (_) {
+              return 0;
+            }
+          })();
+
+          return {
+            index,
+            language: track?.language || "",
+            label: track?.label || "",
+            kind: track?.kind || "",
+            mode: track?.mode || "",
+            cuesLength,
+            activeCuesLength,
+          };
+        });
+
+        const groupMap = new Map();
+        for (const track of normalizedTracks) {
+          const languageKey = track.language || "__empty__";
+          const current = groupMap.get(languageKey) || {
+            language: track.language || "",
+            count: 0,
+            labels: new Set(),
+            cueReadyCount: 0,
+            activeCueReadyCount: 0,
+          };
+
+          current.count += 1;
+          if (track.label) current.labels.add(track.label);
+          if (track.cuesLength > 0) current.cueReadyCount += 1;
+          if (track.activeCuesLength > 0) current.activeCueReadyCount += 1;
+          groupMap.set(languageKey, current);
+        }
+
+        const trackGroups = Array.from(groupMap.values()).map((group) => ({
+          language: group.language,
+          count: group.count,
+          labels: Array.from(group.labels.values()),
+          cueReadyCount: group.cueReadyCount,
+          activeCueReadyCount: group.activeCueReadyCount,
+        }));
+
+        logStartupProbe("startBilingual track snapshot", {
+          ...getStartupSessionLogContext(requestContext),
+          trackCount: normalizedTracks.length,
+          trackGroups,
+          tracks: normalizedTracks,
+        });
+      } catch (_) {}
 
     const resolverRequestedSecondaryLanguage =
       getResolverRequestedSecondaryLanguage();
@@ -3429,17 +3542,55 @@ function forwardContentLog(...args) {
 
   let startupCompletedLogged = false;
 
-  function attachTracks(v) {
-    state.video = v;
-    state.lastVideoSrcKey = getCurrentVideoSrcKey(v);
-    logContent("attachTracks", { trackCount: v?.textTracks?.length ?? 0 });
+  /**
+   * startup coordinator が選んだ playback target を state へ反映し、
+   * requestId 付き compact log で attach 開始を残す。
+   *
+   * @param {HTMLVideoElement|null} video
+   * @param {object} [options={}]
+   * @param {object} [options.requestContext]
+   * @returns {void}
+   */
+  function attachTracks(video, options = {}) {
+    if (!video) return;
+
+    const requestContext = normalizeStartupRequestContextForSession({
+      ...(options?.requestContext || {}),
+      videoSrcKey:
+        options?.requestContext?.videoSrcKey ||
+        getCurrentVideoSrcKey(video) ||
+        "",
+    });
+
+    state.video = video;
+    state.lastVideoSrcKey = getCurrentVideoSrcKey(video);
+
+    logStartupProbe(
+      "attachTracks begin",
+      getStartupSessionLogContext(requestContext, {
+        sessionId: state.activeBilingualSessionId ?? null,
+        attachedVideoSrcKey: state.lastVideoSrcKey || "",
+      }),
+    );
+
+    logContent("attachTracks", {
+      ...getStartupSessionLogContext(requestContext, {
+        sessionId: state.activeBilingualSessionId ?? null,
+        attachedVideoSrcKey: state.lastVideoSrcKey || "",
+      }),
+    });
+
     if (!startupCompletedLogged) {
       startupCompletedLogged = true;
       logContent("content startup completed", {
-        hasVideo: !!state.video,
-        trackCount: v?.textTracks?.length ?? 0,
+        ...getStartupSessionLogContext(requestContext, {
+          sessionId: state.activeBilingualSessionId ?? null,
+          hasVideo: Boolean(state.video),
+          trackCount: video?.textTracks?.length ?? 0,
+        }),
       });
     }
+
     panelUi?.mountToggleOnlyUi?.();
     loadSettingsFromSync();
   }
