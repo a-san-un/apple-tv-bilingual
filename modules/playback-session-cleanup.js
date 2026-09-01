@@ -16,6 +16,8 @@
 //   teardown が壊れないよう最小限の再入ガードを持つ。
 // - cleanup 前後で、どの参照 / timer / observer / track binding を保持していたかを
 //   構造化ログで記録し、トグル OFF や restart 時の解放状況を追跡できるようにする。
+// - startup request / session 相関を requestId / sessionId / videoSrcKey で保持し、
+//   restart 前 cleanup と attach 前 cleanup の前後関係を compact log で追えるようにする。
 //
 // clearInternalSubtitleState の preserveSecondaryDom 使い分け:
 //   true  -> restart 前提。パネルDOMのフラッシュを避けるため secondary DOM を残す。
@@ -78,6 +80,123 @@
     let isResettingForContentSwitch = false;
 
     // -------------------------------------------------------
+    // cleanup correlation state
+    // -------------------------------------------------------
+
+    /**
+     * cleanup 相関用の active session 情報を返す。
+     *
+     * @returns {{
+     *   sessionId: string,
+     *   requestId: string,
+     *   videoSrcKey: string,
+     * }}
+     */
+    function getActiveCleanupCorrelation() {
+      return {
+        sessionId:
+          typeof state.activeBilingualSessionId === "string"
+            ? state.activeBilingualSessionId
+            : "",
+        requestId:
+          typeof state.activeBilingualRequestId === "string"
+            ? state.activeBilingualRequestId
+            : "",
+        videoSrcKey:
+          typeof state.lastVideoSrcKey === "string" ? state.lastVideoSrcKey : "",
+      };
+    }
+
+    /**
+     * cleanup 系 API に渡された request context を正規化する。
+     *
+     * @param {object} [input={}]
+     * @returns {{
+     *   requestId: string,
+     *   reason: string,
+     *   source: string,
+     *   videoSrcKey: string,
+     *   sessionId: string,
+     *   toggleOpId: string|null,
+     * }}
+     */
+    function normalizeCleanupRequestContext(input = {}) {
+      const active = getActiveCleanupCorrelation();
+
+      return {
+        requestId:
+          typeof input.requestId === "string" && input.requestId.trim()
+            ? input.requestId.trim()
+            : active.requestId,
+        reason:
+          typeof input.reason === "string" && input.reason.trim()
+            ? input.reason.trim()
+            : "unknown",
+        source:
+          typeof input.source === "string" && input.source.trim()
+            ? input.source.trim()
+            : "cleanup_owner",
+        videoSrcKey:
+          typeof input.videoSrcKey === "string" && input.videoSrcKey
+            ? input.videoSrcKey
+            : active.videoSrcKey,
+        sessionId:
+          typeof input.sessionId === "string" && input.sessionId.trim()
+            ? input.sessionId.trim()
+            : active.sessionId,
+        toggleOpId:
+          typeof input.toggleOpId === "string" && input.toggleOpId
+            ? input.toggleOpId
+            : null,
+      };
+    }
+
+    /**
+     * cleanup 相関ログ用の compact payload を返す。
+     *
+     * @param {object} requestContext
+     * @param {object} [overrides={}]
+     * @returns {object}
+     */
+    function getCleanupLogContext(requestContext, overrides = {}) {
+      return {
+        requestId: requestContext?.requestId || "",
+        reason: requestContext?.reason || "unknown",
+        source: requestContext?.source || "cleanup_owner",
+        sessionId: requestContext?.sessionId || "",
+        videoSrcKey: requestContext?.videoSrcKey || "",
+        toggleOpId: requestContext?.toggleOpId ?? null,
+        hasVideo: Boolean(state.video),
+        hasDialogEl: Boolean(state.dialogEl),
+        hasPrimaryTrack: Boolean(state.primaryTrack),
+        hasSecondaryTrack: Boolean(state.secondaryTrack),
+        panelOpen: state.panelOpen,
+        subtitleHistoryCount: Array.isArray(state.subtitleHistory)
+          ? state.subtitleHistory.length
+          : 0,
+        panelPastBlocksCount: Array.isArray(state.panelPastBlocks)
+          ? state.panelPastBlocks.length
+          : 0,
+        ...overrides,
+      };
+    }
+
+    /**
+     * cleanup の begin / complete を compact log で残す。
+     *
+     * @param {"begin"|"complete"} stage
+     * @param {object} requestContext
+     * @param {object} [payload={}]
+     * @returns {void}
+     */
+    function logCleanupLifecycle(stage, requestContext, payload = {}) {
+      logContent?.(
+        `playback session cleanup ${stage}`,
+        getCleanupLogContext(requestContext, payload),
+      );
+    }
+
+    // -------------------------------------------------------
     // 小さな state cleanup
     // -------------------------------------------------------
 
@@ -131,102 +250,52 @@
           : 0,
         subtitleCurrentIndex: Number.isFinite(state.subtitleCurrentIndex)
           ? state.subtitleCurrentIndex
-          : -1,
-        hasSecondaryHideTimer: Boolean(state.secondaryHideTimer),
-        playbackControlsRafId: state.playbackControlsRafId || 0,
-        playbackControlsRetryTimersCount: Array.isArray(
-          state.playbackControlsRetryTimers,
-        )
-          ? state.playbackControlsRetryTimers.length
-          : 0,
-        trackResolveRetryTimersCount: Array.isArray(state.trackResolveRetryTimers)
-          ? state.trackResolveRetryTimers.length
-          : 0,
-        controlSettlingTimersCount: Array.isArray(state.controlSettlingTimers)
-          ? state.controlSettlingTimers.length
-          : 0,
-        initialCueRecoveryTimersCount: Array.isArray(
-          state.initialCueRecoveryTimers,
-        )
-          ? state.initialCueRecoveryTimers.length
-          : 0,
-        initialCueRecoveryCleanupCount: Array.isArray(
-          state.initialCueRecoveryCleanup,
-        )
-          ? state.initialCueRecoveryCleanup.length
-          : 0,
-        hasOverlayRoot: Boolean(state.overlayRoot),
-        hasPanelShadowRoot: Boolean(state.panelShadowRoot),
-        hasPopupShadowRoot: Boolean(state.popupShadowRoot),
-        hasDebugPanelRoot: Boolean(state.debugPanelRoot),
-        hasPopupDocClickHandler: Boolean(state.popupDocClickHandler),
-        hasPlaybackCloseClickHandler: Boolean(state.playbackCloseClickHandler),
-        hasPopupResizeObserver: Boolean(state.popupResizeObserver),
-        hasToggleButtonResizeHandler: Boolean(state.toggleButtonResizeHandler),
-        hasPopupLastContext: Boolean(state.popupLastContext),
-        messageListenerAttached: Boolean(state.messageListenerAttached),
+          : null,
+        secondaryHideTimerActive: Boolean(state.secondaryHideTimer),
+        allowSecondaryOnlyUntil: Number.isFinite(state.allowSecondaryOnlyUntil)
+          ? state.allowSecondaryOnlyUntil
+          : null,
         currentContentKey: state.currentContentKey || "",
         lastVideoSrcKey: state.lastVideoSrcKey || "",
-        secondaryMonitor: secondaryMonitorState
-          ? {
-              active: Boolean(secondaryMonitorState.active),
-              hasCleanup: Boolean(secondaryMonitorState.hasCleanup),
-              hasTrack: Boolean(secondaryMonitorState.track),
-              originalMode:
-                secondaryMonitorState.originalMode != null
-                  ? secondaryMonitorState.originalMode
-                  : null,
-              requestedMode:
-                secondaryMonitorState.requestedMode != null
-                  ? secondaryMonitorState.requestedMode
-                  : null,
-              meta: secondaryMonitorState.meta || null,
-            }
-          : null,
+        secondaryMonitorBoundTrackLanguage:
+          secondaryMonitorState?.boundTrackLanguage || "",
+        secondaryMonitorBoundTrackLabel:
+          secondaryMonitorState?.boundTrackLabel || "",
+        secondaryMonitorPendingSync:
+          secondaryMonitorState?.pendingSync ?? false,
       };
     }
 
-    /**
-     * cleanup 開始 / 終了ログを揃った形式で出す。
-     * toggleOpId がある場合は OFF 側相関ログとしてそのまま流せるようにする。
-     *
-     * @param {string} phase cleanup の段階名。
-     * @param {object} [payload={}] 追加で記録する構造化 payload。
-     */
-    function logCleanupPhase(phase, payload = {}) {
-      logContent?.(`playback session cleanup ${phase}`, payload);
-    }
+    // -------------------------------------------------------
+    // session teardown runner
+    // -------------------------------------------------------
 
     /**
-     * teardown 共通本体。
-     * restart / disabled で共通な撤収処理をまとめ、mode restore や
-     * complete reset の有無だけをオプションで切り替える。
+     * playback session teardown の本体。
+     * restart / disable / startup attach 前 cleanup など、同系統の撤収処理をここへ集約する。
      *
-     * @param {object} [options={}] teardown 実行オプション。
-     * @param {string} [options.phase="unknown"] ログ用の cleanup phase。
-     * @param {boolean} [options.restoreSecondaryMode=false]
-     *   secondary track の mode を native 側へ戻すか。
-     * @param {boolean} [options.completeSubtitleStateReset=false]
-     *   subtitle state を complete reset として扱うか。
-     * @param {boolean} [options.preserveSecondaryDom=false]
-     *   secondary DOM を残すか。
-     * @param {string|null} [options.toggleOpId=null] toggle 操作相関 ID。
-     * @param {string} [options.reason=options.phase] cleanup reason。
+     * @param {object} options
+     * @param {"restart"|"disabled"|"startup_attach"} options.phase
+     * @param {boolean} options.restoreSecondaryMode
+     * @param {boolean} options.completeSubtitleStateReset
+     * @param {boolean} options.preserveSecondaryDom
+     * @param {object} [options.requestContext={}]
+     * @returns {void}
      */
     function runSessionTeardown({
-      phase = "unknown",
-      restoreSecondaryMode = false,
-      completeSubtitleStateReset = false,
-      preserveSecondaryDom = false,
-      toggleOpId = null,
-      reason = phase,
-    } = {}) {
+      phase,
+      restoreSecondaryMode,
+      completeSubtitleStateReset,
+      preserveSecondaryDom,
+      requestContext = {},
+    }) {
+      const normalizedRequestContext = normalizeCleanupRequestContext({
+        ...requestContext,
+      });
       const before = buildCleanupSnapshot();
 
-      logCleanupPhase("begin", {
+      logCleanupLifecycle("begin", normalizedRequestContext, {
         phase,
-        reason,
-        toggleOpId,
         restoreSecondaryMode,
         completeSubtitleStateReset,
         preserveSecondaryDom,
@@ -236,13 +305,12 @@
       stopPlaybackControlLayoutObservers?.();
       layoutController?.teardownPlaybackControlsUi?.();
 
-      stopSecondaryTrackSyncInterval?.(reason);
-      pauseSyncIntervalOrchestrator?.(reason);
+      pauseSyncIntervalOrchestrator?.(normalizedRequestContext.reason);
 
       clearInitialCueRecovery?.();
       clearSecondaryTrackState();
       overlayController?.clearOverlayState?.();
-      disposePanelUi?.({ reason });
+      disposePanelUi?.({ reason: normalizedRequestContext.reason });
 
       runtimeObservers?.stopAll?.();
       resetInitialAutoStartDelegation?.();
@@ -250,26 +318,24 @@
       cueController?.handoffPrimarySubtitleToNative?.();
       cueController?.unbindSecondarySubtitleTrack?.({
         restoreMode: restoreSecondaryMode,
-        reason,
-        toggleOpId,
+        reason: normalizedRequestContext.reason,
+        toggleOpId: normalizedRequestContext.toggleOpId,
       });
       subtitleRecoveryManager?.dispose?.();
 
       if (completeSubtitleStateReset) {
         clearInternalSubtitleState?.({
           preserveSecondaryDom,
-          reason,
-          toggleOpId,
+          reason: normalizedRequestContext.reason,
+          toggleOpId: normalizedRequestContext.toggleOpId,
           completeReset: true,
         });
       }
 
       const after = buildCleanupSnapshot();
 
-      logCleanupPhase("done", {
+      logCleanupLifecycle("complete", normalizedRequestContext, {
         phase,
-        reason,
-        toggleOpId,
         restoreSecondaryMode,
         completeSubtitleStateReset,
         preserveSecondaryDom,
@@ -291,14 +357,32 @@
      *
      * @param {object} [options={}] 実行オプション。
      * @param {string} [options.reason="startup_target_attach_cleanup"] cleanup reason。
+     * @param {string} [options.requestId] startup request 相関 ID。
+     * @param {string} [options.sessionId] teardown 対象 session ID。
+     * @param {string} [options.videoSrcKey] playback target 相関キー。
+     * @param {string} [options.source] 呼び出し元識別子。
+     * @param {string} [options.toggleOpId] toggle 操作相関 ID。
      */
     function clearSubtitlesForStartup(options = {}) {
-      const reason =
-        typeof options.reason === "string" && options.reason
-          ? options.reason
-          : "startup_target_attach_cleanup";
+      const requestContext = normalizeCleanupRequestContext({
+        reason:
+          typeof options.reason === "string" && options.reason
+            ? options.reason
+            : "startup_target_attach_cleanup",
+        requestId: options.requestId,
+        sessionId: options.sessionId,
+        videoSrcKey: options.videoSrcKey,
+        source: options.source || "startup_coordinator",
+        toggleOpId: options.toggleOpId,
+      });
 
-      resetForContentSwitch(reason);
+      runSessionTeardown({
+        phase: "startup_attach",
+        restoreSecondaryMode: false,
+        completeSubtitleStateReset: false,
+        preserveSecondaryDom: true,
+        requestContext,
+      });
     }
 
     /**
@@ -310,24 +394,27 @@
      * @param {object} [options={}] 実行オプション。
      * @param {string} [options.toggleOpId] toggle 操作相関 ID。
      * @param {string} [options.reason="teardownForRestart"] cleanup reason。
+     * @param {object} [options.requestContext] startup / rebuild request 相関情報。
      */
     function teardownForRestart(options = {}) {
-      const toggleOpId =
-        typeof options.toggleOpId === "string" && options.toggleOpId
-          ? options.toggleOpId
-          : null;
-      const reason =
-        typeof options.reason === "string" && options.reason
-          ? options.reason
-          : "teardownForRestart";
+      const requestContext = normalizeCleanupRequestContext({
+        ...(options.requestContext || {}),
+        toggleOpId:
+          typeof options.toggleOpId === "string" && options.toggleOpId
+            ? options.toggleOpId
+            : options.requestContext?.toggleOpId,
+        reason:
+          typeof options.reason === "string" && options.reason
+            ? options.reason
+            : "teardownForRestart",
+      });
 
       runSessionTeardown({
         phase: "restart",
         restoreSecondaryMode: false,
         completeSubtitleStateReset: false,
         preserveSecondaryDom: true,
-        toggleOpId,
-        reason,
+        requestContext,
       });
     }
 
@@ -339,24 +426,27 @@
      * @param {object} [options={}] 実行オプション。
      * @param {string} [options.toggleOpId] toggle 操作相関 ID。
      * @param {string} [options.reason="detachForDisabled"] cleanup reason。
+     * @param {object} [options.requestContext] startup / rebuild request 相関情報。
      */
     function detachForDisabled(options = {}) {
-      const toggleOpId =
-        typeof options.toggleOpId === "string" && options.toggleOpId
-          ? options.toggleOpId
-          : null;
-      const reason =
-        typeof options.reason === "string" && options.reason
-          ? options.reason
-          : "detachForDisabled";
+      const requestContext = normalizeCleanupRequestContext({
+        ...(options.requestContext || {}),
+        toggleOpId:
+          typeof options.toggleOpId === "string" && options.toggleOpId
+            ? options.toggleOpId
+            : options.requestContext?.toggleOpId,
+        reason:
+          typeof options.reason === "string" && options.reason
+            ? options.reason
+            : "detachForDisabled",
+      });
 
       runSessionTeardown({
         phase: "disabled",
         restoreSecondaryMode: true,
         completeSubtitleStateReset: true,
         preserveSecondaryDom: false,
-        toggleOpId,
-        reason,
+        requestContext,
       });
     }
 
@@ -372,23 +462,33 @@
      * @param {object} [options={}] 実行オプション。
      * @param {string} [options.toggleOpId] toggle 操作相関 ID。
      * @param {string} [options.reason="prepareForRestart"] cleanup reason。
+     * @param {object} [options.requestContext] startup / rebuild request 相関情報。
      */
     function prepareForRestart(options = {}) {
-      const toggleOpId =
-        typeof options.toggleOpId === "string" && options.toggleOpId
-          ? options.toggleOpId
-          : null;
-      const reason =
-        typeof options.reason === "string" && options.reason
-          ? options.reason
-          : "prepareForRestart";
+      const requestContext = normalizeCleanupRequestContext({
+        ...(options.requestContext || {}),
+        toggleOpId:
+          typeof options.toggleOpId === "string" && options.toggleOpId
+            ? options.toggleOpId
+            : options.requestContext?.toggleOpId,
+        reason:
+          typeof options.reason === "string" && options.reason
+            ? options.reason
+            : "prepareForRestart",
+      });
 
       const before = buildCleanupSnapshot();
 
+      logCleanupLifecycle("begin", requestContext, {
+        phase: "restart_prepare",
+        preserveSecondaryDom: true,
+        before,
+      });
+
       clearInternalSubtitleState?.({
         preserveSecondaryDom: true,
-        reason,
-        toggleOpId,
+        reason: requestContext.reason,
+        toggleOpId: requestContext.toggleOpId,
       });
 
       // prepareForRestart() は complete reset ではなく、restart 前の軽量な参照整理である。
@@ -396,23 +496,17 @@
       // panel render snapshot は消えないため、panel DOM を残す経路でも
       // 次回起動で古い描画結果を再利用しないようここで明示的に無効化する。
       state.primaryTrack = null;
-      state.secondaryTrack = null;
+      state.lastPanelRenderSnapshot = null;
       state.currentSubtitleBlock = null;
       state.subtitleBlockMeta = null;
-      // panel render snapshot は restart 後に再計算させる。
-      state.lastPanelRenderSnapshot = null;
       state.lastSecondarySyncContext = null;
-      state.subtitleHistory = [];
-      state.panelPastBlocks = [];
-      state.subtitleBlocks = [];
-      state.subtitleCurrentIndex = -1;
+      state.allowSecondaryOnlyUntil = 0;
 
       const after = buildCleanupSnapshot();
 
-      logContent?.("playback session prepare restart", {
-        reason,
-        toggleOpId,
-        before,
+      logCleanupLifecycle("complete", requestContext, {
+        phase: "restart_prepare",
+        preserveSecondaryDom: true,
         after,
       });
     }
@@ -429,14 +523,30 @@
      * ここでは同期的な再入だけを防ぎ、
      * 同一旧セッションへの cleanup 一度化そのものは coordinator 側に任せる。
      *
-     * @param {string} [reason="content_switch"] cleanup reason。
+     * @param {object|string} [options="content_switch"] 実行オプションまたは cleanup reason。
+     * @param {string} [options.reason="content_switch"] cleanup reason。
+     * @param {object} [options.requestContext] startup / rebuild request 相関情報。
      */
-    function resetForContentSwitch(reason = "content_switch") {
+    function resetForContentSwitch(options = "content_switch") {
+      const normalizedOptions =
+        typeof options === "string" ? { reason: options } : options || {};
+      const requestContext = normalizeCleanupRequestContext({
+        ...(normalizedOptions.requestContext || {}),
+        reason:
+          typeof normalizedOptions.reason === "string" &&
+          normalizedOptions.reason
+            ? normalizedOptions.reason
+            : "content_switch",
+        source:
+          normalizedOptions.requestContext?.source || "cleanup_owner",
+      });
+
       if (isResettingForContentSwitch) {
-        logContent?.("resetForContentSwitch reentry skipped", {
-          reason,
+        logCleanupLifecycle("complete", requestContext, {
+          phase: "content_switch_reentry_skipped",
+          skipped: true,
           currentContentKey: state.currentContentKey,
-          lastVideoSrcKey: state.lastVideoSrcKey,
+          previousVideoSrcKey: state.lastVideoSrcKey || "",
         });
         return;
       }
@@ -445,12 +555,19 @@
 
       const before = buildCleanupSnapshot();
 
+      logCleanupLifecycle("begin", requestContext, {
+        phase: "content_switch",
+        preserveSecondaryDom: false,
+        completeSubtitleStateReset: true,
+        before,
+      });
+
       try {
         stopPlaybackControlLayoutObservers?.();
         layoutController?.teardownPlaybackControlsUi?.();
 
-        stopSecondaryTrackSyncInterval?.("content_switch");
-        pauseSyncIntervalOrchestrator?.("content_switch");
+        stopSecondaryTrackSyncInterval?.(requestContext.reason);
+        pauseSyncIntervalOrchestrator?.(requestContext.reason);
 
         clearInitialCueRecovery?.();
         clearSecondaryTrackState();
@@ -458,19 +575,21 @@
         cueController?.handoffPrimarySubtitleToNative?.();
         cueController?.unbindSecondarySubtitleTrack?.({
           restoreMode: true,
-          reason: "content_switch",
+          reason: requestContext.reason,
+          toggleOpId: requestContext.toggleOpId,
         });
         subtitleRecoveryManager?.dispose?.();
 
         overlayController?.clearOverlayState?.();
-        disposePanelUi?.({ reason: "content_switch" });
+        disposePanelUi?.({ reason: requestContext.reason });
 
         runtimeObservers?.stopAll?.();
         resetInitialAutoStartDelegation?.();
 
         clearInternalSubtitleState?.({
           preserveSecondaryDom: false,
-          reason: "content_switch",
+          reason: requestContext.reason,
+          toggleOpId: requestContext.toggleOpId,
           completeReset: true,
         });
 
@@ -484,11 +603,12 @@
 
       const after = buildCleanupSnapshot();
 
-      logContent?.("playback session reset for content switch", {
-        reason,
-        previousVideoSrcKey: state.lastVideoSrcKey,
+      logCleanupLifecycle("complete", requestContext, {
+        phase: "content_switch",
+        preserveSecondaryDom: false,
+        completeSubtitleStateReset: true,
+        previousVideoSrcKey: state.lastVideoSrcKey || "",
         currentContentKey: state.currentContentKey,
-        before,
         after,
       });
     }
@@ -498,16 +618,40 @@
      * close / navigation / hard reset など「今の playback session を完全終了する」用途で、
      * 再生 UI / observer / subtitle state を完全に外す。
      *
-     * @param {string} [reason="clear_playback_session_ui_state"] cleanup reason。
+     * @param {object|string} [options="clear_playback_session_ui_state"] 実行オプションまたは cleanup reason。
+     * @param {string} [options.reason="clear_playback_session_ui_state"] cleanup reason。
+     * @param {object} [options.requestContext] startup / rebuild request 相関情報。
      */
-    function clearPlaybackSessionUiState(reason = "clear_playback_session_ui_state") {
+    function clearPlaybackSessionUiState(
+      options = "clear_playback_session_ui_state",
+    ) {
+      const normalizedOptions =
+        typeof options === "string" ? { reason: options } : options || {};
+      const requestContext = normalizeCleanupRequestContext({
+        ...(normalizedOptions.requestContext || {}),
+        reason:
+          typeof normalizedOptions.reason === "string" &&
+          normalizedOptions.reason
+            ? normalizedOptions.reason
+            : "clear_playback_session_ui_state",
+        source:
+          normalizedOptions.requestContext?.source || "cleanup_owner",
+      });
+
       const before = buildCleanupSnapshot();
+
+      logCleanupLifecycle("begin", requestContext, {
+        phase: "clear_playback_session_ui_state",
+        preserveSecondaryDom: false,
+        completeSubtitleStateReset: true,
+        before,
+      });
 
       stopPlaybackControlLayoutObservers?.();
       layoutController?.teardownPlaybackControlsUi?.();
 
-      stopSecondaryTrackSyncInterval?.(reason);
-      pauseSyncIntervalOrchestrator?.(reason);
+      stopSecondaryTrackSyncInterval?.(requestContext.reason);
+      pauseSyncIntervalOrchestrator?.(requestContext.reason);
 
       clearInitialCueRecovery?.();
       clearSecondaryTrackState();
@@ -515,20 +659,22 @@
       cueController?.handoffPrimarySubtitleToNative?.();
       cueController?.unbindSecondarySubtitleTrack?.({
         restoreMode: true,
-        reason,
+        reason: requestContext.reason,
+        toggleOpId: requestContext.toggleOpId,
       });
       cueController?.destroy?.();
       subtitleRecoveryManager?.dispose?.();
 
       overlayController?.clearOverlayState?.();
-      disposePanelUi?.({ reason });
+      disposePanelUi?.({ reason: requestContext.reason });
 
       runtimeObservers?.stopAll?.();
       resetInitialAutoStartDelegation?.();
 
       clearInternalSubtitleState?.({
         preserveSecondaryDom: false,
-        reason,
+        reason: requestContext.reason,
+        toggleOpId: requestContext.toggleOpId,
         completeReset: true,
       });
 
@@ -541,9 +687,10 @@
 
       const after = buildCleanupSnapshot();
 
-      logContent?.("playback session ui state cleared", {
-        reason,
-        before,
+      logCleanupLifecycle("complete", requestContext, {
+        phase: "clear_playback_session_ui_state",
+        preserveSecondaryDom: false,
+        completeSubtitleStateReset: true,
         after,
       });
     }
@@ -555,14 +702,25 @@
      * @param {object} [options={}] 実行オプション。
      * @param {string} [options.reason="navigation_target_missing"] cleanup reason。
      * @param {object} [options.playbackContext={}] 補助ログ用の playback context。
+     * @param {object} [options.requestContext] startup / rebuild request 相関情報。
      */
     function handleNavigationTargetMissing({
       reason = "navigation_target_missing",
       playbackContext = {},
+      requestContext: requestContextInput = {},
     } = {}) {
-      logContent?.("playback target missing after cleanup", {
-        reason,
-        previousVideoSrcKey: state.lastVideoSrcKey,
+      const requestContext = normalizeCleanupRequestContext({
+        ...requestContextInput,
+        reason:
+          typeof reason === "string" && reason
+            ? reason
+            : "navigation_target_missing",
+        source: requestContextInput?.source || "cleanup_owner",
+      });
+
+      logCleanupLifecycle("complete", requestContext, {
+        phase: "navigation_target_missing",
+        previousVideoSrcKey: state.lastVideoSrcKey || "",
         currentContentKey: state.currentContentKey,
         playbackContext,
       });
