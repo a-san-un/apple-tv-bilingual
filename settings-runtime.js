@@ -12,6 +12,8 @@
 //   direct start や独自 readiness 待ちは持たない。
 // - トグル操作ごとの相関ログを出し、OFF 側の処理完了と
 //   ON 側の再評価要求を同じ操作単位で追跡できるようにする。
+// - settings runtime 起点の startup request について、requestId / videoSrcKey / source
+//   を同じ requestContext として cleanup owner / startup coordinator へ引き回す。
 //
 // このファイルのメンテナンス方針:
 // - storage から読んだ設定値と、実際に動作へ使う設定値を混同しない。
@@ -41,14 +43,15 @@
       getVideoAndDialog,
       mountToggleOnlyUi,
       getPlaybackStartupCoordinator,
+      getCurrentVideoSrcKey,
     } = deps;
-
 
     // -------------------------------------------------------
     // トグル操作ログ相関
     // -------------------------------------------------------
     let toggleOpSeq = 0;
     let pendingToggleOffOpId = null;
+    let settingsStartupRequestSeq = 0;
 
     // OFF 側トグル操作の相関 ID を発番して保持する。
     // 次に来る ON 側ログと対にするため、最新の OFF 操作 ID を返す。
@@ -73,6 +76,58 @@
       return { toggleOpId, pairedWithOff: false };
     }
 
+    /**
+     * settings runtime 起点の startup request context を生成する。
+     *
+     * @param {string} reason
+     * @param {object} [options={}]
+     * @param {boolean} [options.keepPanelOpen]
+     * @param {string|null} [options.toggleOpId]
+     * @param {object} [options.requestContext]
+     * @returns {{
+     *   requestId: string,
+     *   reason: string,
+     *   source: string,
+     *   videoSrcKey: string,
+     *   keepPanelOpen: boolean,
+     *   toggleOpId: string|null,
+     * }}
+     */
+    function buildSettingsStartupRequestContext(reason, options = {}) {
+      settingsStartupRequestSeq += 1;
+
+      const fallbackVideo =
+        state.video || getVideoAndDialog?.()?.video || null;
+      const fallbackVideoSrcKey =
+        getCurrentVideoSrcKey?.(fallbackVideo) || state.lastVideoSrcKey || "";
+      const inherited = options.requestContext || {};
+
+      return {
+        requestId:
+          typeof inherited.requestId === "string" && inherited.requestId.trim()
+            ? inherited.requestId.trim()
+            : `settings-startup-${Date.now()}-${settingsStartupRequestSeq}`,
+        reason:
+          typeof reason === "string" && reason ? reason : "unknown",
+        source:
+          typeof inherited.source === "string" && inherited.source.trim()
+            ? inherited.source.trim()
+            : "settings_runtime",
+        videoSrcKey:
+          typeof inherited.videoSrcKey === "string" && inherited.videoSrcKey
+            ? inherited.videoSrcKey
+            : fallbackVideoSrcKey,
+        keepPanelOpen:
+          typeof options.keepPanelOpen === "boolean"
+            ? options.keepPanelOpen
+            : state.panelOpen,
+        toggleOpId:
+          typeof options.toggleOpId === "string" && options.toggleOpId
+            ? options.toggleOpId
+            : null,
+      };
+    }
+
     // -------------------------------------------------------
     // startup coordinator への再評価要求
     // -------------------------------------------------------
@@ -83,7 +138,11 @@
      * 起動前段の判断は coordinator に委譲する。
      *
      * @param {string} reason
-     * @param {{ keepPanelOpen?: boolean }} [options]
+     * @param {{
+     *   keepPanelOpen?: boolean,
+     *   toggleOpId?: string|null,
+     *   requestContext?: object,
+     * }} [options]
      * @returns {boolean}
      */
     function requestStartupReevaluation(
@@ -91,9 +150,16 @@
       options = {},
     ) {
       const coordinator = getPlaybackStartupCoordinator?.() || null;
+      const requestContext = buildSettingsStartupRequestContext(reason, options);
+
       if (!coordinator?.attachAndMaybeStart) {
         logStartupProbe?.("settings runtime startup request skipped", {
-          reason,
+          requestId: requestContext.requestId,
+          reason: requestContext.reason,
+          source: requestContext.source,
+          videoSrcKey: requestContext.videoSrcKey,
+          keepPanelOpen: requestContext.keepPanelOpen,
+          toggleOpId: requestContext.toggleOpId,
           skipReason: "startup_coordinator_unavailable",
         });
         return false;
@@ -102,16 +168,24 @@
       const video = state.video || getVideoAndDialog?.()?.video || null;
       if (!video) {
         logStartupProbe?.("settings runtime startup request skipped", {
-          reason,
+          requestId: requestContext.requestId,
+          reason: requestContext.reason,
+          source: requestContext.source,
+          videoSrcKey: requestContext.videoSrcKey,
+          keepPanelOpen: requestContext.keepPanelOpen,
+          toggleOpId: requestContext.toggleOpId,
           skipReason: "no_video",
         });
         return false;
       }
 
       logStartupProbe?.("settings runtime startup request", {
-        reason,
-        videoSrcKey: state.lastVideoSrcKey || "",
-        keepPanelOpen: options.keepPanelOpen ?? state.panelOpen,
+        requestId: requestContext.requestId,
+        reason: requestContext.reason,
+        source: requestContext.source,
+        videoSrcKey: requestContext.videoSrcKey,
+        keepPanelOpen: requestContext.keepPanelOpen,
+        toggleOpId: requestContext.toggleOpId,
         requestedContentSettings: {
           primaryLang: state.requestedContentSettings?.primaryLang || "",
           secondaryLang: state.requestedContentSettings?.secondaryLang || "",
@@ -121,7 +195,8 @@
       });
 
       coordinator.attachAndMaybeStart(video, `settings_runtime:${reason}`, {
-        keepPanelOpen: options.keepPanelOpen ?? state.panelOpen,
+        keepPanelOpen: requestContext.keepPanelOpen,
+        requestContext,
       });
       return true;
     }
@@ -235,17 +310,34 @@
       }
 
       if (!isLanguageSelectionReady?.(effectiveSettings)) {
-        logContent?.("language selection not ready yet; skip startup request");
+        logContent?.("language selection not ready yet; skip startup request", {
+          reason: "load_settings_from_sync",
+          primaryLang: effectiveSettings.primaryLang || "",
+          secondaryLang: effectiveSettings.secondaryLang || "",
+          requestedPrimaryLang: state.requestedContentSettings?.primaryLang || "",
+          requestedSecondaryLang:
+            state.requestedContentSettings?.secondaryLang || "",
+        });
         return;
       }
 
+      const requestContext = buildSettingsStartupRequestContext(
+        "load_settings_from_sync",
+        {
+          keepPanelOpen: state.panelOpen,
+        },
+      );
+
       requestStartupReevaluation("load_settings_from_sync", {
         keepPanelOpen: state.panelOpen,
+        requestContext,
       });
     }
 
     // -------------------------------------------------------
     // rebuild request orchestration
+    // state 反映後の restart request を正規化し、
+    // cleanup owner と startup coordinator へ同じ requestContext を渡す。
     // -------------------------------------------------------
 
     /**
@@ -286,12 +378,17 @@
     }
 
     /**
-     * 設定反映後に startup coordinator へ再評価要求を発行する。
+     * 設定反映後に restart request を起票する。
+     * state 反映後、cleanup owner に restart 準備を依頼し、
+     * startup coordinator へ同一 requestContext 付きで再評価要求を発行する。
      * runtime の enable / disable 判定は state.extensionEnabled を使う。
      *
      * @param {Object} settings
-     * @param {string} [reason]
-     * @param {Object} [options]
+     * @param {string} [reason="unknown"]
+     * @param {{
+     *   keepPanelOpen?: boolean,
+     *   toggleOpId?: string|null,
+     * }} [options]
      * @returns {void}
      */
     function requestBilingualRestart(settings, reason = "unknown", options = {}) {
@@ -321,13 +418,21 @@
         keepPanelOpen: state.panelOpen,
       });
 
+      const requestContext = buildSettingsStartupRequestContext(reason, {
+        keepPanelOpen: state.panelOpen,
+        toggleOpId,
+      });
+
       prepareForRestart?.({
         reason,
         toggleOpId,
+        requestContext,
       });
 
       requestStartupReevaluation(reason, {
         keepPanelOpen: state.panelOpen,
+        toggleOpId,
+        requestContext,
       });
     }
 

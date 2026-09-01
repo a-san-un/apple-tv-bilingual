@@ -12,6 +12,8 @@
 //   stale な playback を再利用しないよう current playback を取り直してから進める。
 // - UI teardown や startup readiness wait そのものは担当せず、
 //   rebuild request の分類・再評価要求・retry 制御に限定する。
+// - rebuild request ごとに requestId / videoSrcKey / source を requestContext として保持し、
+//   cleanup owner teardown と subtitle pipeline 再評価ログを同じ request 単位で追えるようにする。
 //
 // 設計メモ:
 // - cleanup owner の teardown 責務や startup coordinator の readiness wait は侵食しない。
@@ -66,7 +68,7 @@
    *   error 系 log。
    * @returns {{
    *   clearTrackResolveRetryTimers: () => void,
-   *   reinitializeSubtitlePipeline: (reason?: string) => Promise<Object>,
+   *   reinitializeSubtitlePipeline: (input?: string | Object) => Promise<Object>,
    *   reloadSettingsAndReinitialize: (input?: string | Object) => void,
    * }} public API。
    */
@@ -92,6 +94,8 @@
     // detach / restart 側からも cleanup できるよう public API に出す。
     // -----------------------------------------------------------------------------
 
+    let reinitializeRequestSeq = 0;
+
     /**
      * track resolve retry timer をすべて解除する。
      * coordinator が所有している retry timer の後始末だけを担当する。
@@ -111,6 +115,43 @@
     // -----------------------------------------------------------------------------
 
     /**
+     * rebuild request 用の request context を生成する。
+     *
+     * @param {string} reason
+     * @param {object} [input={}]
+     * @returns {{
+     *   requestId: string,
+     *   reason: string,
+     *   source: string,
+     *   videoSrcKey: string,
+     * }}
+     */
+    function buildReinitializeRequestContext(reason, input = {}) {
+      reinitializeRequestSeq += 1;
+      const currentVideo =
+        state.video || getVideoAndDialog?.()?.video || null;
+      const fallbackVideoSrcKey =
+        getCurrentVideoSrcKey?.(currentVideo) || state.lastVideoSrcKey || "";
+
+      return {
+        requestId:
+          typeof input.requestId === "string" && input.requestId.trim()
+            ? input.requestId.trim()
+            : `reinit-${Date.now()}-${reinitializeRequestSeq}`,
+        reason:
+          typeof reason === "string" && reason ? reason : "unknown",
+        source:
+          typeof input.source === "string" && input.source.trim()
+            ? input.source.trim()
+            : "reinitialize_coordinator",
+        videoSrcKey:
+          typeof input.videoSrcKey === "string" && input.videoSrcKey
+            ? input.videoSrcKey
+            : fallbackVideoSrcKey,
+      };
+    }
+
+    /**
      * 渡された reason / options を正規化する。
      *
      * 受け付ける形:
@@ -122,6 +163,12 @@
      *   reason: string,
      *   suppressSettingsReload: boolean,
      *   isVideoChange: boolean,
+     *   requestContext: {
+     *     requestId: string,
+     *     reason: string,
+     *     source: string,
+     *     videoSrcKey: string,
+     *   },
      * }} 正規化済み options。
      */
     function normalizeReinitializeOptions(input = "unknown") {
@@ -130,6 +177,7 @@
           reason: input,
           suppressSettingsReload: false,
           isVideoChange: input === "video_changed",
+          requestContext: buildReinitializeRequestContext(input),
         };
       }
 
@@ -146,6 +194,10 @@
           reason === "video_changed" ||
           reason === "current_src_changed" ||
           reason === "video_object_changed",
+        requestContext: buildReinitializeRequestContext(
+          reason,
+          input?.requestContext || {},
+        ),
       };
     }
 
@@ -157,7 +209,7 @@
      * track 再解決・listener 再接続・panel state 再適用と、
      * その結果に応じた retry 判定材料の生成を担う。
      *
-     * @param {string} [reason="unknown"] 正規化済み rebuild reason。
+     * @param {string|Object} [input="unknown"] 正規化済み rebuild reason または options。
      * @returns {Promise<{
      *   reason: string,
      *   primaryTrackFound: boolean,
@@ -165,12 +217,17 @@
      *   primaryListenerBound: boolean,
      *   secondaryListenerBound: boolean,
      *   ready: boolean,
+     *   requestContext: object,
      * }>} 現在の playback に対する再評価結果。
      */
-    async function reinitializeSubtitlePipeline(reason = "unknown") {
+    async function reinitializeSubtitlePipeline(input = "unknown") {
+      const normalized = normalizeReinitializeOptions(input);
+      const { reason, requestContext } = normalized;
+
       const switched = syncHistoryContextWithPlayback(reason);
       playbackSessionCleanup?.teardownForRestart?.({
         reason,
+        requestContext,
       });
 
       const effectiveSecondaryLanguage =
@@ -189,7 +246,10 @@
       const secondaryListenerBound = trackSelection.secondaryListenerBound;
 
       logContentSubtitle?.("tracks resolved", {
+        requestId: requestContext.requestId,
         reason,
+        source: requestContext.source,
+        videoSrcKey: requestContext.videoSrcKey,
         switchedHistoryContext: switched,
         primaryTrackFound,
         secondaryTrackFound,
@@ -199,17 +259,21 @@
       });
 
       logContentSubtitle?.("cuechange listeners rebound", {
+        requestId: requestContext.requestId,
         reason,
+        source: requestContext.source,
+        videoSrcKey: requestContext.videoSrcKey,
         primaryListenerBound,
         secondaryTrackBound: secondaryListenerBound,
       });
 
-      // panel 反映も coordinator から起動するが、
-      // 実 UI 更新の詳細は panelUi 側に残す。
       panelUi.applyPanelState(reason);
 
       logContent?.("panel state reapplied", {
+        requestId: requestContext.requestId,
         reason,
+        source: requestContext.source,
+        videoSrcKey: requestContext.videoSrcKey,
         contentKey: state.currentContentKey,
         panelOpen: state.panelOpen,
       });
@@ -225,13 +289,14 @@
           secondaryTrackFound &&
           primaryListenerBound &&
           secondaryListenerBound,
+        requestContext,
       };
     }
 
     // -----------------------------------------------------------------------------
     // Subtitle Pipeline: Entry Points
-    // 現在の playback context を取り直し、coordinator 本体へ渡すための入口。
-    // video / dialog 更新だけを担当し、再初期化ルール自体は持たない。
+    // 現在の playback context を取り直し、requestContext を保ったまま
+    // coordinator 本体へ渡すための入口。
     // -----------------------------------------------------------------------------
 
     /**
@@ -256,12 +321,12 @@
     /**
      * current playback を再取得してから subtitle pipeline 再初期化を実行する。
      *
-     * @param {string} [reason="unknown"] 再初期化 reason。
+     * @param {string|Object} [input="unknown"] 再初期化 reason または options。
      * @returns {Promise<Object|null>} 再初期化結果。video が無ければ null。
      */
-    async function runReinitializeFromCurrentPlayback(reason = "unknown") {
+    async function runReinitializeFromCurrentPlayback(input = "unknown") {
       if (!refreshPlaybackContextForReinitialize()) return null;
-      return await reinitializeSubtitlePipeline(reason);
+      return await reinitializeSubtitlePipeline(input);
     }
 
     // -----------------------------------------------------------------------------
@@ -273,16 +338,23 @@
 
     /**
      * video-change 系再初期化の retry を予約する。
-     * 各試行では current playback を取り直してから再初期化する。
+     * 各試行では current playback を取り直してから再初期化し、
+     * 親 requestContext を引き継いだ retry request として記録する。
      *
-     * @param {string} [reason="video_changed"] retry の親 reason。
+     * @param {string|Object} [input="video_changed"] retry の親 reason または options。
      * @returns {void}
      */
-    async function scheduleTrackResolveRetry(reason = "video_changed") {
+    async function scheduleTrackResolveRetry(input = "video_changed") {
       clearTrackResolveRetryTimers();
 
+      const normalized = normalizeReinitializeOptions(input);
+      const { reason, requestContext } = normalized;
+
       logContentSubtitle?.("track resolve retry scheduled", {
+        requestId: requestContext.requestId,
         reason,
+        source: requestContext.source,
+        videoSrcKey: requestContext.videoSrcKey,
         retryDelaysMs: TRACK_RESOLVE_RETRY_DELAYS_MS,
       });
 
@@ -291,22 +363,36 @@
           if (state.sessionRebuildInProgress || !state.video) return;
 
           const attempt = retryIndex + 1;
+          const retryReason = `${reason}:retry_${attempt}`;
 
           logContentSubtitle?.("track resolve retry attempt", {
-            reason,
+            requestId: requestContext.requestId,
+            reason: retryReason,
+            retryParentReason: reason,
+            source: requestContext.source,
+            videoSrcKey: requestContext.videoSrcKey,
             attempt,
             delayMs,
           });
 
-          const retryResult = await runReinitializeFromCurrentPlayback(
-            `${reason}:retry_${attempt}`,
-          );
+          const retryResult = await runReinitializeFromCurrentPlayback({
+            reason: retryReason,
+            suppressSettingsReload: true,
+            isVideoChange: normalized.isVideoChange,
+            requestContext: {
+              ...requestContext,
+            },
+          });
 
           if (!retryResult) return;
 
           if (retryResult.ready) {
             logContentSubtitle?.("track resolve retry success", {
-              reason,
+              requestId: requestContext.requestId,
+              reason: retryReason,
+              retryParentReason: reason,
+              source: requestContext.source,
+              videoSrcKey: requestContext.videoSrcKey,
               attempt,
             });
             clearTrackResolveRetryTimers();
@@ -315,7 +401,11 @@
 
           if (attempt === TRACK_RESOLVE_RETRY_DELAYS_MS.length) {
             logContentError?.("track resolve retry exhausted", {
-              reason,
+              requestId: requestContext.requestId,
+              reason: retryReason,
+              retryParentReason: reason,
+              source: requestContext.source,
+              videoSrcKey: requestContext.videoSrcKey,
               attempts: TRACK_RESOLVE_RETRY_DELAYS_MS.length,
               primaryTrackFound: retryResult.primaryTrackFound,
               secondaryTrackFound: retryResult.secondaryTrackFound,
