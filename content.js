@@ -2491,27 +2491,6 @@ function forwardContentLog(...args) {
 
   ensureMessageListener();
 
-  // reinitialize coordinator は subtitle pipeline 再構築本体ではなく、
-  // rebuild reason の分類・settings reload 要否判定・再評価要求の入口をまとめる。
-  const createReinitializeCoordinator =
-    root.createReinitializeCoordinator || null;
-  const reinitializeCoordinator = createReinitializeCoordinator
-    ? createReinitializeCoordinator({
-        state,
-        panelUi,
-        loadSettingsSnapshot,
-        getVideoAndDialog,
-        getCurrentVideoSrcKey,
-        syncHistoryContextWithPlayback,
-        clearInternalSubtitleState,
-        selectPrimaryAndSecondaryTracks,
-        TRACK_RESOLVE_RETRY_DELAYS_MS,
-        logContent,
-        logContentSubtitle,
-        logContentError,
-      })
-    : null;
-
   const initialCueRecovery = window.ATVB?.createInitialCueRecovery?.({
     state,
     get cueController() { return cueController; },
@@ -2577,7 +2556,28 @@ function forwardContentLog(...args) {
         playbackSessionCleanup,
       },
     }) ?? null;
-    
+
+  // reinitialize coordinator は subtitle pipeline 再構築本体ではなく、
+  // rebuild reason の分類・settings reload 要否判定・再評価要求の入口をまとめる。
+  const createReinitializeCoordinator =
+    root.createReinitializeCoordinator || null;
+  const reinitializeCoordinator = createReinitializeCoordinator
+    ? createReinitializeCoordinator({
+        state,
+        panelUi,
+        loadSettingsSnapshot,
+        getVideoAndDialog,
+        getCurrentVideoSrcKey,
+        syncHistoryContextWithPlayback,
+        playbackSessionCleanup,
+        selectPrimaryAndSecondaryTracks,
+        TRACK_RESOLVE_RETRY_DELAYS_MS,
+        logContent,
+        logContentSubtitle,
+        logContentError,
+      })
+    : null;
+
   function clearInitialCueRecoveryTimers() {
     if (!state.initialCueRecoveryTimers.length) return;
     state.initialCueRecoveryTimers.forEach((timerId) => clearTimeout(timerId));
@@ -2798,8 +2798,8 @@ function forwardContentLog(...args) {
   // subtitle-state-reset.js 側の resetSubtitleStateForToggle() を使い、
   // 古い字幕 block / snapshot / text 参照を次回 session へ持ち越さない。
   //
-  // content.js から direct cleanup API としては公開せず、
-  // playback-session-cleanup.js からの内部利用を主用途とする。
+  // cleanup owner の内部 helper としてだけ使い、
+  // reinitialize coordinator など他 owner へは渡さない。
   function clearInternalSubtitleState(reasonOrOptions = {}) {
     let preserveSecondaryDom = false;
     let resetReason = "clear-internal-subtitle-state";

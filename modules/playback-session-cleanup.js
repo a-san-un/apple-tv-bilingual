@@ -305,6 +305,7 @@
      * restart teardown 用の cleanup owner 入口。
      * startup coordinator などからの rebuild 要求で、現在の playback session を
      * 再生成前提の teardown へ収束させる。
+     * reinitialize coordinator からの rebuild 経路もこの API へ集約する。
      *
      * @param {object} [options={}] 実行オプション。
      * @param {string} [options.toggleOpId] toggle 操作相関 ID。

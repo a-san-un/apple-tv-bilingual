@@ -38,8 +38,10 @@
    *   video から currentSrc 識別子を作る関数。
    * @param {(reason?: string) => boolean} deps.syncHistoryContextWithPlayback
    *   current playback と history context を同期する関数。
-   * @param {(options?: Object) => void} deps.clearInternalSubtitleState
-   *   subtitle runtime state を内部的に初期化する関数。
+   * @param {{
+   *   teardownForRestart?: (options?: Object) => void,
+   * }} [deps.playbackSessionCleanup]
+   *   現在の playback session を rebuild 前提で teardown する cleanup owner API。
    * @param {(
    *   video: HTMLVideoElement | null,
    *   primaryLang: string,
@@ -76,7 +78,7 @@
       getVideoAndDialog,
       getCurrentVideoSrcKey,
       syncHistoryContextWithPlayback,
-      clearInternalSubtitleState,
+      playbackSessionCleanup,
       selectPrimaryAndSecondaryTracks,
       TRACK_RESOLVE_RETRY_DELAYS_MS,
       logContent,
@@ -167,9 +169,8 @@
      */
     async function reinitializeSubtitlePipeline(reason = "unknown") {
       const switched = syncHistoryContextWithPlayback(reason);
-      clearInternalSubtitleState({
+      playbackSessionCleanup?.teardownForRestart?.({
         reason,
-        preserveSecondaryDom: true,
       });
 
       const effectiveSecondaryLanguage =
